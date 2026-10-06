@@ -10,6 +10,7 @@ import { createCoreData } from './core/data.js';
 import core from './core/index.js';
 import { verifyToken, readCookie } from './lib/auth.js';
 import { HttpError } from './lib/util.js';
+import { createGeocoder } from './lib/geo.js';
 
 import vin from './modules/vin/index.js';
 import fotos from './modules/fotos/index.js';
@@ -57,6 +58,8 @@ export function createContext(config) {
     send: async () => false,
     log: (...args) => console.log(new Date().toISOString(), ...args),
     has: (name) => loaded.some((m) => m.name === name),
+    // Procura endereços no mapa (null = desligado).
+    geo: config.geocoder ? createGeocoder() : null,
   };
 
   for (const mod of loaded) migrate(db, mod.name, mod.migrations);
@@ -100,7 +103,7 @@ export function createApp(ctx) {
   app.use((err, req, res, next) => {
     const status = err.status || err.statusCode || 500;
     if (status >= 500) ctx.log('Erro', err);
-    res.status(status).json({ error: status >= 500 ? 'Erro no servidor. Tente de novo.' : err.message });
+    res.status(status).json(status >= 500 ? { error: 'Erro no servidor. Tente de novo.' } : { error: err.message, code: err.code, options: err.options });
   });
 
   return app;

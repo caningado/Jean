@@ -97,6 +97,11 @@ export function checkLocation(raw, what = 'O endereço') {
   return address;
 }
 
+// Link de mapa ou coordenadas: já aponta para um lugar exato, não precisa conferir.
+export function isMapReference(location) {
+  return /https?:\/\//i.test(location) || COORDS.test(location);
+}
+
 // Link para abrir o local no mapa do celular.
 export function mapLink(location) {
   if (!location) return null;
