@@ -45,6 +45,11 @@ export default {
   onServiceDone: ({ ctx, service }) => [/* avisos ao finalizar o serviço */],
   summary: ({ ctx, since, userId }) => ({ /* números para o resumo */ }),
   summaryLines: (summary) => [/* linhas do resumo no WhatsApp */],
+
+  // Planilha (módulo planilha): abas próprias e colunas extras na aba Serviços.
+  // type: 'text', 'number', 'money' (dólares) ou 'date'.
+  exportSheets: ({ ctx, from, to, userId }) => [{ name: 'Aba', columns: [{ header, width, type }], rows: [[...]] }],
+  exportColumns: (ctx) => [{ header, width, type, value: (service) => ... }],
 };
 ```
 
