@@ -28,8 +28,10 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 | `abrir 12` | Volta a mexer no serviço #12 |
 | `atual`, `pendentes`, `resumo`, `resumo mes`, `ajuda`, `cancelar` | |
 
-Quem não é da equipe e manda mensagem para o número do robô recebe um "já vamos responder",
-vira contato e o dono é avisado no WhatsApp.
+Quem não é da equipe (clientes, amigos) e manda mensagem para o número do robô vira contato,
+e o robô fica calado: você responde pelo seu WhatsApp como sempre. Para o robô mandar um
+"já vamos responder" e te avisar, use `WHATSAPP_RESPOSTA_FORA=diaria` (uma vez por dia por pessoa)
+ou `WHATSAPP_RESPOSTA_FORA=sempre` (toda mensagem).
 
 ## Rodar no computador (para testar)
 

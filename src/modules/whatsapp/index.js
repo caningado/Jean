@@ -98,9 +98,19 @@ export async function processMessage(ctx, client, msg) {
   for (const reply of replies) await client.sendText(msg.from, reply);
 }
 
-// Alguém de fora da equipe (um cliente) mandou mensagem: guarda o contato e avisa os donos.
-async function handleOutsider(ctx, client, msg) {
+// Alguém de fora da equipe (cliente, amigo) mandou mensagem: guarda o contato.
+// Por padrão o robô fica calado; a pessoa aparece normalmente no WhatsApp do dono.
+export async function handleOutsider(ctx, client, msg) {
   const contact = ctx.data.contacts.findOrCreate({ phone: msg.from, name: msg.name, source: 'whatsapp' });
+  const mode = ctx.config.whatsapp.outsiderReply;
+  if (mode === 'nunca') return;
+  if (mode === 'diaria') {
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const earlier = ctx.db
+      .prepare('SELECT COUNT(*) AS n FROM whatsapp_messages WHERE phone = ? AND id <> ? AND received_at >= ?')
+      .get(msg.from, msg.id, since);
+    if (earlier.n > 0) return;
+  }
   const owners = ctx.db.prepare("SELECT * FROM users WHERE role = 'dono' AND active = 1").all();
   const text = msg.text || (msg.mediaId ? '[foto]' : `[${msg.type}]`);
   for (const owner of owners) {
