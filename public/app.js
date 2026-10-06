@@ -605,6 +605,14 @@ screens.planilha = async () => {
         <a class="btn secondary" href="/api/planilha.xlsx">Baixar tudo</a>
       </div>
     </div>
+    ${has('fotos') ? `
+    <div class="card">
+      <h2>📷 Planilha com as fotos</h2>
+      <p class="sub">Um arquivo .zip com a planilha do mês e as fotos de cada serviço, cada serviço numa pasta (ex.: "Serviço 12 - Maria Souza / antes - frente.jpg"). Bom para guardar uma cópia de tudo.</p>
+      <div class="actions">
+        <a class="btn" id="fotosMes" href="/api/planilha.zip?mes=${thisMonth}">Baixar o mês com fotos</a>
+      </div>
+    </div>` : ''}
     ${owner ? `
     <div class="card">
       <h2>🔄 Planilha que se atualiza sozinha</h2>
@@ -623,7 +631,11 @@ screens.planilha = async () => {
         <button class="block" id="criar">Criar link</button>`}
     </div>` : ''}`;
   const mes = view.querySelector('#mes');
-  mes.onchange = () => (view.querySelector('#baixarMes').href = `/api/planilha.xlsx?mes=${mes.value}`);
+  mes.onchange = () => {
+    view.querySelector('#baixarMes').href = `/api/planilha.xlsx?mes=${mes.value}`;
+    const fotos = view.querySelector('#fotosMes');
+    if (fotos) fotos.href = `/api/planilha.zip?mes=${mes.value}`;
+  };
   view.querySelectorAll('[data-copy]').forEach((b) => {
     b.onclick = async () => {
       try {

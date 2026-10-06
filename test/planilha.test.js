@@ -18,8 +18,10 @@ function unzip(buffer) {
     const local = buffer.readUInt32LE(p + 42);
     const name = buffer.subarray(p + 46, p + 46 + nameLen).toString();
     const start = local + 30 + buffer.readUInt16LE(local + 26) + buffer.readUInt16LE(local + 28);
-    files[name] = zlib.inflateRawSync(buffer.subarray(start, start + size)).toString();
-    assert.equal(zlib.crc32(Buffer.from(files[name])), buffer.readUInt32LE(p + 16), name);
+    const raw = buffer.subarray(start, start + size);
+    const data = buffer.readUInt16LE(p + 10) === 8 ? zlib.inflateRawSync(raw) : Buffer.from(raw);
+    assert.equal(zlib.crc32(data), buffer.readUInt32LE(p + 16), name);
+    files[name] = name.endsWith('.xml') || name.endsWith('.rels') ? data.toString() : data;
     p += 46 + nameLen + buffer.readUInt16LE(p + 30) + buffer.readUInt16LE(p + 32);
   }
   return files;
@@ -87,6 +89,31 @@ test('painel: baixar a planilha e link automático para o Google Planilhas', asy
   res = await fetch(`${base}/api/planilha.xlsx?mes=2020-01`, { headers: { Cookie: owner } });
   assert.doesNotMatch(unzip(Buffer.from(await res.arrayBuffer()))['xl/worksheets/sheet1.xml'], /John Smith/);
 
+  // Planilha com fotos (.zip): a planilha e uma pasta por serviço.
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0xff, 0xd9]);
+  for (const angle of ['frente', 'traseira']) {
+    res = await fetch(`${base}/api/services/1/photos?kind=antes&angle=${angle}`, { method: 'POST', headers: { Cookie: driver, 'Content-Type': 'image/jpeg' }, body: jpeg });
+    assert.equal(res.status, 201);
+  }
+  res = await fetch(`${base}/api/planilha.zip`, { headers: { Cookie: owner } });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-disposition'), /towing-j-j-tudo\.zip/);
+  files = unzip(Buffer.from(await res.arrayBuffer()));
+  assert.deepEqual(Object.keys(files).sort(), [
+    'fotos/Serviço 1 - John Smith/antes - frente.jpg',
+    'fotos/Serviço 1 - John Smith/antes - traseira.jpg',
+    'towing-j-j-tudo.xlsx',
+  ]);
+  assert.deepEqual(files['fotos/Serviço 1 - John Smith/antes - frente.jpg'], jpeg);
+  assert.match(unzip(files['towing-j-j-tudo.xlsx'])['xl/worksheets/sheet1.xml'], /Ana Lima/);
+  // Mês sem serviços: só a planilha.
+  res = await fetch(`${base}/api/planilha.zip?mes=2020-01`, { headers: { Cookie: owner } });
+  assert.deepEqual(Object.keys(unzip(Buffer.from(await res.arrayBuffer()))), ['towing-j-j-2020-01.xlsx']);
+  // Motorista: só as fotos dos serviços dele.
+  await fetch(`${base}/api/services/2/photos?kind=depois`, { method: 'POST', headers: { Cookie: owner, 'Content-Type': 'image/jpeg' }, body: jpeg });
+  res = await fetch(`${base}/api/planilha.zip`, { headers: { Cookie: driver } });
+  assert.ok(Object.keys(unzip(Buffer.from(await res.arrayBuffer()))).every((n) => !n.includes('Ana Lima')));
+
   // Link automático
   assert.equal((await (await fetch(`${base}/api/planilha/link`, { headers: { Cookie: owner } })).json()).active, false);
   const link = await (await fetch(`${base}/api/planilha/link`, { method: 'POST', headers: { Cookie: owner } })).json();
@@ -98,7 +125,7 @@ test('painel: baixar a planilha e link automático para o Google Planilhas', asy
   const csv = await res.text();
   assert.match(csv, /^Nº,Data,Situação,Motorista,Cliente/);
   assert.match(csv, /John Smith,"?\+1 \(508\) 555-0123"?,"12 Main St, Framingham"/);
-  assert.match(csv, /,10,115\.00,0,100\.00,0\.00,15\.00,/); // milhas, valor, fotos, recebido, seguradora, falta
+  assert.match(csv, /,10,115\.00,2,100\.00,0\.00,15\.00,/); // milhas, valor, fotos, recebido, seguradora, falta
   assert.match(await (await fetch(link.sheets[2].url.replace(/^https?:\/\/[^/]+/, base))).text(), /80\.00,Combustível/);
 
   // Link errado ou depois de trocar: não funciona.

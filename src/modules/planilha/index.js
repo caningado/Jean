@@ -2,7 +2,10 @@
 // que o Google Planilhas ou o Excel leem sozinhos para ficar sempre atualizados.
 // Cada módulo coloca suas abas (exportSheets) e colunas extras de serviço (exportColumns).
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import { once } from 'node:events';
 import { buildXlsx, excelDate } from '../../lib/xlsx.js';
+import { createZip } from '../../lib/zip.js';
 import { HttpError, nowIso, simplify } from '../../lib/util.js';
 
 const migrations = [
@@ -94,6 +97,39 @@ function routes(api, ctx) {
     res.attachment(`${company}-${range.label}.xlsx`);
     res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(file);
+  });
+
+  // Planilha + fotos num .zip, uma pasta por serviço. Vai mandando aos pedaços
+  // para não juntar todas as fotos na memória.
+  api.get('/planilha.zip', async (req, res) => {
+    const range = monthRange(req.query.mes, ctx.config.timeZone);
+    const userId = req.user.role === 'dono' ? null : req.user.id;
+    const xlsx = buildXlsx(collectSheets(ctx, { ...range, userId }), { timeZone: ctx.config.timeZone });
+    const files = ctx.loaded.flatMap((m) => m.exportFiles?.({ ctx, ...range, userId }) || []);
+    const company = simplify(ctx.config.companyName).replace(/[^a-z0-9]+/g, '-') || 'guincho';
+    res.attachment(`${company}-${range.label}.zip`);
+    res.type('application/zip');
+    let pending = null;
+    const zip = createZip((buf) => {
+      if (!res.write(buf)) pending = once(res, 'drain');
+    });
+    zip.add(`${company}-${range.label}.xlsx`, xlsx, { compress: false });
+    for (const file of files) {
+      let data;
+      try {
+        data = fs.readFileSync(file.path);
+      } catch {
+        continue; // foto apagada do disco: pula
+      }
+      zip.add(file.name, data, { compress: false });
+      if (pending) {
+        await pending;
+        pending = null;
+      }
+      if (res.destroyed) return;
+    }
+    zip.end();
+    res.end();
   });
 
   api.get('/planilha/link', (req, res) => {
