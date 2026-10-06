@@ -7,7 +7,7 @@ import { splitVehicle } from '../src/core/index.js';
 import { parseMethod } from '../src/modules/pagamentos/index.js';
 import { guessCategory } from '../src/modules/despesas/index.js';
 import { extractMessages, validSignature } from '../src/modules/whatsapp/index.js';
-import { kindFromText } from '../src/modules/fotos/index.js';
+import { kindFromText, angleFromText } from '../src/modules/fotos/index.js';
 import crypto from 'node:crypto';
 
 test('dinheiro', () => {
@@ -76,6 +76,12 @@ test('formas de pagamento, categorias e tipo de foto', () => {
   assert.equal(kindFromText('Antes da retirada'), 'antes');
   assert.equal(kindFromText('entrega'), 'depois');
   assert.equal(kindFromText('foto'), null);
+  assert.equal(angleFromText('antes frente'), 'frente');
+  assert.equal(angleFromText('Traseira'), 'traseira');
+  assert.equal(angleFromText('lado do motorista'), 'lateral_esquerda');
+  assert.equal(angleFromText('lado direito'), 'lateral_direita');
+  assert.equal(angleFromText('amassado na porta'), 'detalhe');
+  assert.equal(angleFromText('antes'), null);
 });
 
 test('webhook do WhatsApp', () => {
