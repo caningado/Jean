@@ -50,6 +50,8 @@ export default {
   // type: 'text', 'number', 'money' (dólares) ou 'date'.
   exportSheets: ({ ctx, from, to, userId }) => [{ name: 'Aba', columns: [{ header, width, type }], rows: [[...]] }],
   exportColumns: (ctx) => [{ header, width, type, value: (service) => ... }],
+  // Arquivos que vão junto no .zip "planilha com fotos" (name = caminho dentro do zip).
+  exportFiles: ({ ctx, from, to, userId }) => [{ name: 'fotos/Serviço 1/antes.jpg', path: '/caminho/no/disco.jpg' }],
 };
 ```
 
