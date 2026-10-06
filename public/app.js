@@ -715,6 +715,7 @@ async function scanBarcode() {
     <div class="scanner-view">
       <video playsinline muted></video>
       <div class="scanner-mask"><div class="scanner-box"><i></i><i></i><i></i><i></i><div class="scanner-line"></div></div></div>
+      <button class="scanner-close" data-act="close" aria-label="Fechar">✕</button>
     </div>
     <p class="scanner-tip">Coloque o código de barras do VIN <strong>dentro do retângulo</strong>, deitado, bem de perto.</p>
     <p class="scanner-status">Abrindo a câmera…</p>
@@ -733,6 +734,11 @@ async function scanBarcode() {
   let finish;
   const result = new Promise((resolve) => (finish = (vin) => { done = true; resolve(vin); }));
   button('cancel').onclick = () => finish(null);
+  button('close').onclick = () => finish(null);
+  // O "voltar" do celular (gesto ou botão) também fecha a câmera.
+  history.pushState({ scanner: true }, '');
+  const onBack = () => finish(null);
+  window.addEventListener('popstate', onBack);
 
   // Parte da imagem da câmera que aparece dentro da moldura (o vídeo usa object-fit: cover).
   const boxCrop = () => {
@@ -809,6 +815,8 @@ async function scanBarcode() {
     return await result;
   } finally {
     done = true;
+    window.removeEventListener('popstate', onBack);
+    if (history.state?.scanner) history.back();
     stream?.getTracks().forEach((t) => t.stop());
     overlay.remove();
   }
