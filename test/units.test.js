@@ -62,6 +62,7 @@ test('agenda .vcf', () => {
 test('veículo e placa', () => {
   assert.deepEqual(splitVehicle('Honda Civic ABC1234'), { vehicle: 'Honda Civic', plate: 'ABC1234' });
   assert.deepEqual(splitVehicle('Ford F-150 branca'), { vehicle: 'Ford F-150 branca', plate: null });
+  assert.deepEqual(splitVehicle('Ford F150'), { vehicle: 'Ford F150', plate: null });
 });
 
 test('formas de pagamento, categorias e tipo de foto', () => {

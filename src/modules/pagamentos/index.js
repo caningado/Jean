@@ -1,6 +1,7 @@
 // Módulo de pagamentos: Zelle, dinheiro, cartão, cheque e seguradora/motor club.
 // Guarda quem recebeu (para saber quanto dinheiro está com cada motorista) e o que falta receber.
 import { parseMoney, formatMoney, simplify, nowIso, HttpError } from '../../lib/util.js';
+import { checkMoney, ValidationError } from '../../lib/validate.js';
 
 export const METHODS = {
   zelle: 'Zelle',
@@ -102,6 +103,12 @@ const commands = [
       if (!method) return 'Faltou a forma de pagamento. Ex: *pago 250 zelle*, *pago 100 dinheiro*, *pago 300 aaa*';
       if (amountCents == null) amountCents = balance(ctx, service).open_cents;
       if (!amountCents) return 'Faltou o valor. Ex: *pago 250 zelle*';
+      try {
+        checkMoney(amountCents, { max: 20000, what: 'O valor do pagamento' });
+      } catch (err) {
+        if (err instanceof ValidationError) return `⚠️ ${err.message}`;
+        throw err;
+      }
       const payer = method.payer || (method.method === 'seguradora' && rest.length ? rest.join(' ') : null);
       const payment = addPayment(ctx, { serviceId: service.id, amountCents, method: method.method, payer, userId: user.id });
       const b = balance(ctx, service);
@@ -156,8 +163,7 @@ function routes(api, ctx) {
     const service = ctx.data.services.get(Number(req.params.id));
     if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
     const { amount, method, payer } = req.body || {};
-    const amountCents = parseMoney(amount);
-    if (!amountCents) throw new HttpError(400, 'Informe o valor.');
+    const amountCents = checkMoney(parseMoney(amount), { max: 20000, what: 'O valor do pagamento' });
     if (!METHODS[method]) throw new HttpError(400, 'Forma de pagamento inválida.');
     res.status(201).json(addPayment(ctx, { serviceId: service.id, amountCents, method, payer, userId: req.user.id }));
   });
