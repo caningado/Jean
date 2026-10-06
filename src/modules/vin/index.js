@@ -4,6 +4,7 @@ import express from 'express';
 import Anthropic from '@anthropic-ai/sdk';
 import { FlowError } from '../../core/bot.js';
 import { simplify, HttpError } from '../../lib/util.js';
+import { readVinBarcode } from '../../lib/barcode.js';
 
 const TRANSLITERATION = {
   A: 1, B: 2, C: 3, D: 4, E: 5, F: 6, G: 7, H: 8,
@@ -64,9 +65,16 @@ export function describeVehicle(info) {
   return [info.year, info.make, info.model].filter(Boolean).join(' ') || null;
 }
 
-// Lê o VIN de uma foto (etiqueta da porta, para-brisa ou documento) usando o Claude.
-// Só funciona com ANTHROPIC_API_KEY configurada.
+// Lê o VIN de uma foto (etiqueta da porta, para-brisa ou documento).
+// Primeiro procura o código de barras (funciona sempre); se não achar, lê o texto
+// com o Claude, que só funciona com ANTHROPIC_API_KEY configurada.
 export async function readVinFromImage(ctx, buffer, mimeType) {
+  try {
+    const vin = await readVinBarcode(buffer);
+    if (vin) return { vin, source: 'codigo' };
+  } catch (err) {
+    ctx.log?.('Falha ao ler código de barras', err);
+  }
   if (!ctx.config.anthropicApiKey) return { vin: null, reason: 'sem-chave' };
   const client = new Anthropic({ apiKey: ctx.config.anthropicApiKey });
   const response = await client.beta.messages.create({
@@ -165,7 +173,10 @@ function routes(api, ctx) {
     if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(400, 'Mande uma foto.');
     const result = await readVinFromImage(ctx, req.body, req.headers['content-type']);
     if (!result.vin) {
-      const msg = result.reason === 'sem-chave' ? 'Leitura de VIN por foto não está configurada.' : 'Não consegui ler o VIN nessa foto.';
+      const msg =
+        result.reason === 'sem-chave'
+          ? 'Não achei o código de barras do VIN nessa foto. Tire a foto de perto, só do código de barras (porta do motorista ou para-brisa), ou digite o VIN.'
+          : 'Não consegui ler o VIN nessa foto. Tente de novo mais de perto ou digite o VIN.';
       throw new HttpError(422, msg);
     }
     res.json(validateVin(result.vin));
@@ -195,7 +206,7 @@ export default {
         }
         if (!result.vin) {
           return result.reason === 'sem-chave'
-            ? 'Foto do VIN guardada. Para salvar o número, mande *vin* seguido dele.'
+            ? 'Foto do VIN guardada, mas não achei o código de barras nela. Mande outra foto de perto, só do código de barras (porta do motorista ou para-brisa), com a legenda *vin*. Ou mande *vin* seguido do número.'
             : 'Foto do VIN guardada, mas não consegui ler o número. Mande *vin* seguido dele.';
         }
         const check = validateVin(result.vin);

@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import express from 'express';
 import { openDb, migrate } from './db.js';
 import { createBot } from './core/bot.js';
@@ -21,6 +22,14 @@ import whatsapp from './modules/whatsapp/index.js';
 export const AVAILABLE_MODULES = { vin, fotos, pagamentos, despesas, whatsapp };
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+
+// Leitor de código de barras para celulares sem leitor próprio (iPhone).
+// O .wasm tem que ser da mesma versão que o barcode-detector usa.
+const barcodeDetectorFile = createRequire(import.meta.url).resolve('barcode-detector/ponyfill');
+const VENDOR = {
+  '/vendor/barcode-detector.js': path.join(path.dirname(barcodeDetectorFile), '..', 'iife', 'ponyfill.js'),
+  '/vendor/zxing_reader.wasm': createRequire(barcodeDetectorFile).resolve('zxing-wasm/reader/zxing_reader.wasm'),
+};
 
 export function createContext(config) {
   fs.mkdirSync(config.dataDir, { recursive: true });
@@ -85,6 +94,7 @@ export function createApp(ctx) {
   for (const mod of ctx.loaded) mod.routes?.(api, ctx);
   app.use('/api', api);
 
+  for (const [url, file] of Object.entries(VENDOR)) app.get(url, (req, res) => res.sendFile(file, { maxAge: '30d' }));
   app.use(express.static(publicDir, { index: 'index.html' }));
 
   app.use((err, req, res, next) => {

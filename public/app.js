@@ -269,7 +269,7 @@ screens.servico = async (params, id) => {
         <button>Salvar</button>
       </form>
       <div class="actions">
-        ${'BarcodeDetector' in window ? '<button class="secondary" id="scanVin">📷 Escanear código</button>' : ''}
+        <button class="secondary" id="scanVin">📷 Escanear código</button>
         <button class="secondary" id="photoVin">🖼️ Ler da foto</button>
       </div>
     </div>` : ''}
@@ -672,32 +672,74 @@ screens.sair = async () => {
   location.hash = '#/login';
 };
 
-// Câmera lendo o código de barras do VIN (Android/Chrome).
+// Leitor de código de barras: usa o do celular (Android/Chrome) e, quando não
+// existe (iPhone), carrega um leitor próprio servido pelo nosso servidor.
+const VIN_FORMATS = ['code_39', 'code_128', 'data_matrix', 'qr_code', 'pdf417'];
+let detectorPromise;
+function barcodeDetector() {
+  detectorPromise ??= (async () => {
+    if ('BarcodeDetector' in window) {
+      const supported = await BarcodeDetector.getSupportedFormats().catch(() => []);
+      if (VIN_FORMATS.every((f) => supported.includes(f))) return new BarcodeDetector({ formats: VIN_FORMATS });
+    }
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/vendor/barcode-detector.js';
+      script.onload = resolve;
+      script.onerror = () => reject(new Error('Não consegui carregar o leitor de código de barras.'));
+      document.head.appendChild(script);
+    });
+    const { BarcodeDetector: Detector, prepareZXingModule } = window.BarcodeDetectionAPI;
+    prepareZXingModule({ overrides: { locateFile: (file) => `/vendor/${file}` } });
+    return new Detector({ formats: VIN_FORMATS });
+  })();
+  detectorPromise.catch(() => (detectorPromise = null));
+  return detectorPromise;
+}
+
+// Etiquetas às vezes trazem um "I" na frente do VIN (Code 39 de importados).
+function vinFromCode(text) {
+  const clean = String(text || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (clean.length === 18 && clean.startsWith('I')) return clean.slice(1);
+  return clean.match(/[A-HJ-NPR-Z0-9]{17}/)?.[0] || null;
+}
+
+// Câmera lendo o código de barras do VIN (porta do motorista ou para-brisa).
 async function scanBarcode() {
   let stream;
   const overlay = document.createElement('div');
   overlay.className = 'scanner';
-  overlay.innerHTML = '<video playsinline muted></video><p>Aponte para o código de barras do VIN (porta do motorista ou para-brisa)</p><button class="secondary">Cancelar</button>';
+  overlay.innerHTML = '<video playsinline muted></video><p>Aponte para o código de barras do VIN (porta do motorista ou para-brisa). Chegue perto e segure firme.</p><button class="secondary">Cancelar</button>';
   document.body.appendChild(overlay);
   const video = overlay.querySelector('video');
   let stop = false;
   overlay.querySelector('button').onclick = () => (stop = true);
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    let detector;
+    try {
+      detector = await barcodeDetector();
+    } catch (err) {
+      toast(err.message);
+      return null;
+    }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      });
+    } catch {
+      toast('Não consegui abrir a câmera. Libere a câmera para este site nas configurações do celular, ou use "Ler da foto".');
+      return null;
+    }
     video.srcObject = stream;
     await video.play();
-    const detector = new BarcodeDetector({ formats: ['code_39', 'code_128', 'data_matrix', 'qr_code', 'pdf417'] });
     while (!stop) {
       const codes = await detector.detect(video).catch(() => []);
       for (const code of codes) {
-        const match = code.rawValue.toUpperCase().replace(/[^A-Z0-9]/g, '').match(/[A-HJ-NPR-Z0-9]{17}/);
-        if (match) return match[0];
+        const vin = vinFromCode(code.rawValue);
+        if (vin) return vin;
       }
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise((r) => setTimeout(r, 200));
     }
-    return null;
-  } catch (err) {
-    toast('Não consegui abrir a câmera.');
     return null;
   } finally {
     stream?.getTracks().forEach((t) => t.stop());
