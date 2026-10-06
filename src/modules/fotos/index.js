@@ -63,6 +63,9 @@ export function kindFromText(text) {
   return null;
 }
 
+// Nome das fotos dentro do .zip.
+const KIND_FILE = { antes: 'antes', depois: 'depois', vin: 'VIN', outro: 'outra' };
+
 const EXTENSIONS = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/heic': '.heic' };
 
 function savePhoto(ctx, { serviceId, kind, angle = null, buffer, mime, userId }) {
@@ -238,6 +241,30 @@ function routes(api, ctx) {
 
 export default {
   name: 'fotos',
+  // Fotos para o .zip da planilha: uma pasta por serviço.
+  exportFiles({ ctx, from, to, userId }) {
+    const rows = ctx.db
+      .prepare(
+        `SELECT p.*, c.name AS contact_name FROM photos p JOIN services s ON s.id = p.service_id LEFT JOIN contacts c ON c.id = s.contact_id
+         WHERE s.created_at >= ? AND s.created_at < ? ${userId ? 'AND s.driver_id = ?' : ''} ORDER BY p.service_id, p.id`
+      )
+      .all(from, to, ...(userId ? [userId] : []));
+    const clean = (text) => String(text).replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim();
+    const used = new Set();
+    return rows.map((p) => {
+      const folder = clean(`Serviço ${p.service_id}${p.contact_name ? ' - ' + p.contact_name : ''}`);
+      const label = clean([KIND_FILE[p.kind] || p.kind, p.angle ? ANGLE_LABEL[p.angle] || p.angle : ''].filter(Boolean).join(' - '));
+      const ext = path.extname(p.file) || '.jpg';
+      let name = `fotos/${folder}/${label}${ext}`;
+      for (let n = 2; used.has(name); n++) name = `fotos/${folder}/${label} ${n}${ext}`;
+      used.add(name);
+      return { name, path: path.join(ctx.config.uploadsDir, p.file) };
+    });
+  },
+  exportColumns: (ctx) => {
+    const count = ctx.db.prepare('SELECT COUNT(*) AS n FROM photos WHERE service_id = ?');
+    return [{ header: 'Fotos', width: 7, type: 'number', value: (s) => count.get(s.id).n }];
+  },
   label: 'Fotos',
   migrations,
   commands,

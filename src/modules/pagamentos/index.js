@@ -363,8 +363,65 @@ function summaryLines(s) {
   return lines;
 }
 
+// Planilha: colunas de pagamento na aba Serviços e a aba Pagamentos.
+function exportColumns(ctx) {
+  const cache = new Map();
+  const of = (s) => (cache.has(s.id) ? cache.get(s.id) : cache.set(s.id, balance(ctx, s)).get(s.id));
+  return [
+    { header: 'Recebido', width: 11, type: 'money', value: (s) => of(s).received_cents / 100 },
+    { header: 'A receber (seguradora)', width: 14, type: 'money', value: (s) => of(s).to_receive_cents / 100 },
+    { header: 'Falta receber', width: 11, type: 'money', value: (s) => (s.status === 'cancelado' ? 0 : of(s).open_cents / 100) },
+  ];
+}
+
+function exportSheets({ ctx, from, to, userId }) {
+  const where = ['p.created_at >= ?', 'p.created_at < ?'];
+  const params = [from, to];
+  if (userId) {
+    where.push('s.driver_id = ?');
+    params.push(userId);
+  }
+  const rows = ctx.db
+    .prepare(
+      `SELECT p.*, c.name AS contact_name, u.name AS received_by_name
+       FROM payments p JOIN services s ON s.id = p.service_id
+       LEFT JOIN contacts c ON c.id = s.contact_id LEFT JOIN users u ON u.id = p.received_by
+       WHERE ${where.join(' AND ')} ORDER BY p.id`
+    )
+    .all(...params);
+  return [
+    {
+      name: 'Pagamentos',
+      columns: [
+        { header: 'Data', width: 17, type: 'date' },
+        { header: 'Serviço nº', width: 10, type: 'number' },
+        { header: 'Cliente', width: 22 },
+        { header: 'Valor', width: 11, type: 'money' },
+        { header: 'Forma', width: 22 },
+        { header: 'Situação', width: 12 },
+        { header: 'Quem pagou', width: 16 },
+        { header: 'Recebido por', width: 14 },
+        { header: 'Recebido em', width: 17, type: 'date' },
+      ],
+      rows: rows.map((p) => [
+        p.created_at,
+        p.service_id,
+        p.contact_name,
+        p.amount_cents / 100,
+        METHODS[p.method] || p.method,
+        p.status === 'recebido' ? 'Recebido' : 'A receber',
+        p.payer,
+        p.received_by_name,
+        p.received_at,
+      ]),
+    },
+  ];
+}
+
 export default {
   name: 'pagamentos',
+  exportColumns,
+  exportSheets,
   label: 'Pagamentos',
   migrations,
   commands,

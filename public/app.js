@@ -578,12 +578,86 @@ screens.resumo = async (params) => {
     ${s.received_by_method ? `<div class="card"><h2>Recebido por forma</h2><ul class="list">${Object.entries(s.received_by_method).map(([k, v]) => `<li><div class="row"><span>${METHODS[k]}</span><span>${money(v)}</span></div></li>`).join('') || '<li class="empty">Nada recebido.</li>'}</ul></div>` : ''}
     <div id="caixa"></div>
     ${s.open_cents || s.to_receive_cents ? `<div class="card"><h2>Pendências (todas)</h2><p>Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
-    ${s.expenses_by_category && Object.keys(s.expenses_by_category).length ? `<div class="card"><h2>Despesas</h2><ul class="list">${Object.entries(s.expenses_by_category).map(([k, v]) => `<li><div class="row"><span>${CATEGORIES[k] || k}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}`;
+    ${s.expenses_by_category && Object.keys(s.expenses_by_category).length ? `<div class="card"><h2>Despesas</h2><ul class="list">${Object.entries(s.expenses_by_category).map(([k, v]) => `<li><div class="row"><span>${CATEGORIES[k] || k}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}
+    ${has('planilha') ? `<a class="card linkcard" href="#/planilha"><span>📊 Planilha do Excel</span><span>›</span></a>` : ''}`;
   view.querySelectorAll('.segmented button').forEach((b) => {
     b.classList.toggle('active', b.dataset.p === period);
     b.onclick = () => (location.hash = `#/resumo?p=${b.dataset.p}`);
   });
   if (has('pagamentos')) cashCard(view.querySelector('#caixa'));
+};
+
+// Planilha: baixar o Excel do mês e (dono) o link que mantém uma planilha sempre atualizada.
+screens.planilha = async () => {
+  setScreen('Planilha', { tab: 'resumo', back: '#/resumo' });
+  const now = new Date();
+  const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const owner = state.me.role === 'dono';
+  const link = owner ? await api('/planilha/link') : null;
+  const formula = (url) => `=IMPORTDATA("${url}")`;
+  view.innerHTML = `
+    <div class="card">
+      <h2>📥 Baixar planilha</h2>
+      <p class="sub">Serviços${has('pagamentos') ? ', pagamentos' : ''}${has('despesas') ? ' e despesas' : ''}, cada um numa aba. Abre no Excel, no Google Planilhas e no Numbers.</p>
+      <label>Mês</label><input type="month" id="mes" value="${thisMonth}">
+      <div class="actions">
+        <a class="btn" id="baixarMes" href="/api/planilha.xlsx?mes=${thisMonth}">Baixar o mês</a>
+        <a class="btn secondary" href="/api/planilha.xlsx">Baixar tudo</a>
+      </div>
+    </div>
+    ${has('fotos') ? `
+    <div class="card">
+      <h2>📷 Planilha com as fotos</h2>
+      <p class="sub">Um arquivo .zip com a planilha do mês e as fotos de cada serviço, cada serviço numa pasta (ex.: "Serviço 12 - Maria Souza / antes - frente.jpg"). Bom para guardar uma cópia de tudo.</p>
+      <div class="actions">
+        <a class="btn" id="fotosMes" href="/api/planilha.zip?mes=${thisMonth}">Baixar o mês com fotos</a>
+      </div>
+    </div>` : ''}
+    ${owner ? `
+    <div class="card">
+      <h2>🔄 Planilha que se atualiza sozinha</h2>
+      ${link.active ? `
+        <p class="sub">No <strong>Google Planilhas</strong> (grátis, funciona no celular): crie uma planilha, e em cada aba cole a fórmula abaixo na célula A1. Ela atualiza sozinha mais ou menos a cada hora.</p>
+        ${link.sheets.map((sh) => `
+          <label>${esc(sh.name)}</label>
+          <div class="copyrow"><input readonly value="${esc(formula(sh.url))}"><button class="secondary" data-copy="${esc(formula(sh.url))}">Copiar</button></div>`).join('')}
+        <details><summary>Usar no Excel do computador</summary>
+          <p class="sub">No Excel: <strong>Dados › Obter Dados › Da Web</strong>, cole o link de uma aba e clique em Carregar. Para atualizar, use <strong>Dados › Atualizar Tudo</strong> (ou programe para atualizar ao abrir).</p>
+          ${link.sheets.map((sh) => `<div class="copyrow"><input readonly value="${esc(sh.url)}"><button class="secondary" data-copy="${esc(sh.url)}">Copiar</button></div>`).join('')}
+        </details>
+        <p class="sub">⚠️ Quem tiver esses links vê os dados. Não compartilhe. Se vazar, troque o link.</p>
+        <div class="actions"><button class="secondary" id="trocar">Trocar link</button><button class="danger" id="desligar">Desligar</button></div>`
+      : `<p class="sub">Crie um link privado. O Google Planilhas ou o Excel leem esse link e a planilha fica sempre atualizada, sem precisar baixar de novo.</p>
+        <button class="block" id="criar">Criar link</button>`}
+    </div>` : ''}`;
+  const mes = view.querySelector('#mes');
+  mes.onchange = () => {
+    view.querySelector('#baixarMes').href = `/api/planilha.xlsx?mes=${mes.value}`;
+    const fotos = view.querySelector('#fotosMes');
+    if (fotos) fotos.href = `/api/planilha.zip?mes=${mes.value}`;
+  };
+  view.querySelectorAll('[data-copy]').forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(b.dataset.copy);
+      } catch {
+        b.previousElementSibling.select();
+        document.execCommand('copy');
+      }
+      toast('Copiado');
+    };
+  });
+  const make = async () => {
+    await api('/planilha/link', { method: 'POST' });
+    screens.planilha();
+  };
+  view.querySelector('#criar')?.addEventListener('click', make);
+  view.querySelector('#trocar')?.addEventListener('click', () => confirm('O link atual vai parar de funcionar. Trocar?') && make());
+  view.querySelector('#desligar')?.addEventListener('click', async () => {
+    if (!confirm('Desligar o link? As planilhas ligadas a ele param de atualizar.')) return;
+    await api('/planilha/link', { method: 'DELETE' });
+    screens.planilha();
+  });
 };
 
 // Dinheiro e cheques que estão com cada motorista, acumulando até o dono recolher.

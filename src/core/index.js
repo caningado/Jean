@@ -640,6 +640,45 @@ function publicRoutes(app, ctx) {
   });
 }
 
+// Aba "Serviços" da planilha. Os outros módulos acrescentam colunas (exportColumns).
+const STATUS_LABEL = { aberto: 'Em andamento', concluido: 'Concluído', cancelado: 'Cancelado' };
+
+function exportSheets({ ctx, from, to, userId }) {
+  const where = ['s.created_at >= ?', 's.created_at < ?'];
+  const params = [from, to];
+  if (userId) {
+    where.push('s.driver_id = ?');
+    params.push(userId);
+  }
+  const services = ctx.db
+    .prepare(
+      `SELECT s.*, c.name AS contact_name, c.phone AS contact_phone, u.name AS driver_name
+       FROM services s LEFT JOIN contacts c ON c.id = s.contact_id LEFT JOIN users u ON u.id = s.driver_id
+       WHERE ${where.join(' AND ')} ORDER BY s.id`
+    )
+    .all(...params);
+  const extra = ctx.loaded.flatMap((m) => m.exportColumns?.(ctx) || []);
+  const columns = [
+    { header: 'Nº', width: 6, type: 'number', value: (s) => s.id },
+    { header: 'Data', width: 17, type: 'date', value: (s) => s.created_at },
+    { header: 'Situação', width: 14, value: (s) => STATUS_LABEL[s.status] || s.status },
+    { header: 'Motorista', width: 14, value: (s) => s.driver_name },
+    { header: 'Cliente', width: 22, value: (s) => s.contact_name },
+    { header: 'Telefone', width: 16, value: (s) => (s.contact_phone ? formatPhone(s.contact_phone) : '') },
+    { header: 'Retirada', width: 36, value: (s) => s.pickup },
+    { header: 'Destino', width: 36, value: (s) => s.dropoff },
+    { header: 'Veículo', width: 22, value: (s) => s.vehicle },
+    { header: 'Placa', width: 10, value: (s) => s.plate },
+    { header: 'VIN', width: 20, value: (s) => s.vin },
+    { header: 'Milhas', width: 8, type: 'number', value: (s) => s.miles },
+    { header: 'Valor', width: 11, type: 'money', value: (s) => (s.price_cents == null ? null : s.price_cents / 100) },
+    ...extra,
+    { header: 'Concluído em', width: 17, type: 'date', value: (s) => s.completed_at },
+    { header: 'Observações', width: 30, value: (s) => s.notes },
+  ];
+  return [{ name: 'Serviços', columns, rows: services.map((row) => columns.map((c) => c.value(row))) }];
+}
+
 export default {
   name: 'core',
   label: 'Serviços',
@@ -648,4 +687,5 @@ export default {
   flows,
   routes,
   publicRoutes,
+  exportSheets,
 };
