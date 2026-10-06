@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#d97706"/>
+  <g fill="#1c1917">
+    <path d="M70 300h210v-90h70l62 58h30v32h-372z"/>
+    <path d="M300 222h40l44 42h-84z" fill="#fbbf24"/>
+    <path d="M150 210l120-80 14 20-120 80z"/>
+    <circle cx="140" cy="330" r="38"/>
+    <circle cx="350" cy="330" r="38"/>
+  </g>
+  <g fill="#fbbf24">
+    <circle cx="140" cy="330" r="14"/>
+    <circle cx="350" cy="330" r="14"/>
+  </g>
+  <text x="256" y="440" font-family="Arial, Helvetica, sans-serif" font-size="72" font-weight="700" text-anchor="middle" fill="#1c1917">J&amp;J</text>
+</svg>

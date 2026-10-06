@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#d97706">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Guincho">
+  <title>Towing J&amp;J</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <button class="back hidden" id="back" aria-label="Voltar">‹</button>
+    <h1 id="title">Towing J&amp;J</h1>
+  </header>
+  <main id="view" aria-live="polite"></main>
+  <nav class="tabs hidden" id="tabs">
+    <a href="#/servicos" data-tab="servicos"><span>🚛</span>Serviços</a>
+    <a href="#/novo" data-tab="novo"><span>➕</span>Novo</a>
+    <a href="#/contatos" data-tab="contatos"><span>📇</span>Contatos</a>
+    <a href="#/resumo" data-tab="resumo"><span>📊</span>Resumo</a>
+    <a href="#/mais" data-tab="mais"><span>☰</span>Mais</a>
+  </nav>
+  <div class="toast hidden" id="toast" role="status"></div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
