@@ -2,6 +2,7 @@
 import express from 'express';
 import { FlowError } from './bot.js';
 import { hashPin, verifyPin, signToken } from '../lib/auth.js';
+import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkMoney } from '../lib/validate.js';
 import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfMonthIso, formatPhone } from '../lib/util.js';
 
 const migrations = [
@@ -98,59 +99,137 @@ function summaryText(ctx, summary, title) {
   return lines.join('\n');
 }
 
+// Palavras que são comandos: se o motorista mandar uma delas no meio do cadastro,
+// o robô avisa em vez de salvar "ajuda" como endereço, por exemplo.
+function rejectCommand(ctx, text) {
+  const word = simplify(text).split(/\s+/)[0];
+  if (word && ctx.commands.some((c) => c.names.includes(word))) {
+    throw new FlowError('Você está no meio do cadastro de um serviço. Responda a pergunta, ou mande *cancelar*.');
+  }
+}
+
+// Mostra o cliente escolhido (já existente ou novo) enquanto o serviço não foi salvo.
+function draftClient(ctx, data) {
+  const c = data.client || {};
+  if (c.id) {
+    const contact = ctx.data.contacts.get(c.id);
+    return `${contact.name}${contact.phone ? ' ' + formatPhone(contact.phone) : ''}`;
+  }
+  return [c.name, c.phone ? formatPhone(c.phone) : null].filter(Boolean).join(' ') + ' (novo)';
+}
+
+function draftSummary(ctx, data) {
+  const { vehicle, plate } = splitVehicle(data.vehicle);
+  const lines = [`Cliente: ${draftClient(ctx, data)}`, `Retirada: ${data.pickup}`];
+  if (data.dropoff) lines.push(`Destino: ${data.dropoff}`);
+  if (vehicle) lines.push(`Veículo: ${[vehicle, plate].filter(Boolean).join(' · ')}`);
+  if (data.miles != null) lines.push(`Milhas: ${data.miles}`);
+  if (data.price_cents != null) lines.push(`Valor: ${formatMoney(data.price_cents)}`);
+  return lines.join('\n');
+}
+
 const flows = {
   novo: {
     steps: [
       {
-        key: 'contact_id',
-        ask: () => 'Novo serviço 🚛\nQual o *telefone* ou *nome* do cliente?\n(mande *cancelar* a qualquer momento)',
+        key: 'client',
+        ask: () => 'Novo serviço 🚛\nQual o *telefone* ou o *nome* do cliente?\n(mande *cancelar* a qualquer momento)',
         parse(text, { ctx }) {
+          rejectCommand(ctx, text);
           const { contacts } = ctx.data;
-          const phone = normalizePhone(text);
-          if (phone.length >= 10) {
-            return contacts.findOrCreate({ phone, name: text.replace(/[\d\s()+\-.]/g, '').trim() || null, source: 'whatsapp' }).id;
+          const digits = text.replace(/\D/g, '');
+          // Tem número: precisa ser um telefone completo.
+          if (digits.length >= 3) {
+            const phone = checkPhone(text);
+            const existing = contacts.byPhone(phone);
+            if (existing) return { id: existing.id };
+            const rest = text.replace(/[\d()+\-.]/g, ' ').trim();
+            return { phone, name: rest ? checkName(rest, 'O nome do cliente') : null };
           }
-          if (!text) throw new FlowError('Preciso do telefone ou do nome.');
-          const found = contacts.search(text, 6);
-          if (found.length === 1) return found[0].id;
-          const exact = found.find((c) => simplify(c.name) === simplify(text));
-          if (exact) return exact.id;
-          if (found.length > 1) {
-            const names = found.slice(0, 5).map((c) => `• ${c.name} ${formatPhone(c.phone)}`).join('\n');
-            throw new FlowError(`Achei mais de um contato:\n${names}\nMande o telefone para eu saber qual é.`);
-          }
-          return contacts.create({ name: text, source: 'whatsapp' }).id;
+          const name = checkName(text, 'O nome do cliente');
+          const found = contacts.search(name, 9);
+          const exact = found.filter((c) => simplify(c.name) === simplify(name));
+          if (exact.length === 1) return { id: exact[0].id };
+          if (found.length === 1) return { id: found[0].id };
+          // Mais de um cliente com esse nome (ex.: duas Marias): pergunta qual.
+          if (found.length > 1) return { name, candidates: found.map((c) => c.id) };
+          return { name };
+        },
+      },
+      {
+        key: 'client_pick',
+        skip: (data) => !data.client.candidates,
+        ask(data, ctx) {
+          const lines = data.client.candidates.map((id, i) => {
+            const c = ctx.data.contacts.get(id);
+            return `*${i + 1}* ${c.name}${c.phone ? ' ' + formatPhone(c.phone) : ''}`;
+          });
+          return `Achei mais de um cliente com esse nome. Qual é?\n${lines.join('\n')}\n*0* outro cliente (novo)`;
+        },
+        parse(text, { data }) {
+          const n = Number(text.trim());
+          const list = data.client.candidates;
+          if (!Number.isInteger(n) || n < 0 || n > list.length) throw new FlowError(`Responda com um número de 0 a ${list.length}.`);
+          data.client = n === 0 ? { name: data.client.name } : { id: list[n - 1] };
+          return n;
+        },
+      },
+      {
+        key: 'client_name',
+        // Cliente novo que veio só com telefone: pergunta o nome.
+        skip: (data) => Boolean(data.client.id || data.client.name),
+        ask: (data) => `Cliente novo (${formatPhone(data.client.phone)}). Qual o *nome* dele?`,
+        parse(text, { ctx, data }) {
+          rejectCommand(ctx, text);
+          data.client.name = checkName(text, 'O nome do cliente');
+          return data.client.name;
+        },
+      },
+      {
+        key: 'client_phone',
+        optional: true,
+        // Cliente novo que veio só com nome: pergunta o telefone.
+        skip: (data) => Boolean(data.client.id || data.client.phone),
+        ask: (data) => `Cliente novo: *${data.client.name}*. Qual o *telefone* dele? (ou *pular*)`,
+        parse(text, { ctx, data }) {
+          const phone = checkPhone(text);
+          const other = ctx.data.contacts.byPhone(phone);
+          if (other) throw new FlowError(`Esse telefone já é do cliente ${other.name}. Mande outro, ou *pular*.`);
+          data.client.phone = phone;
+          return phone;
         },
       },
       {
         key: 'pickup',
-        ask: () => 'Onde vai *pegar* o veículo? (endereço ou referência)',
-        parse(text) {
-          if (!text) throw new FlowError('Preciso do local de retirada.');
-          return text;
+        ask: () => 'Onde vai *pegar* o veículo? Mande o endereço, cole o link do mapa ou envie a localização 📍',
+        parse(text, { ctx }) {
+          rejectCommand(ctx, text);
+          return checkLocation(text, 'O local de retirada');
         },
       },
       {
         key: 'dropoff',
         optional: true,
-        ask: () => 'Para onde vai *levar*? (ou *pular*)',
-        parse: (text) => text,
+        ask: () => 'Para onde vai *levar*? Mande o endereço, cole o link do mapa ou envie a localização 📍 (ou *pular*)',
+        parse(text, { ctx }) {
+          rejectCommand(ctx, text);
+          return checkLocation(text, 'O destino');
+        },
       },
       {
         key: 'vehicle',
         optional: true,
         ask: () => 'Qual o *veículo e a placa*? Ex: Honda Civic ABC1234 (ou *pular*)',
-        parse: (text) => text,
+        parse(text, { ctx }) {
+          rejectCommand(ctx, text);
+          return checkVehicle(text);
+        },
       },
       {
         key: 'miles',
         optional: true,
         ask: () => 'Quantas *milhas*? (ou *pular*)',
-        parse(text) {
-          const miles = Number(String(text).replace(',', '.').replace(/[^\d.]/g, ''));
-          if (!Number.isFinite(miles) || miles <= 0) throw new FlowError('Mande só o número de milhas, ex: 12.5');
-          return miles;
-        },
+        parse: (text) => checkMiles(text.replace(/mi(les|lhas)?/i, '')),
       },
       {
         key: 'price_cents',
@@ -164,15 +243,36 @@ const flows = {
         parse(text, { ctx, data }) {
           const suggestion = suggestPrice(ctx, data.miles);
           if (simplify(text) === 'ok' && suggestion != null) return suggestion;
-          const cents = parseMoney(text);
-          if (cents == null) throw new FlowError('Não entendi o valor. Ex: 150 ou 150.50');
-          return cents;
+          if (!/^\$?\s*[\d.,]+\s*$/.test(text.trim())) throw new FlowError('Mande só o valor em dólar. Ex: 150 ou 150.50');
+          return checkMoney(parseMoney(text), { what: 'O valor do serviço' });
+        },
+      },
+      {
+        key: 'confirmed',
+        ask: (data, ctx) => `Confere?\n\n${draftSummary(ctx, data)}\n\nMande *sim* para salvar ou *cancelar* para descartar.`,
+        parse(text) {
+          if (['sim', 's', 'ok', 'confirmar', 'salvar', 'isso'].includes(simplify(text))) return true;
+          throw new FlowError('Mande *sim* para salvar, ou *cancelar* e depois *novo* para começar de novo.');
         },
       },
     ],
     async finish({ ctx, user, data }) {
+      // O contato novo só é criado aqui, depois da confirmação.
+      const client = data.client;
+      const contactId = client.id
+        ? client.id
+        : ctx.data.contacts.findOrCreate({ phone: client.phone || null, name: client.name, source: 'whatsapp' }).id;
       const { vehicle, plate } = splitVehicle(data.vehicle);
-      const service = ctx.data.services.create({ ...data, vehicle, plate, driver_id: user.id });
+      const service = ctx.data.services.create({
+        contact_id: contactId,
+        pickup: data.pickup,
+        dropoff: data.dropoff,
+        vehicle,
+        plate,
+        miles: data.miles,
+        price_cents: data.price_cents,
+        driver_id: user.id,
+      });
       ctx.data.services.setActive(user.id, service.id);
       const hints = ctx.serviceHints.length ? '\n\n' + ctx.serviceHints.join('\n') : '';
       return `✅ Serviço #${service.id} criado.\n\n${ctx.data.services.describe(service)}${hints}\nQuando entregar, mande *entregue*.`;
@@ -192,7 +292,8 @@ export function splitVehicle(text) {
   if (!text) return { vehicle: null, plate: null };
   const parts = text.trim().split(/\s+/);
   const last = parts[parts.length - 1];
-  if (parts.length > 1 && /^[A-Z0-9-]{4,8}$/i.test(last) && /\d/.test(last) && /[A-Z]/i.test(last)) {
+  // Placa: 5 a 8 letras/números misturados ("F150" e "F-150" são modelos, não placas).
+  if (parts.length > 1 && /^[A-Z0-9]{5,8}$/i.test(last) && /\d/.test(last) && /[A-Z]/i.test(last)) {
     return { vehicle: parts.slice(0, -1).join(' '), plate: last.toUpperCase() };
   }
   return { vehicle: text.trim(), plate: null };
@@ -254,6 +355,32 @@ const commands = [
   },
 ];
 
+const blank = (v) => v == null || String(v).trim() === '';
+const optional = (v, check) => (blank(v) ? null : check(v));
+const checkPin = (pin) => {
+  if (!/^\d{4,8}$/.test(String(pin ?? ''))) throw new HttpError(400, 'O PIN precisa ter de 4 a 8 números.');
+  return String(pin);
+};
+
+// Confere os campos de um serviço vindos do painel. Em edição (partial), só os que vieram.
+function serviceFields(body, { partial = false } = {}) {
+  const out = {};
+  const has = (k) => !partial || body[k] !== undefined;
+  if (has('pickup')) out.pickup = partial ? optional(body.pickup, (v) => checkLocation(v, 'O local de retirada')) : checkLocation(body.pickup, 'O local de retirada');
+  if (has('dropoff')) out.dropoff = optional(body.dropoff, (v) => checkLocation(v, 'O destino'));
+  if (has('vehicle')) out.vehicle = optional(body.vehicle, checkVehicle);
+  if (has('plate')) out.plate = optional(body.plate, checkPlate);
+  if (has('miles')) out.miles = optional(body.miles, checkMiles);
+  if (has('price')) out.price_cents = optional(body.price, (v) => checkMoney(parseMoney(v), { what: 'O valor do serviço' }));
+  if (has('notes')) out.notes = blank(body.notes) ? null : String(body.notes).trim().slice(0, 1000);
+  if (partial && body.status !== undefined) {
+    if (!['aberto', 'concluido', 'cancelado'].includes(body.status)) throw new HttpError(400, 'Situação inválida.');
+    out.status = body.status;
+  }
+  if (body.driver_id !== undefined) out.driver_id = Number(body.driver_id) || null;
+  return out;
+}
+
 function routes(api, ctx) {
   const { data, db } = ctx;
 
@@ -273,10 +400,10 @@ function routes(api, ctx) {
   });
   api.post('/users', (req, res) => {
     requireOwner(req);
-    const { name, phone, pin, role = 'motorista' } = req.body || {};
-    const p = normalizePhone(phone);
-    if (!name || p.length < 10) throw new HttpError(400, 'Informe nome e telefone com DDD.');
-    if (pin && String(pin).length < 4) throw new HttpError(400, 'O PIN precisa ter pelo menos 4 números.');
+    const { role = 'motorista' } = req.body || {};
+    const name = checkName(req.body?.name);
+    const p = checkPhone(req.body?.phone);
+    const pin = blank(req.body?.pin) ? null : checkPin(req.body.pin);
     if (db.prepare('SELECT 1 FROM users WHERE phone = ?').get(p)) throw new HttpError(409, 'Esse telefone já está na equipe.');
     const info = db
       .prepare('INSERT INTO users (name, phone, role, pin_hash, created_at) VALUES (?, ?, ?, ?, ?)')
@@ -290,22 +417,23 @@ function routes(api, ctx) {
     const { name, phone, pin, active } = req.body || {};
     if (user.id === req.user.id && active === false) throw new HttpError(400, 'Você não pode desativar a si mesmo.');
     db.prepare('UPDATE users SET name = ?, phone = ?, active = ? WHERE id = ?').run(
-      name ?? user.name,
-      phone ? normalizePhone(phone) : user.phone,
+      blank(name) ? user.name : checkName(name),
+      blank(phone) ? user.phone : checkPhone(phone),
       active === undefined ? user.active : active ? 1 : 0,
       user.id
     );
-    if (pin) db.prepare('UPDATE users SET pin_hash = ? WHERE id = ?').run(hashPin(pin), user.id);
+    if (!blank(pin)) db.prepare('UPDATE users SET pin_hash = ? WHERE id = ?').run(hashPin(checkPin(pin)), user.id);
     res.json(publicUser(data.users.get(user.id)));
   });
 
   // Contatos
   api.get('/contacts', (req, res) => res.json(data.contacts.search(req.query.q || '', 500)));
   api.post('/contacts', (req, res) => {
-    const { name, phone, email, notes } = req.body || {};
-    if (!name && !phone) throw new HttpError(400, 'Informe nome ou telefone.');
+    const { email, notes } = req.body || {};
+    const name = checkName(req.body?.name);
+    const phone = optional(req.body?.phone, checkPhone);
     if (phone && data.contacts.byPhone(phone)) throw new HttpError(409, 'Já existe um contato com esse telefone.');
-    res.status(201).json(data.contacts.create({ name, phone, email, notes }));
+    res.status(201).json(data.contacts.create({ name, phone, email: blank(email) ? null : email, notes: blank(notes) ? null : notes }));
   });
   api.get('/contacts/:id', (req, res) => {
     const contact = data.contacts.get(Number(req.params.id));
@@ -314,7 +442,17 @@ function routes(api, ctx) {
     res.json({ ...contact, services });
   });
   api.patch('/contacts/:id', (req, res) => {
-    const contact = data.contacts.update(Number(req.params.id), req.body || {});
+    const body = req.body || {};
+    const fields = {};
+    if (body.name !== undefined) fields.name = checkName(body.name);
+    if (body.phone !== undefined) {
+      fields.phone = optional(body.phone, checkPhone);
+      const other = fields.phone && data.contacts.byPhone(fields.phone);
+      if (other && other.id !== Number(req.params.id)) throw new HttpError(409, `Esse telefone já é do contato ${other.name}.`);
+    }
+    if (body.email !== undefined) fields.email = blank(body.email) ? null : body.email;
+    if (body.notes !== undefined) fields.notes = blank(body.notes) ? null : body.notes;
+    const contact = data.contacts.update(Number(req.params.id), fields);
     if (!contact) throw new HttpError(404, 'Contato não encontrado.');
     res.json(contact);
   });
@@ -331,21 +469,16 @@ function routes(api, ctx) {
   });
   api.post('/services', (req, res) => {
     const body = req.body || {};
-    let contactId = body.contact_id || null;
-    if (!contactId && (body.contact_phone || body.contact_name)) {
-      contactId = (body.contact_phone
-        ? data.contacts.findOrCreate({ phone: body.contact_phone, name: body.contact_name })
-        : data.contacts.create({ name: body.contact_name })
-      ).id;
-    }
-    const driverId = req.user.role === 'dono' ? body.driver_id || req.user.id : req.user.id;
-    const service = data.services.create({
-      ...body,
-      contact_id: contactId,
-      driver_id: driverId,
-      price_cents: body.price != null && body.price !== '' ? parseMoney(body.price) : null,
-      miles: body.miles ? Number(body.miles) : null,
-    });
+    // Confere tudo antes de criar qualquer coisa.
+    const fields = serviceFields(body);
+    const contactName = optional(body.contact_name, (v) => checkName(v, 'O nome do cliente'));
+    const contactPhone = optional(body.contact_phone, checkPhone);
+    let contactId = Number(body.contact_id) || null;
+    if (contactId && !data.contacts.get(contactId)) throw new HttpError(400, 'Cliente não encontrado.');
+    if (!contactId && contactPhone) contactId = data.contacts.findOrCreate({ phone: contactPhone, name: contactName }).id;
+    else if (!contactId && contactName) contactId = data.contacts.create({ name: contactName }).id;
+    const driverId = req.user.role === 'dono' ? fields.driver_id || req.user.id : req.user.id;
+    const service = data.services.create({ ...fields, contact_id: contactId, driver_id: driverId });
     data.services.setActive(driverId, service.id);
     res.status(201).json(service);
   });
@@ -361,8 +494,8 @@ function routes(api, ctx) {
   api.patch('/services/:id', (req, res) => {
     const service = data.services.get(Number(req.params.id));
     if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
-    const body = { ...(req.body || {}) };
-    if (body.price !== undefined) body.price_cents = body.price === '' || body.price == null ? null : parseMoney(body.price);
+    const body = serviceFields(req.body || {}, { partial: true });
+    if (body.pickup === null) delete body.pickup; // retirada não pode ficar vazia
     if (req.user.role !== 'dono') delete body.driver_id;
     const updated = data.services.update(service.id, body);
     if (body.status && body.status !== 'aberto') {
@@ -394,11 +527,9 @@ function publicRoutes(app, ctx) {
 
   app.post('/api/setup', (req, res) => {
     if (data.users.count() > 0) throw new HttpError(409, 'O sistema já foi configurado.');
-    const { name, phone, pin } = req.body || {};
-    const p = normalizePhone(phone);
-    if (!name || p.length < 10 || !pin || String(pin).length < 4) {
-      throw new HttpError(400, 'Informe nome, telefone com DDD e um PIN de pelo menos 4 números.');
-    }
+    const name = checkName(req.body?.name, 'Seu nome');
+    const p = checkPhone(req.body?.phone);
+    const pin = checkPin(req.body?.pin);
     const info = db
       .prepare("INSERT INTO users (name, phone, role, pin_hash, created_at) VALUES (?, ?, 'dono', ?, ?)")
       .run(name, p, hashPin(pin), new Date().toISOString());

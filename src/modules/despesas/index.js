@@ -1,5 +1,6 @@
 // Módulo de despesas: combustível, pedágio, manutenção etc., por motorista.
 import { parseMoney, formatMoney, simplify, nowIso, HttpError } from '../../lib/util.js';
+import { checkMoney, ValidationError } from '../../lib/validate.js';
 
 export const CATEGORIES = {
   combustivel: 'Combustível',
@@ -50,6 +51,12 @@ const commands = [
       const amountArg = args.find((a) => /\d/.test(a));
       const amountCents = parseMoney(amountArg);
       if (!amountCents) return 'Faltou o valor. Ex: *gasto 80 diesel* ou *gasto 12 pedágio*';
+      try {
+        checkMoney(amountCents, { max: 5000, what: 'O valor da despesa' });
+      } catch (err) {
+        if (err instanceof ValidationError) return `⚠️ ${err.message}`;
+        throw err;
+      }
       const words = String(text).trim().split(/\s+/).slice(1);
       const description = words.filter((w) => w !== amountArg && !/^\$?[\d.,]+$/.test(w)).join(' ');
       const first = simplify(text).split(/\s+/)[0];
@@ -83,8 +90,7 @@ function routes(api, ctx) {
 
   api.post('/expenses', (req, res) => {
     const { amount, category, description, service_id } = req.body || {};
-    const amountCents = parseMoney(amount);
-    if (!amountCents) throw new HttpError(400, 'Informe o valor.');
+    const amountCents = checkMoney(parseMoney(amount), { max: 5000, what: 'O valor da despesa' });
     const cat = CATEGORIES[category] ? category : guessCategory(description);
     res.status(201).json(addExpense(ctx, { userId: req.user.id, serviceId: service_id || null, amountCents, category: cat, description }));
   });

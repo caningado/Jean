@@ -62,6 +62,7 @@ test('agenda .vcf', () => {
 test('veículo e placa', () => {
   assert.deepEqual(splitVehicle('Honda Civic ABC1234'), { vehicle: 'Honda Civic', plate: 'ABC1234' });
   assert.deepEqual(splitVehicle('Ford F-150 branca'), { vehicle: 'Ford F-150 branca', plate: null });
+  assert.deepEqual(splitVehicle('Ford F150'), { vehicle: 'Ford F150', plate: null });
 });
 
 test('formas de pagamento, categorias e tipo de foto', () => {
@@ -96,4 +97,25 @@ test('webhook do WhatsApp', () => {
   assert.equal(validSignature(body, sig, 's3cret'), true);
   assert.equal(validSignature(body, sig, 'outro'), false);
   assert.equal(validSignature(body, undefined, 's3cret'), false);
+});
+
+test('local: endereço colado, link de mapa e coordenadas', async () => {
+  const { checkLocation, mapLink } = await import('../src/lib/validate.js');
+  assert.equal(checkLocation('12 Main St\nFramingham, MA'), '12 Main St, Framingham, MA');
+  const link = 'https://maps.app.goo.gl/AbC123xyz';
+  assert.equal(checkLocation(link), link);
+  assert.equal(mapLink(link), link);
+  assert.equal(checkLocation('Waze https://waze.com/ul/hdrt1234'), 'Waze https://waze.com/ul/hdrt1234');
+  assert.throws(() => checkLocation('https://example.com/x'), /não é de mapa/);
+  assert.equal(checkLocation('42.3601, -71.0589'), '42.3601, -71.0589');
+  assert.equal(mapLink('42.3601, -71.0589'), 'https://www.google.com/maps?q=42.3601,-71.0589');
+  assert.throws(() => checkLocation('123'), /parece incompleto/);
+  assert.match(mapLink('12 Main St, Framingham'), /maps\/search\/\?api=1&query=12%20Main%20St%2C%20Framingham/);
+});
+
+test('localização 📍 do WhatsApp vira texto com coordenadas', () => {
+  const payload = { entry: [{ changes: [{ value: { messages: [
+    { id: 'l', from: '15085550111', type: 'location', location: { latitude: 42.3601, longitude: -71.0589, name: "Joe's Auto", address: '1 Elm St' } },
+  ] } }] }] };
+  assert.equal(extractMessages(payload)[0].text, "Joe's Auto, 1 Elm St (42.3601, -71.0589)");
 });

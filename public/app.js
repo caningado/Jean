@@ -21,6 +21,22 @@ const money = (cents) => '$' + ((cents || 0) / 100).toLocaleString('en-US', { mi
 const phoneFmt = (p) => (/^1\d{10}$/.test(p || '') ? `(${p.slice(1, 4)}) ${p.slice(4, 7)}-${p.slice(7)}` : p ? '+' + p : '');
 const when = (iso) => (iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
+// Endereço, link de mapa ou coordenadas -> link que abre no mapa do celular.
+const COORDS = /(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})/;
+function mapLink(location) {
+  const url = location.match(/https?:\/\/[^\s]+/i)?.[0];
+  if (url) return url;
+  const c = location.match(COORDS);
+  if (c) return `https://www.google.com/maps?q=${c[1]},${c[2]}`;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
+}
+// Mostra o local sem o link comprido, com um botão para abrir no mapa.
+function placeHtml(icon, location) {
+  if (!location) return '';
+  const label = location.replace(/https?:\/\/[^\s]+/gi, '').trim() || 'Local pelo link do mapa';
+  return `<div class="place">${icon} ${esc(label)} <a href="${esc(mapLink(location))}" target="_blank" rel="noopener">Abrir no mapa</a></div>`;
+}
+
 function toast(message) {
   toastEl.textContent = message;
   toastEl.classList.remove('hidden');
@@ -158,7 +174,7 @@ screens.servicos = async (params) => {
         .map(
           (s) => `<li><a href="#/servico/${s.id}">
             <div><strong>#${s.id} ${esc(s.contact_name || 'Sem cliente')}</strong>
-              <div class="sub">${esc([s.vehicle, s.plate].filter(Boolean).join(' · ') || s.pickup || '')}</div>
+              <div class="sub">${esc([s.vehicle, s.plate].filter(Boolean).join(' · ') || (s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa'))}</div>
               <div class="sub">${when(s.created_at)}${state.me.role === 'dono' && s.driver_name ? ' · ' + esc(s.driver_name) : ''}</div></div>
             <div class="right">${s.price_cents != null ? money(s.price_cents) : ''}<br><span class="badge ${s.status}">${STATUS[s.status]}</span></div>
           </a></li>`
@@ -176,8 +192,8 @@ screens.novo = async () => {
     <form class="card" id="f">
       <label>Telefone do cliente</label><input name="contact_phone" type="tel" list="contacts" placeholder="(508) 555-0123">
       <label>Nome do cliente</label><input name="contact_name">
-      <label>Retirada (onde pegar)</label><input name="pickup" required>
-      <label>Destino (para onde levar)</label><input name="dropoff">
+      <label>Retirada (onde pegar)</label><input name="pickup" required placeholder="Endereço ou link do mapa">
+      <label>Destino (para onde levar)</label><input name="dropoff" placeholder="Endereço ou link do mapa">
       <div class="row2">
         <div><label>Veículo</label><input name="vehicle" placeholder="Honda Civic"></div>
         <div><label>Placa</label><input name="plate" autocapitalize="characters"></div>
@@ -232,7 +248,7 @@ screens.servico = async (params, id) => {
         <span class="badge ${s.status}">${STATUS[s.status]}</span>
       </div>
       ${s.contact_phone ? `<p><a href="tel:+${s.contact_phone}">📞 ${phoneFmt(s.contact_phone)}</a> · <a href="https://wa.me/${s.contact_phone}" target="_blank" rel="noopener">WhatsApp</a></p>` : ''}
-      <p class="sub">📍 ${esc(s.pickup || '—')}${s.dropoff ? `<br>🏁 ${esc(s.dropoff)}` : ''}</p>
+      ${placeHtml('📍', s.pickup)}${placeHtml('🏁', s.dropoff)}
       <p>🚗 ${esc([s.vehicle, s.plate].filter(Boolean).join(' · ') || 'Veículo não informado')}</p>
       ${s.miles != null ? `<p class="sub">${s.miles} milhas</p>` : ''}
       <p class="big">${s.price_cents != null ? money(s.price_cents) : 'Sem valor'}</p>

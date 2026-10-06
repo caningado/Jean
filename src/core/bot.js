@@ -2,8 +2,10 @@
 // (telefone + texto ou foto) e devolve as respostas. O módulo whatsapp é só
 // o meio de transporte, e o simulador do painel usa este mesmo código.
 import { normalizePhone, simplify, nowIso } from '../lib/util.js';
+import { ValidationError } from '../lib/validate.js';
 
-export class FlowError extends Error {}
+// Resposta inválida numa conversa: o robô mostra a mensagem e repete a pergunta.
+export class FlowError extends ValidationError {}
 
 export function createBot(ctx) {
   const { db } = ctx;
@@ -65,7 +67,7 @@ export function createBot(ctx) {
       try {
         data[step.key] = await step.parse(answer, { ctx, user, data });
       } catch (err) {
-        if (err instanceof FlowError) return [err.message, step.ask(data, ctx)];
+        if (err instanceof ValidationError) return [`⚠️ ${err.message}`, step.ask(data, ctx)];
         throw err;
       }
     }
