@@ -60,8 +60,42 @@ async function api(path, { method = 'GET', body, raw, type } = {}) {
     location.hash = '#/login';
     throw new Error(data?.error || 'Faça login.');
   }
-  if (!res.ok) throw new Error(data?.error || 'Algo deu errado.');
+  if (!res.ok) {
+    const err = new Error(data?.error || 'Algo deu errado.');
+    err.code = data?.code;
+    throw err;
+  }
   return data;
+}
+
+// Sugestões de endereço do mapa enquanto digita (retirada e destino).
+function placeSuggestions(input) {
+  const list = document.createElement('datalist');
+  list.id = `places-${input.name}`;
+  input.after(list);
+  input.setAttribute('list', list.id);
+  input.autocomplete = 'off';
+  let timer;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 6 || /https?:\/\//i.test(q)) return;
+    timer = setTimeout(async () => {
+      const { matches } = await api(`/places?q=${encodeURIComponent(q)}`).catch(() => ({ matches: [] }));
+      if (input.value.trim() !== q) return;
+      list.innerHTML = matches.map((m) => `<option value="${esc(m)}">`).join('');
+    }, 600);
+  });
+}
+
+// Salva; se o endereço não foi achado no mapa, pergunta se quer salvar assim mesmo.
+async function sendCheckingAddress(send, body) {
+  try {
+    return await send(body);
+  } catch (err) {
+    if (err.code === 'endereco' && confirm(`${err.message}\n\nSalvar assim mesmo?`)) return send({ ...body, address_ok: true });
+    throw err;
+  }
 }
 
 function formData(form) {
@@ -208,6 +242,8 @@ screens.novo = async () => {
       <button class="block">Criar serviço</button>
     </form>`;
   const form = view.querySelector('#f');
+  placeSuggestions(form.pickup);
+  placeSuggestions(form.dropoff);
   // Ao digitar o telefone, completa o nome se o cliente já estiver na agenda.
   form.contact_phone.onchange = async () => {
     const q = form.contact_phone.value.replace(/\D/g, '');
@@ -226,7 +262,7 @@ screens.novo = async () => {
     try {
       const body = formData(form);
       if (body.driver_id) body.driver_id = Number(body.driver_id);
-      const service = await api('/services', { method: 'POST', body });
+      const service = await sendCheckingAddress((b) => api('/services', { method: 'POST', body: b }), body);
       toast(`Serviço #${service.id} criado`);
       location.hash = `#/servico/${service.id}`;
     } catch (err) {
@@ -425,13 +461,15 @@ screens.editar = async (params, id) => {
       <label>Observações</label><textarea name="notes" rows="3">${esc(s.notes)}</textarea>
       <button class="block">Salvar</button>
     </form>`;
+  placeSuggestions(view.querySelector('#f').pickup);
+  placeSuggestions(view.querySelector('#f').dropoff);
   view.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
     const body = formData(e.target);
     body.miles = body.miles === '' ? null : Number(body.miles);
     if (body.driver_id) body.driver_id = Number(body.driver_id);
     try {
-      await api(`/services/${id}`, { method: 'PATCH', body });
+      await sendCheckingAddress((b) => api(`/services/${id}`, { method: 'PATCH', body: b }), body);
       toast('Salvo');
       location.hash = `#/servico/${id}`;
     } catch (err) {

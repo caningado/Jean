@@ -20,6 +20,7 @@ export function makeContext(overrides = {}) {
     WHATSAPP_TOKEN: '',
     WHATSAPP_PHONE_NUMBER_ID: '',
     ANTHROPIC_API_KEY: '',
+    GEOCODER: 'off',
     ...overrides,
   });
   const ctx = createContext(config);

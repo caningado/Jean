@@ -72,10 +72,19 @@ export function createBot(ctx) {
       }
     }
 
+    // Um passo pode deixar um aviso (data._notice) para mostrar antes da próxima pergunta,
+    // e pode pedir para ser repetido (step.again) com os dados novos.
+    const notice = data._notice;
+    delete data._notice;
+    const withNotice = (reply) => (notice ? [notice, ...[].concat(reply)] : reply);
+    if (step.again?.(data)) {
+      saveConversation(user.id, conversation.flow, conversation.step, data);
+      return withNotice(step.ask(data, ctx));
+    }
     const next = nextStep(flow, conversation.step + 1, data);
-    if (next >= flow.steps.length) return finishFlow(user, flow, data);
+    if (next >= flow.steps.length) return withNotice(await finishFlow(user, flow, data));
     saveConversation(user.id, conversation.flow, next, data);
-    return flow.steps[next].ask(data, ctx);
+    return withNotice(flow.steps[next].ask(data, ctx));
   }
 
   function findCommand(word) {

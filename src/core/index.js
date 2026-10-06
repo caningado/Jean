@@ -2,7 +2,7 @@
 import express from 'express';
 import { FlowError } from './bot.js';
 import { hashPin, verifyPin, signToken } from '../lib/auth.js';
-import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkMoney } from '../lib/validate.js';
+import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkMoney, isMapReference } from '../lib/validate.js';
 import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfMonthIso, formatPhone } from '../lib/util.js';
 
 const migrations = [
@@ -108,6 +108,68 @@ function rejectCommand(ctx, text) {
   }
 }
 
+// Procura o endereço digitado no mapa. Link de mapa e localização 📍 já são exatos.
+// Se o serviço de mapa estiver fora do ar, aceita como foi digitado.
+async function resolvePlace(ctx, location) {
+  if (!ctx.geo || isMapReference(location)) return { value: location };
+  const found = await ctx.geo.lookup(location);
+  if (found.status === 'erro') return { value: location };
+  if (found.matches.length === 1) return { value: found.matches[0].label, notice: `📍 Achei no mapa: *${found.matches[0].label}*` };
+  return { check: { query: location, options: found.matches.map((m) => m.label) } };
+}
+
+// Dois passos para um local (retirada ou destino): o local e, se precisar, a escolha
+// entre os endereços achados no mapa (ou o aviso de que não achou).
+function placeSteps(key, what, askText, { optional = false } = {}) {
+  const checkKey = `${key}_check`;
+  const resolve = async (ctx, data, text) => {
+    rejectCommand(ctx, text);
+    const place = await resolvePlace(ctx, checkLocation(text, what));
+    if (place.check) return place.check;
+    data[key] = place.value;
+    if (place.notice) data._notice = place.notice;
+    return null;
+  };
+  return [
+    {
+      key,
+      optional,
+      ask: () => askText,
+      async parse(text, { ctx, data }) {
+        data[checkKey] = await resolve(ctx, data, text);
+        return data[key] ?? null;
+      },
+    },
+    {
+      key: checkKey,
+      skip: (data) => !data[checkKey],
+      again: (data) => Boolean(data[checkKey]),
+      ask(data) {
+        const { query, options } = data[checkKey];
+        if (!options.length) {
+          return (
+            `⚠️ Não achei "${query}" no mapa.\n` +
+            'Confira o número, a rua e a cidade e mande de novo, cole o link do mapa ou envie a localização 📍.\n' +
+            'Se estiver certo assim, mande *0* para usar como digitei.'
+          );
+        }
+        const lines = options.map((label, i) => `*${i + 1}* ${label}`);
+        return `Achei mais de um endereço para "${query}". Qual é?\n${lines.join('\n')}\n*0* usar como digitei\nOu digite o endereço de novo.`;
+      },
+      async parse(text, { ctx, data }) {
+        const { query, options } = data[checkKey];
+        const answer = text.trim();
+        if (/^\d{1,2}$/.test(answer) && Number(answer) <= options.length) {
+          const n = Number(answer);
+          data[key] = n === 0 ? query : options[n - 1];
+          return null;
+        }
+        return resolve(ctx, data, text);
+      },
+    },
+  ];
+}
+
 // Mostra o cliente escolhido (já existente ou novo) enquanto o serviço não foi salvo.
 function draftClient(ctx, data) {
   const c = data.client || {};
@@ -199,23 +261,10 @@ const flows = {
           return phone;
         },
       },
-      {
-        key: 'pickup',
-        ask: () => 'Onde vai *pegar* o veículo? Mande o endereço, cole o link do mapa ou envie a localização 📍',
-        parse(text, { ctx }) {
-          rejectCommand(ctx, text);
-          return checkLocation(text, 'O local de retirada');
-        },
-      },
-      {
-        key: 'dropoff',
+      ...placeSteps('pickup', 'O local de retirada', 'Onde vai *pegar* o veículo? Mande o endereço, cole o link do mapa ou envie a localização 📍'),
+      ...placeSteps('dropoff', 'O destino', 'Para onde vai *levar*? Mande o endereço, cole o link do mapa ou envie a localização 📍 (ou *pular*)', {
         optional: true,
-        ask: () => 'Para onde vai *levar*? Mande o endereço, cole o link do mapa ou envie a localização 📍 (ou *pular*)',
-        parse(text, { ctx }) {
-          rejectCommand(ctx, text);
-          return checkLocation(text, 'O destino');
-        },
-      },
+      }),
       {
         key: 'vehicle',
         optional: true,
@@ -363,6 +412,31 @@ const checkPin = (pin) => {
 };
 
 // Confere os campos de um serviço vindos do painel. Em edição (partial), só os que vieram.
+// Painel: confere no mapa a retirada e o destino que mudaram. Troca pelo endereço
+// completo quando acha um só; recusa quando não acha (a não ser com address_ok).
+async function checkPlaces(ctx, fields, body, current = {}) {
+  for (const [key, what] of [['pickup', 'a retirada'], ['dropoff', 'o destino']]) {
+    const value = fields[key];
+    if (!value || value === current[key] || body.address_ok || ctx.suggestedPlaces?.has(value)) continue;
+    const place = await resolvePlace(ctx, value);
+    if (place.value) {
+      fields[key] = place.value;
+      continue;
+    }
+    const { options } = place.check;
+    if (options.some((o) => o.toLowerCase() === value.toLowerCase())) continue;
+    const err = new HttpError(
+      400,
+      options.length
+        ? `Achei mais de um endereço para ${what} "${value}". Escolha um da lista que aparece ao digitar.`
+        : `Não achei ${what} "${value}" no mapa. Confira o número, a rua e a cidade.`
+    );
+    err.code = options.length ? 'endereco_varios' : 'endereco';
+    err.options = options;
+    throw err;
+  }
+}
+
 function serviceFields(body, { partial = false } = {}) {
   const out = {};
   const has = (k) => !partial || body[k] !== undefined;
@@ -467,10 +541,24 @@ function routes(api, ctx) {
     const driverId = req.user.role === 'dono' ? Number(req.query.driver) || null : req.user.id;
     res.json(data.services.list({ status: req.query.status || null, driverId, limit: Number(req.query.limit) || 100 }));
   });
-  api.post('/services', (req, res) => {
+  // Sugestões de endereço enquanto digita no painel.
+  api.get('/places', async (req, res) => {
+    const q = String(req.query.q || '').trim();
+    if (!ctx.geo || q.length < 4 || q.length > 200 || isMapReference(q)) return res.json({ matches: [] });
+    const found = await ctx.geo.lookup(q);
+    const labels = found.matches.map((m) => m.label);
+    // Endereço escolhido da lista já veio do mapa: não precisa conferir de novo ao salvar.
+    ctx.suggestedPlaces ??= new Set();
+    for (const label of labels) ctx.suggestedPlaces.add(label);
+    if (ctx.suggestedPlaces.size > 1000) ctx.suggestedPlaces.clear();
+    res.json({ matches: labels });
+  });
+
+  api.post('/services', async (req, res) => {
     const body = req.body || {};
     // Confere tudo antes de criar qualquer coisa.
     const fields = serviceFields(body);
+    await checkPlaces(ctx, fields, body);
     const contactName = optional(body.contact_name, (v) => checkName(v, 'O nome do cliente'));
     const contactPhone = optional(body.contact_phone, checkPhone);
     let contactId = Number(body.contact_id) || null;
@@ -491,10 +579,11 @@ function routes(api, ctx) {
     }
     res.json({ ...service, vin_info: service.vin_info ? JSON.parse(service.vin_info) : null, ...extras });
   });
-  api.patch('/services/:id', (req, res) => {
+  api.patch('/services/:id', async (req, res) => {
     const service = data.services.get(Number(req.params.id));
     if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
     const body = serviceFields(req.body || {}, { partial: true });
+    await checkPlaces(ctx, body, req.body || {}, service);
     if (body.pickup === null) delete body.pickup; // retirada não pode ficar vazia
     if (req.user.role !== 'dono') delete body.driver_id;
     const updated = data.services.update(service.id, body);
