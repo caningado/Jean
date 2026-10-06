@@ -43,8 +43,8 @@ export function loadConfig(overrides = {}) {
       verifyToken: env.WHATSAPP_VERIFY_TOKEN || '',
       appSecret: env.WHATSAPP_APP_SECRET || '',
       apiVersion: env.WHATSAPP_API_VERSION || 'v21.0',
-      // Resposta automática para quem não é da equipe: nunca (padrão), diaria ou sempre.
-      outsiderReply: ['diaria', 'sempre'].includes(env.WHATSAPP_RESPOSTA_FORA) ? env.WHATSAPP_RESPOSTA_FORA : 'nunca',
+      // Resposta automática para quem não é da equipe: diaria (padrão), nunca ou sempre.
+      outsiderReply: ['nunca', 'sempre'].includes(env.WHATSAPP_RESPOSTA_FORA) ? env.WHATSAPP_RESPOSTA_FORA : 'diaria',
     },
     anthropicApiKey: env.ANTHROPIC_API_KEY || '',
     // Conferir endereços no mapa (Census + OpenStreetMap, grátis). GEOCODER=off desliga.

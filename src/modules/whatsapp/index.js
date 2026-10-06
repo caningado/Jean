@@ -98,8 +98,8 @@ export async function processMessage(ctx, client, msg) {
   for (const reply of replies) await client.sendText(msg.from, reply);
 }
 
-// Alguém de fora da equipe (cliente, amigo) mandou mensagem: guarda o contato.
-// Por padrão o robô fica calado; a pessoa aparece normalmente no WhatsApp do dono.
+// Alguém de fora da equipe (cliente, amigo) mandou mensagem: guarda o contato e,
+// conforme WHATSAPP_RESPOSTA_FORA, responde no máximo 1 vez por dia (padrão), nunca ou sempre.
 export async function handleOutsider(ctx, client, msg) {
   const contact = ctx.data.contacts.findOrCreate({ phone: msg.from, name: msg.name, source: 'whatsapp' });
   const mode = ctx.config.whatsapp.outsiderReply;
@@ -114,7 +114,10 @@ export async function handleOutsider(ctx, client, msg) {
   const owners = ctx.db.prepare("SELECT * FROM users WHERE role = 'dono' AND active = 1").all();
   const text = msg.text || (msg.mediaId ? '[foto]' : `[${msg.type}]`);
   for (const owner of owners) {
-    await client.sendText(owner.phone, `📩 Mensagem de ${contact.name} (${formatPhone(contact.phone)}):\n${text}`);
+    // Se o aviso falhar (ex.: o dono usa o próprio número do robô), a resposta ao cliente sai mesmo assim.
+    await client
+      .sendText(owner.phone, `📩 Mensagem de ${contact.name} (${formatPhone(contact.phone)}):\n${text}`)
+      .catch((err) => ctx.log('Não consegui avisar o dono no WhatsApp', err));
   }
   await client.sendText(
     msg.from,

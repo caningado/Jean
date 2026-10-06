@@ -13,8 +13,8 @@ function fakeClient() {
 let seq = 0;
 const message = (from, text, type = 'text') => ({ id: `wamid.${++seq}`, from, name: 'Cliente Teste', type, text, mediaId: null });
 
-test('quem é de fora: por padrão o robô fica calado, mas guarda o contato', async () => {
-  const ctx = makeContext();
+test('quem é de fora com resposta nunca: o robô fica calado, mas guarda o contato', async () => {
+  const ctx = makeContext({ WHATSAPP_RESPOSTA_FORA: 'nunca' });
   const client = fakeClient();
   await processMessage(ctx, client, message(CLIENT_PHONE, 'oi'));
   await processMessage(ctx, client, message(CLIENT_PHONE, '', 'audio'));
@@ -23,8 +23,8 @@ test('quem é de fora: por padrão o robô fica calado, mas guarda o contato', a
   assert.equal(contact.name, 'Cliente Teste');
 });
 
-test('quem é de fora com resposta diária: responde só na primeira mensagem', async () => {
-  const ctx = makeContext({ WHATSAPP_RESPOSTA_FORA: 'diaria' });
+test('quem é de fora (padrão diário): responde só na primeira mensagem', async () => {
+  const ctx = makeContext();
   const client = fakeClient();
   await processMessage(ctx, client, message(CLIENT_PHONE, 'oi'));
   await processMessage(ctx, client, message(CLIENT_PHONE, 'preciso de um guincho'));
@@ -48,4 +48,17 @@ test('a equipe continua sendo atendida pelo robô', async () => {
   await processMessage(ctx, client, message(DRIVER_PHONE, 'ajuda'));
   assert.ok(client.sent.length > 0);
   assert.equal(client.sent[0].to, DRIVER_PHONE);
+});
+
+test('se o aviso ao dono falhar, o cliente recebe a resposta mesmo assim', async () => {
+  const ctx = makeContext();
+  const client = fakeClient();
+  const send = client.sendText;
+  client.sendText = async (to, body) => {
+    if (to !== CLIENT_PHONE) throw new Error('falhou');
+    return send(to, body);
+  };
+  await processMessage(ctx, client, message(CLIENT_PHONE, 'oi'));
+  assert.equal(client.sent.length, 1);
+  assert.equal(client.sent[0].to, CLIENT_PHONE);
 });
