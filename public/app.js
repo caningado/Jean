@@ -313,10 +313,10 @@ screens.servico = async (params, id) => {
     ${has('fotos') ? `
     <div class="card">
       <h2>Fotos</h2>
-      ${s.photos?.length ? `<div class="photos">${s.photos.map((p) => `<figure><a href="${p.url}" target="_blank"><img src="${p.url}" loading="lazy" alt="Foto ${PHOTO_KINDS[p.kind]}"></a><figcaption>${PHOTO_KINDS[p.kind]}</figcaption></figure>`).join('')}</div>` : '<p class="sub">Nenhuma foto. São opcionais.</p>'}
+      ${photoGroups(s.photos || [])}
       <div class="actions">
-        <button class="secondary" data-photo="antes">📷 Antes</button>
-        <button class="secondary" data-photo="depois">📷 Depois</button>
+        <button class="secondary" data-photo="antes">📷 Fotos de antes</button>
+        <button class="secondary" data-photo="depois">📷 Fotos de depois</button>
       </div>
     </div>` : ''}
 
@@ -392,17 +392,17 @@ screens.servico = async (params, id) => {
 
   view.querySelectorAll('[data-photo]').forEach((btn) => {
     btn.onclick = async () => {
-      const file = await pickPhoto();
-      if (!file) return;
-      btn.disabled = true;
-      try {
-        await api(`/services/${id}/photos?kind=${btn.dataset.photo}`, { method: 'POST', raw: await shrinkImage(file), type: 'image/jpeg' });
-        toast('Foto salva');
-        reload();
-      } catch (err) {
-        toast(err.message);
-        btn.disabled = false;
-      }
+      const kind = btn.dataset.photo;
+      const done = (s.photos || []).filter((p) => p.kind === kind).map((p) => p.angle);
+      const saved = await guidedPhotos(id, kind, done);
+      if (saved) reload();
+    };
+  });
+  view.querySelectorAll('[data-retake]').forEach((btn) => {
+    btn.onclick = async () => {
+      const [kind, angle] = btn.dataset.retake.split(':');
+      const saved = await guidedPhotos(id, kind, [], angle);
+      if (saved) reload();
     };
   });
 
@@ -709,6 +709,166 @@ screens.sair = async () => {
   state.me = null;
   location.hash = '#/login';
 };
+
+// ---------- fotos da volta no carro ----------
+const ANGLES = ['frente', 'lateral_esquerda', 'traseira', 'lateral_direita'];
+const ANGLE_LABEL = {
+  frente: 'Frente',
+  lateral_esquerda: 'Lateral esquerda (motorista)',
+  traseira: 'Traseira',
+  lateral_direita: 'Lateral direita (passageiro)',
+  detalhe: 'Detalhe / dano',
+};
+
+// Desenho do carro em cada ângulo, para encaixar o carro na foto.
+const CAR_SIDE = `<svg viewBox="0 0 400 170" class="car-guide"><path d="M18 118 V96 Q20 82 40 78 L108 70 Q138 42 176 34 H262 Q294 38 322 66 L368 74 Q384 78 386 96 V118 H342 A28 28 0 0 0 286 118 H122 A28 28 0 0 0 66 118 Z"/><path d="M122 70 L160 42 H212 V70 Z M222 70 V42 H262 Q284 46 304 70 Z"/><circle cx="94" cy="120" r="24"/><circle cx="314" cy="120" r="24"/><circle cx="94" cy="120" r="9"/><circle cx="314" cy="120" r="9"/></svg>`;
+const CAR_FRONT = `<svg viewBox="0 0 300 230" class="car-guide"><path d="M88 34 H212 L244 100 H56 Z"/><path d="M36 100 H264 Q282 104 282 122 V176 H18 V122 Q18 104 36 100 Z"/><ellipse cx="64" cy="128" rx="24" ry="12"/><ellipse cx="236" cy="128" rx="24" ry="12"/><rect x="104" y="120" width="92" height="30" rx="6"/><rect x="120" y="158" width="60" height="14" rx="2"/><rect x="30" y="176" width="44" height="30" rx="6"/><rect x="226" y="176" width="44" height="30" rx="6"/><path d="M56 100 L40 86 M244 100 L260 86"/></svg>`;
+const CAR_REAR = `<svg viewBox="0 0 300 230" class="car-guide"><path d="M92 34 H208 L238 96 H62 Z"/><path d="M36 96 H264 Q282 100 282 118 V176 H18 V118 Q18 100 36 96 Z"/><rect x="28" y="112" width="52" height="22" rx="5"/><rect x="220" y="112" width="52" height="22" rx="5"/><rect x="118" y="132" width="64" height="30" rx="3"/><path d="M30 156 H270"/><rect x="30" y="176" width="44" height="30" rx="6"/><rect x="226" y="176" width="44" height="30" rx="6"/></svg>`;
+function carDrawing(angle) {
+  if (angle === 'frente') return CAR_FRONT;
+  if (angle === 'traseira') return CAR_REAR;
+  if (angle === 'lateral_direita') return CAR_SIDE.replace('class="car-guide"', 'class="car-guide mirror"');
+  if (angle === 'lateral_esquerda') return CAR_SIDE;
+  return '';
+}
+
+// Fotos do serviço separadas em antes/depois, com os 4 ângulos (e o que está faltando).
+function photoGroups(photos) {
+  if (!photos.length) return '<p class="sub">Nenhuma foto. São opcionais.</p>';
+  const figure = (p, label) =>
+    `<figure><a href="${p.url}" target="_blank"><img src="${p.url}" loading="lazy" alt="${esc(label)}"></a><figcaption>${esc(label)}</figcaption></figure>`;
+  const groups = ['antes', 'depois'].map((kind) => {
+    const list = photos.filter((p) => p.kind === kind);
+    if (!list.length) return '';
+    const slots = ANGLES.map((angle) => {
+      const p = list.filter((x) => x.angle === angle).at(-1);
+      return p
+        ? figure(p, ANGLE_LABEL[angle].split(' (')[0])
+        : `<figure class="missing"><button class="link" data-retake="${kind}:${angle}">${carDrawing(angle)}<span>+ ${ANGLE_LABEL[angle].split(' (')[0]}</span></button></figure>`;
+    });
+    const extras = list.filter((p) => !ANGLES.includes(p.angle) || list.filter((x) => x.angle === p.angle).at(-1) !== p);
+    return `<h3>${PHOTO_KINDS[kind]}</h3><div class="photos">${slots.join('')}${extras.map((p) => figure(p, ANGLE_LABEL[p.angle] || 'Outra')).join('')}</div>`;
+  });
+  const others = photos.filter((p) => p.kind !== 'antes' && p.kind !== 'depois');
+  if (others.length) groups.push(`<h3>Outras</h3><div class="photos">${others.map((p) => figure(p, PHOTO_KINDS[p.kind])).join('')}</div>`);
+  return groups.join('');
+}
+
+// Câmera guiada: mostra o desenho do carro em cada ângulo e salva cada foto na hora.
+// Sem câmera ao vivo (permissão negada), usa a câmera normal do celular, um ângulo por vez.
+// Devolve quantas fotos foram salvas.
+async function guidedPhotos(serviceId, kind, doneAngles = [], onlyAngle = null) {
+  const queue = onlyAngle ? [onlyAngle] : [...ANGLES.filter((a) => !doneAngles.includes(a)), ...(ANGLES.every((a) => doneAngles.includes(a)) ? ['detalhe'] : [])];
+  let index = 0;
+  let saved = 0;
+  const upload = async (blob, angle) => {
+    await api(`/services/${serviceId}/photos?kind=${kind}&angle=${angle}`, { method: 'POST', raw: blob, type: 'image/jpeg' });
+    saved++;
+  };
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } });
+  } catch {
+    // Plano B: câmera do sistema, avisando qual lado fotografar.
+    for (const angle of queue) {
+      if (!confirm(`Foto de ${PHOTO_KINDS[kind].toLowerCase()}: ${ANGLE_LABEL[angle]}.\nAbrir a câmera?`)) break;
+      const file = await pickPhoto();
+      if (!file) break;
+      try {
+        await upload(await shrinkImage(file), angle);
+      } catch (err) {
+        toast(err.message);
+        break;
+      }
+    }
+    if (saved) toast(`${saved} foto${saved === 1 ? '' : 's'} salva${saved === 1 ? '' : 's'}`);
+    return saved;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'scanner camera';
+  overlay.innerHTML = `
+    <div class="scanner-view">
+      <video playsinline muted autoplay></video>
+      <div class="car-frame"></div>
+      <p class="camera-step"></p>
+      <button class="scanner-close" data-act="close" aria-label="Fechar">✕</button>
+    </div>
+    <p class="scanner-tip">Encaixe o carro no desenho. Dica: deite o celular para caber o carro todo.</p>
+    <p class="scanner-status"></p>
+    <div class="scanner-actions">
+      <button class="secondary" data-act="skip">Pular</button>
+      <button class="shutter" data-act="shoot" aria-label="Tirar foto"></button>
+      <button class="secondary" data-act="close2">Terminar</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  const video = overlay.querySelector('video');
+  const frame = overlay.querySelector('.car-frame');
+  const stepEl = overlay.querySelector('.camera-step');
+  const status = overlay.querySelector('.scanner-status');
+  const button = (act) => overlay.querySelector(`[data-act="${act}"]`);
+  video.srcObject = stream;
+  await video.play().catch(() => {});
+
+  let finish;
+  const result = new Promise((resolve) => (finish = resolve));
+  history.pushState({ scanner: true }, '');
+  window.addEventListener('popstate', finish);
+
+  const show = () => {
+    if (index >= queue.length) {
+      // Terminou a volta: pode continuar tirando fotos de detalhe.
+      queue.push('detalhe');
+    }
+    const angle = queue[index];
+    frame.innerHTML = carDrawing(angle);
+    stepEl.textContent = angle === 'detalhe' ? `${PHOTO_KINDS[kind]} · Detalhe / dano (opcional)` : `${PHOTO_KINDS[kind]} · ${ANGLES.indexOf(angle) + 1}/4 · ${ANGLE_LABEL[angle]}`;
+    button('skip').hidden = angle === 'detalhe';
+  };
+  show();
+
+  button('close').onclick = () => finish();
+  button('close2').onclick = () => finish();
+  button('skip').onclick = () => {
+    index++;
+    status.textContent = '';
+    show();
+  };
+  button('shoot').onclick = async () => {
+    if (!video.videoWidth || button('shoot').disabled) return;
+    const angle = queue[index];
+    const canvas = document.createElement('canvas');
+    const scale = Math.min(1, 1600 / Math.max(video.videoWidth, video.videoHeight));
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.85));
+    overlay.classList.add('flash');
+    setTimeout(() => overlay.classList.remove('flash'), 150);
+    button('shoot').disabled = true;
+    status.textContent = 'Salvando…';
+    try {
+      await upload(blob, angle);
+      status.textContent = `✅ ${ANGLE_LABEL[angle]} salva`;
+      if (onlyAngle) return finish();
+      index++;
+      show();
+    } catch (err) {
+      status.textContent = err.message;
+    } finally {
+      button('shoot').disabled = false;
+    }
+  };
+
+  await result;
+  window.removeEventListener('popstate', finish);
+  if (history.state?.scanner) history.back();
+  stream.getTracks().forEach((t) => t.stop());
+  overlay.remove();
+  if (saved) toast(`${saved} foto${saved === 1 ? '' : 's'} salva${saved === 1 ? '' : 's'}`);
+  return saved;
+}
 
 // Leitor de código de barras: usa o do celular (Android/Chrome) e, quando não
 // existe (iPhone), carrega um leitor próprio servido pelo nosso servidor.

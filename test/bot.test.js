@@ -96,7 +96,8 @@ test('fotos sem legenda perguntam o tipo e as seguintes seguem o mesmo tipo', as
   assert.match(answer, /1 foto de \*antes\*/);
 
   const [second] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media });
-  assert.match(second, /Foto de \*antes\* salva.*2 no total/);
+  assert.match(second, /Foto de \*antes\* \(lateral esquerda \(motorista\)\) salva.*2 no total/);
+  assert.match(second, /Próxima: \*traseira\*/);
 
   const [third] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: 'depois', media });
   assert.match(third, /Foto de \*depois\*/);
@@ -107,6 +108,25 @@ test('fotos sem legenda perguntam o tipo e as seguintes seguem o mesmo tipo', as
 
   const kinds = ctx.db.prepare('SELECT kind, COUNT(*) AS n FROM photos GROUP BY kind ORDER BY kind').all();
   assert.deepEqual(kinds.map((k) => [k.kind, k.n]), [['antes', 2], ['depois', 1], ['vin', 1]]);
+  const angles = ctx.db.prepare('SELECT kind, angle FROM photos ORDER BY id').all().map((p) => `${p.kind}:${p.angle}`);
+  assert.deepEqual(angles, ['antes:frente', 'antes:lateral_esquerda', 'depois:frente', 'vin:null']);
+});
+
+test('fotos da volta no carro: ordem, legenda com o lado e detalhe', async () => {
+  const ctx = makeContext();
+  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'pular', 'sim');
+  const media = { buffer: Buffer.from([0xff, 0xd8, 0xff]), mime: 'image/jpeg' };
+  const [start] = await chat(ctx, DRIVER_PHONE, 'antes');
+  assert.match(start, /1\. frente\n2\. lateral esquerda \(motorista\)\n3\. traseira\n4\. lateral direita/);
+  const send = async (caption = '') => (await ctx.bot.handle({ phone: DRIVER_PHONE, text: caption, media }))[0];
+  assert.match(await send('traseira'), /\(traseira\).*Próxima: \*frente\*/);
+  await send();
+  await send();
+  const fourth = await send();
+  assert.match(fourth, /\(lateral direita \(passageiro\)\).*Volta completa/);
+  assert.match(await send(), /\(detalhe \/ dano\)/);
+  const angles = ctx.db.prepare('SELECT angle FROM photos ORDER BY id').all().map((p) => p.angle);
+  assert.deepEqual(angles, ['traseira', 'frente', 'lateral_esquerda', 'lateral_direita', 'detalhe']);
 });
 
 test('ajuda lista os comandos dos módulos ligados', async () => {
