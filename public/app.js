@@ -721,14 +721,47 @@ const ANGLE_LABEL = {
 };
 
 // Desenho do carro em cada ângulo, para encaixar o carro na foto.
-const CAR_SIDE = `<svg viewBox="0 0 400 170" class="car-guide"><path d="M18 118 V96 Q20 82 40 78 L108 70 Q138 42 176 34 H262 Q294 38 322 66 L368 74 Q384 78 386 96 V118 H342 A28 28 0 0 0 286 118 H122 A28 28 0 0 0 66 118 Z"/><path d="M122 70 L160 42 H212 V70 Z M222 70 V42 H262 Q284 46 304 70 Z"/><circle cx="94" cy="120" r="24"/><circle cx="314" cy="120" r="24"/><circle cx="94" cy="120" r="9"/><circle cx="314" cy="120" r="9"/></svg>`;
-const CAR_FRONT = `<svg viewBox="0 0 300 230" class="car-guide"><path d="M88 34 H212 L244 100 H56 Z"/><path d="M36 100 H264 Q282 104 282 122 V176 H18 V122 Q18 104 36 100 Z"/><ellipse cx="64" cy="128" rx="24" ry="12"/><ellipse cx="236" cy="128" rx="24" ry="12"/><rect x="104" y="120" width="92" height="30" rx="6"/><rect x="120" y="158" width="60" height="14" rx="2"/><rect x="30" y="176" width="44" height="30" rx="6"/><rect x="226" y="176" width="44" height="30" rx="6"/><path d="M56 100 L40 86 M244 100 L260 86"/></svg>`;
-const CAR_REAR = `<svg viewBox="0 0 300 230" class="car-guide"><path d="M92 34 H208 L238 96 H62 Z"/><path d="M36 96 H264 Q282 100 282 118 V176 H18 V118 Q18 100 36 96 Z"/><rect x="28" y="112" width="52" height="22" rx="5"/><rect x="220" y="112" width="52" height="22" rx="5"/><rect x="118" y="132" width="64" height="30" rx="3"/><path d="M30 156 H270"/><rect x="30" y="176" width="44" height="30" rx="6"/><rect x="226" y="176" width="44" height="30" rx="6"/></svg>`;
-function carDrawing(angle) {
-  if (angle === 'frente') return CAR_FRONT;
-  if (angle === 'traseira') return CAR_REAR;
-  if (angle === 'lateral_direita') return CAR_SIDE.replace('class="car-guide"', 'class="car-guide mirror"');
-  if (angle === 'lateral_esquerda') return CAR_SIDE;
+// Estilo do desenho: 'silhueta', 'linha' (contorno fino) ou 'cantos' (cantos + sombra).
+const FRAME_STYLE = 'silhueta';
+const CAR_SIDE = {
+  viewBox: '0 0 600 220',
+  body: 'M40 170 Q30 168 30 150 L32 132 Q36 120 52 116 L150 102 Q185 98 228 96 Q262 58 300 50 Q350 44 400 46 Q440 50 478 92 L540 100 Q566 104 570 120 L572 150 Q572 168 556 170 L505 170 A45 45 0 0 0 415 170 L180 170 A45 45 0 0 0 90 170 Z',
+  details: 'M240 96 Q268 64 300 58 L345 56 L348 96 Z M360 96 L358 56 L398 56 Q430 60 462 94 Z M350 100 L352 162 M232 98 L224 88 L212 88 L216 98 Z M40 124 Q60 118 80 120 L74 132 Q52 134 40 132 Z M556 108 L570 116 L570 128 L556 124 Z M300 112 h18',
+  wheels: [[135, 172], [460, 172]],
+  ground: 206,
+};
+const CAR_FRONT = {
+  viewBox: '0 0 400 300',
+  body: 'M60 252 L56 190 Q58 160 80 150 L100 150 L130 80 Q140 66 160 64 L240 64 Q260 66 270 80 L300 150 L320 150 Q342 160 344 190 L340 252 Z',
+  details: 'M115 145 L140 88 Q146 78 160 78 L240 78 Q254 78 260 88 L285 145 Z M96 140 L72 132 L70 148 L96 152 Z M304 140 L328 132 L330 148 L304 152 Z M76 172 Q90 164 130 168 L126 186 Q96 188 78 184 Z M324 172 Q310 164 270 168 L274 186 Q304 188 322 184 Z M150 172 L250 172 Q256 172 254 180 L248 200 Q246 206 240 206 L160 206 Q154 206 152 200 L146 180 Q144 172 150 172 Z M64 222 L336 222 M170 228 h60 v18 h-60 Z',
+  tires: [[62, 250], [284, 250]],
+  ground: 278,
+};
+const CAR_REAR = {
+  viewBox: '0 0 400 300',
+  body: CAR_FRONT.body,
+  details: 'M120 145 L145 90 Q150 80 162 80 L238 80 Q250 80 255 90 L280 145 Z M96 140 L72 132 L70 148 L96 152 Z M304 140 L328 132 L330 148 L304 152 Z M62 170 L120 170 L116 194 L64 194 Z M338 170 L280 170 L284 194 L336 194 Z M120 168 L280 168 M165 192 h70 v26 h-70 Z M64 228 L336 228 M296 244 h22',
+  tires: [[62, 250], [284, 250]],
+  ground: 278,
+};
+// estilo: 'silhueta' | 'cantos' | 'linha'
+function drawCar(car, style, mirror = false) {
+  const [, , w, h] = car.viewBox.split(' ').map(Number);
+  const wheels = (car.wheels || []).map(([x, y]) => `<circle cx="${x}" cy="${y}" r="34"/><circle cx="${x}" cy="${y}" r="13"/>`).join('');
+  const tires = (car.tires || []).map(([x, y]) => `<rect x="${x}" y="${y}" width="54" height="26" rx="8"/>`).join('');
+  const flip = mirror ? ` transform="translate(${w} 0) scale(-1 1)"` : '';
+  if (style === 'cantos') {
+    const m = 14, L = 46;
+    const c = `M${m} ${m + L} V${m} H${m + L} M${w - m - L} ${m} H${w - m} V${m + L} M${w - m} ${h - m - L} V${h - m} H${w - m - L} M${m + L} ${h - m} H${m} V${h - m - L}`;
+    return `<svg viewBox="${car.viewBox}" class="g cantos"><path class="corner" d="${c}"/><g${flip} class="ghost"><path d="${car.body}"/>${wheels}${tires}</g><path class="groundline" d="M${w * 0.12} ${car.ground} H${w * 0.88}"/></svg>`;
+  }
+  return `<svg viewBox="${car.viewBox}" class="g ${style}"><g${flip}><path class="body" d="${car.body}"/><path class="det" d="${car.details}"/>${wheels}${tires}</g></svg>`;
+}
+function carDrawing(angle, style = FRAME_STYLE) {
+  if (angle === 'frente') return drawCar(CAR_FRONT, style);
+  if (angle === 'traseira') return drawCar(CAR_REAR, style);
+  if (angle === 'lateral_esquerda') return drawCar(CAR_SIDE, style);
+  if (angle === 'lateral_direita') return drawCar(CAR_SIDE, style, true);
   return '';
 }
 
@@ -744,7 +777,7 @@ function photoGroups(photos) {
       const p = list.filter((x) => x.angle === angle).at(-1);
       return p
         ? figure(p, ANGLE_LABEL[angle].split(' (')[0])
-        : `<figure class="missing"><button class="link" data-retake="${kind}:${angle}">${carDrawing(angle)}<span>+ ${ANGLE_LABEL[angle].split(' (')[0]}</span></button></figure>`;
+        : `<figure class="missing"><button class="link" data-retake="${kind}:${angle}">${carDrawing(angle, 'linha')}<span>+ ${ANGLE_LABEL[angle].split(' (')[0]}</span></button></figure>`;
     });
     const extras = list.filter((p) => !ANGLES.includes(p.angle) || list.filter((x) => x.angle === p.angle).at(-1) !== p);
     return `<h3>${PHOTO_KINDS[kind]}</h3><div class="photos">${slots.join('')}${extras.map((p) => figure(p, ANGLE_LABEL[p.angle] || 'Outra')).join('')}</div>`;

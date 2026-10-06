@@ -161,13 +161,22 @@ pre.msg { white-space: pre-wrap; background: var(--bg); border-radius: 10px; pad
 
 /* Câmera guiada das fotos de antes/depois */
 .car-frame { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
-.car-frame .car-guide { width: 86%; max-width: 640px; max-height: 70%; }
-.car-guide { fill: none; stroke: #fff; stroke-width: 3; stroke-linejoin: round; stroke-dasharray: 9 6; filter: drop-shadow(0 0 3px rgba(0, 0, 0, .9)); }
-.car-guide.mirror { transform: scaleX(-1); }
+.car-frame .g { width: 90%; max-width: 680px; max-height: 72%; }
+.g { overflow: visible; }
+.g.silhueta .body { fill: rgba(255, 255, 255, .22); stroke: #fff; stroke-width: 3.5; stroke-linejoin: round; }
+.g.silhueta .det, .g.silhueta circle, .g.silhueta rect { fill: rgba(255, 255, 255, .12); stroke: rgba(255, 255, 255, .9); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.g.silhueta { filter: drop-shadow(0 0 6px rgba(0, 0, 0, .6)); }
+.g.linha .body, .g.linha .det, .g.linha circle, .g.linha rect { fill: none; stroke: #fff; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.g.linha .det { stroke-opacity: .75; }
+.g.linha { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .9)); }
+.g.cantos .corner { fill: none; stroke: #ffd60a; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+.g.cantos .ghost path, .g.cantos .ghost circle, .g.cantos .ghost rect { fill: rgba(255, 255, 255, .14); stroke: rgba(255, 255, 255, .55); stroke-width: 2; }
+.g.cantos .groundline { stroke: rgba(255, 214, 10, .8); stroke-width: 3; stroke-dasharray: 2 10; stroke-linecap: round; }
 .camera-step { position: absolute; top: calc(14px + env(safe-area-inset-top)); left: 12px; right: 72px; margin: 0 !important; text-align: left !important; font-weight: 700; text-shadow: 0 1px 3px #000; }
 .shutter { flex: 0 0 72px !important; width: 72px; height: 72px; border-radius: 50%; padding: 0; background: #fff; border: 6px solid #9aa0a6; box-shadow: 0 0 0 3px #fff; }
 .shutter:disabled { opacity: .5; }
 .camera.flash .scanner-view { filter: brightness(2.5); }
 .card h3 { margin: 14px 0 6px; font-size: 15px; color: var(--muted); }
 .photos figure.missing button { width: 100%; aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 2px dashed var(--muted); border-radius: 10px; background: transparent; color: var(--muted); padding: 6px; font-size: 12px; }
-.photos figure.missing .car-guide { width: 80%; stroke: currentColor; stroke-width: 6; filter: none; stroke-dasharray: none; }
+.photos figure.missing .g { width: 85%; height: auto; filter: none; }
+.photos figure.missing .g * { stroke: currentColor !important; stroke-width: 5 !important; stroke-opacity: 1 !important; }
