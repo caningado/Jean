@@ -183,3 +183,4 @@ pre.msg { white-space: pre-wrap; background: var(--bg); border-radius: 10px; pad
 .cash .big { font-size: 22px; }
 .cash button.small { padding: 6px 12px; font-size: 14px; margin-top: 6px; width: auto; }
 .cash details ul { margin: 4px 0 0; padding-left: 16px; }
+#driver { margin-bottom: 12px; }
