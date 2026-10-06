@@ -45,6 +45,8 @@ export function loadConfig(overrides = {}) {
       apiVersion: env.WHATSAPP_API_VERSION || 'v21.0',
     },
     anthropicApiKey: env.ANTHROPIC_API_KEY || '',
+    // Conferir endereços no mapa (Census + OpenStreetMap, grátis). GEOCODER=off desliga.
+    geocoder: env.GEOCODER !== 'off',
   };
 }
 
