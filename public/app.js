@@ -193,16 +193,23 @@ screens.login = async () => {
 screens.servicos = async (params) => {
   setScreen('Serviços', { tab: 'servicos' });
   const status = params.get('status') ?? 'aberto';
+  const driver = params.get('driver') || '';
+  // O dono pode ver só os serviços de um motorista (inclusive os dele mesmo).
+  const drivers = state.me.role === 'dono' ? await api('/users') : [];
+  const query = (s, d) => `#/servicos?status=${s}${d ? `&driver=${d}` : ''}`;
   view.innerHTML = `
     <div class="segmented">
       <button data-s="aberto">Em andamento</button><button data-s="concluido">Entregues</button><button data-s="">Todos</button>
     </div>
+    ${drivers.length > 1 ? `<select id="driver" aria-label="Motorista"><option value="">Todos os motoristas</option>${drivers.map((d) => `<option value="${d.id}" ${String(d.id) === driver ? 'selected' : ''}>${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select>` : ''}
     <div class="card"><ul class="list" id="list"><li class="empty">Carregando…</li></ul></div>`;
   view.querySelectorAll('.segmented button').forEach((b) => {
     b.classList.toggle('active', b.dataset.s === status);
-    b.onclick = () => (location.hash = `#/servicos?status=${b.dataset.s}`);
+    b.onclick = () => (location.hash = query(b.dataset.s, driver));
   });
-  const list = await api(`/services?status=${status}`);
+  const select = view.querySelector('#driver');
+  if (select) select.onchange = () => (location.hash = query(status, select.value));
+  const list = await api(`/services?status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}`);
   view.querySelector('#list').innerHTML = list.length
     ? list
         .map(
