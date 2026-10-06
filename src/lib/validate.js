@@ -33,7 +33,7 @@ export function checkAddress(raw, what = 'O endereço') {
   if (letters(address) < 3 || address.length < 4) {
     throw new ValidationError(`${what} parece incompleto. Mande rua e cidade, ou uma referência. Ex: 12 Main St, Framingham`);
   }
-  if (address.length > 200) throw new ValidationError(`${what} está muito comprido.`);
+  if (address.length > 300) throw new ValidationError(`${what} está muito comprido.`);
   return address;
 }
 
@@ -63,4 +63,46 @@ export function checkMoney(cents, { max = 10000, what = 'O valor' } = {}) {
   if (cents == null || !Number.isFinite(cents) || cents <= 0) throw new ValidationError(`${what} precisa ser maior que zero. Ex: 150 ou 150.50`);
   if (cents > max * 100) throw new ValidationError(`${what} parece alto demais (máximo $${max.toLocaleString('en-US')}). Confira e mande de novo.`);
   return cents;
+}
+
+// Sites de mapa aceitos quando o motorista cola um link.
+const MAP_HOSTS = /(^|\.)(google\.[a-z.]+|goo\.gl|maps\.app\.goo\.gl|g\.co|waze\.com|apple\.com|bing\.com|openstreetmap\.org|here\.com)$/i;
+const COORDS = /(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})/;
+
+// Local de retirada/destino: aceita endereço colado, link de mapa (Google Maps, Waze, Apple)
+// ou coordenadas (ex.: a localização mandada pelo WhatsApp).
+export function checkLocation(raw, what = 'O endereço') {
+  const text = String(raw ?? '').trim().replace(/[ \t]+/g, ' ');
+  const url = text.match(/https?:\/\/[^\s]+/i)?.[0];
+  if (url) {
+    let host = '';
+    try {
+      host = new URL(url).hostname;
+    } catch {
+      /* link quebrado */
+    }
+    if (!MAP_HOSTS.test(host)) throw new ValidationError(`${what}: esse link não é de mapa. Cole o endereço ou o link do Google Maps / Waze.`);
+    if (text.length > 600) throw new ValidationError(`${what} está muito comprido.`);
+    return text;
+  }
+  const coords = text.match(COORDS);
+  if (coords) {
+    const [lat, lng] = [Number(coords[1]), Number(coords[2])];
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) throw new ValidationError(`${what}: coordenadas inválidas.`);
+    if (text.length > 300) throw new ValidationError(`${what} está muito comprido.`);
+    return text;
+  }
+  const address = checkAddress(text.replace(/\s*\n\s*/g, ', '), what);
+  if (address.length > 300) throw new ValidationError(`${what} está muito comprido.`);
+  return address;
+}
+
+// Link para abrir o local no mapa do celular.
+export function mapLink(location) {
+  if (!location) return null;
+  const url = location.match(/https?:\/\/[^\s]+/i)?.[0];
+  if (url) return url;
+  const coords = location.match(COORDS);
+  if (coords) return `https://www.google.com/maps?q=${coords[1]},${coords[2]}`;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
 }

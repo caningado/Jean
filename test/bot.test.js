@@ -194,3 +194,25 @@ test('duas Marias: o robô pergunta qual é', async () => {
   assert.equal(ctx.data.services.get(2).contact_phone, '15085550166');
   assert.equal(ctx.data.contacts.search('maria').length, 3);
 });
+
+test('destino pode ser link do mapa ou localização do WhatsApp', async () => {
+  const ctx = makeContext({ PRICE_BASE: '0', PRICE_PER_MILE: '0' });
+  const r = await chat(
+    ctx,
+    DRIVER_PHONE,
+    'novo',
+    'John Smith',
+    'pular',
+    '(42.3601, -71.0589)',
+    'Oficina do Joe https://maps.app.goo.gl/AbC123xyz',
+    'pular',
+    'pular',
+    'pular',
+    'sim'
+  );
+  assert.match(r[3], /link do mapa/);
+  assert.match(r[8], /Serviço #1 criado/);
+  assert.match(r[8], /🗺️ https:\/\/www\.google\.com\/maps\?q=42\.3601,-71\.0589/);
+  assert.match(r[8], /🗺️ https:\/\/maps\.app\.goo\.gl\/AbC123xyz/);
+  assert.equal(ctx.data.services.get(1).dropoff, 'Oficina do Joe https://maps.app.goo.gl/AbC123xyz');
+});

@@ -2,7 +2,7 @@
 import express from 'express';
 import { FlowError } from './bot.js';
 import { hashPin, verifyPin, signToken } from '../lib/auth.js';
-import { checkName, checkPhone, checkAddress, checkVehicle, checkPlate, checkMiles, checkMoney } from '../lib/validate.js';
+import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkMoney } from '../lib/validate.js';
 import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfMonthIso, formatPhone } from '../lib/util.js';
 
 const migrations = [
@@ -201,19 +201,19 @@ const flows = {
       },
       {
         key: 'pickup',
-        ask: () => 'Onde vai *pegar* o veículo? (endereço ou referência)',
+        ask: () => 'Onde vai *pegar* o veículo? Mande o endereço, cole o link do mapa ou envie a localização 📍',
         parse(text, { ctx }) {
           rejectCommand(ctx, text);
-          return checkAddress(text, 'O local de retirada');
+          return checkLocation(text, 'O local de retirada');
         },
       },
       {
         key: 'dropoff',
         optional: true,
-        ask: () => 'Para onde vai *levar*? (ou *pular*)',
+        ask: () => 'Para onde vai *levar*? Mande o endereço, cole o link do mapa ou envie a localização 📍 (ou *pular*)',
         parse(text, { ctx }) {
           rejectCommand(ctx, text);
-          return checkAddress(text, 'O destino');
+          return checkLocation(text, 'O destino');
         },
       },
       {
@@ -366,8 +366,8 @@ const checkPin = (pin) => {
 function serviceFields(body, { partial = false } = {}) {
   const out = {};
   const has = (k) => !partial || body[k] !== undefined;
-  if (has('pickup')) out.pickup = partial ? optional(body.pickup, (v) => checkAddress(v, 'O local de retirada')) : checkAddress(body.pickup, 'O local de retirada');
-  if (has('dropoff')) out.dropoff = optional(body.dropoff, (v) => checkAddress(v, 'O destino'));
+  if (has('pickup')) out.pickup = partial ? optional(body.pickup, (v) => checkLocation(v, 'O local de retirada')) : checkLocation(body.pickup, 'O local de retirada');
+  if (has('dropoff')) out.dropoff = optional(body.dropoff, (v) => checkLocation(v, 'O destino'));
   if (has('vehicle')) out.vehicle = optional(body.vehicle, checkVehicle);
   if (has('plate')) out.plate = optional(body.plate, checkPlate);
   if (has('miles')) out.miles = optional(body.miles, checkMiles);

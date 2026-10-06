@@ -65,6 +65,11 @@ export function extractMessages(payload) {
         } else if (m.type === 'document' && m.document?.mime_type?.startsWith('image/')) {
           msg.mediaId = m.document.id;
           msg.text = m.document.caption || '';
+        } else if (m.type === 'location' && m.location) {
+          // Localização 📍 mandada pelo WhatsApp: vira texto com nome, endereço e coordenadas.
+          const { latitude, longitude, name, address } = m.location;
+          const label = [name, address].filter(Boolean).join(', ');
+          msg.text = `${label ? label + ' ' : ''}(${latitude}, ${longitude})`;
         } else if (m.type === 'button') msg.text = m.button?.text || '';
         else if (m.type === 'interactive') msg.text = m.interactive?.button_reply?.title || m.interactive?.list_reply?.title || '';
         out.push(msg);

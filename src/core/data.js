@@ -1,5 +1,6 @@
 // Acesso aos dados do núcleo: equipe, contatos e serviços.
 import { normalizePhone, nowIso, formatPhone, formatMoney } from '../lib/util.js';
+import { mapLink } from '../lib/validate.js';
 
 export function createCoreData(db) {
   const contacts = {
@@ -148,8 +149,9 @@ export function createCoreData(db) {
     describe(s) {
       const lines = [`*Serviço #${s.id}*`];
       if (s.contact_name) lines.push(`Cliente: ${s.contact_name}${s.contact_phone ? ' ' + formatPhone(s.contact_phone) : ''}`);
-      if (s.pickup) lines.push(`Retirada: ${s.pickup}`);
-      if (s.dropoff) lines.push(`Destino: ${s.dropoff}`);
+      // Com o link, o motorista toca e abre o mapa para navegar.
+      if (s.pickup) lines.push(`Retirada: ${s.pickup}`, `🗺️ ${mapLink(s.pickup)}`);
+      if (s.dropoff) lines.push(`Destino: ${s.dropoff}`, `🗺️ ${mapLink(s.dropoff)}`);
       if (s.vehicle || s.plate) lines.push(`Veículo: ${[s.vehicle, s.plate].filter(Boolean).join(' · ')}`);
       if (s.vin) lines.push(`VIN: ${s.vin}`);
       if (s.miles != null) lines.push(`Milhas: ${s.miles}`);
