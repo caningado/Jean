@@ -743,23 +743,71 @@ function vinFromCode(text) {
 }
 
 // Câmera lendo o código de barras do VIN (porta do motorista ou para-brisa).
+// Mostra uma moldura: o leitor procura primeiro só dentro dela (em resolução cheia),
+// e de vez em quando na imagem toda. "Tirar foto" manda a imagem para o servidor ler.
 async function scanBarcode() {
   let stream;
   const overlay = document.createElement('div');
   overlay.className = 'scanner';
-  overlay.innerHTML = '<video playsinline muted></video><p>Aponte para o código de barras do VIN (porta do motorista ou para-brisa). Chegue perto e segure firme.</p><button class="secondary">Cancelar</button>';
+  overlay.innerHTML = `
+    <div class="scanner-view">
+      <video playsinline muted></video>
+      <div class="scanner-mask"><div class="scanner-box"><i></i><i></i><i></i><i></i><div class="scanner-line"></div></div></div>
+      <button class="scanner-close" data-act="close" aria-label="Fechar">✕</button>
+    </div>
+    <p class="scanner-tip">Coloque o código de barras do VIN <strong>dentro do retângulo</strong>, deitado, bem de perto.</p>
+    <p class="scanner-status">Abrindo a câmera…</p>
+    <div class="scanner-actions">
+      <button class="secondary" data-act="torch" hidden>🔦 Lanterna</button>
+      <button class="secondary" data-act="photo">📸 Tirar foto</button>
+      <button class="secondary" data-act="cancel">Cancelar</button>
+    </div>`;
   document.body.appendChild(overlay);
   const video = overlay.querySelector('video');
-  let stop = false;
-  overlay.querySelector('button').onclick = () => (stop = true);
-  try {
-    let detector;
+  const box = overlay.querySelector('.scanner-box');
+  const status = overlay.querySelector('.scanner-status');
+  const button = (act) => overlay.querySelector(`[data-act="${act}"]`);
+  const canvas = document.createElement('canvas');
+  let done = false;
+  let finish;
+  const result = new Promise((resolve) => (finish = (vin) => { done = true; resolve(vin); }));
+  button('cancel').onclick = () => finish(null);
+  button('close').onclick = () => finish(null);
+  // O "voltar" do celular (gesto ou botão) também fecha a câmera.
+  history.pushState({ scanner: true }, '');
+  const onBack = () => finish(null);
+  window.addEventListener('popstate', onBack);
+
+  // Parte da imagem da câmera que aparece dentro da moldura (o vídeo usa object-fit: cover).
+  const boxCrop = () => {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const v = video.getBoundingClientRect(), b = box.getBoundingClientRect();
+    const scale = Math.max(v.width / vw, v.height / vh);
+    const offX = (v.width - vw * scale) / 2, offY = (v.height - vh * scale) / 2;
+    const x = Math.max(0, (b.left - v.left - offX) / scale), y = Math.max(0, (b.top - v.top - offY) / scale);
+    return { x, y, w: Math.min(vw - x, b.width / scale), h: Math.min(vh - y, b.height / scale) };
+  };
+  const frame = (crop) => {
+    const c = crop || { x: 0, y: 0, w: video.videoWidth, h: video.videoHeight };
+    canvas.width = Math.round(c.w);
+    canvas.height = Math.round(c.h);
+    canvas.getContext('2d').drawImage(video, c.x, c.y, c.w, c.h, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  };
+
+  button('photo').onclick = async () => {
+    if (!video.videoWidth) return;
+    status.textContent = 'Lendo a foto…';
+    const image = await new Promise((r) => frame().toBlob(r, 'image/jpeg', 0.92));
     try {
-      detector = await barcodeDetector();
+      const read = await api('/vin/read', { method: 'POST', raw: image, type: 'image/jpeg' });
+      finish(read.vin);
     } catch (err) {
-      toast(err.message);
-      return null;
+      status.textContent = err.message;
     }
+  };
+
+  try {
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
@@ -770,16 +818,43 @@ async function scanBarcode() {
     }
     video.srcObject = stream;
     await video.play();
-    while (!stop) {
-      const codes = await detector.detect(video).catch(() => []);
-      for (const code of codes) {
-        const vin = vinFromCode(code.rawValue);
-        if (vin) return vin;
-      }
-      await new Promise((r) => setTimeout(r, 200));
+    const track = stream.getVideoTracks()[0];
+    const caps = track.getCapabilities?.() || {};
+    if (caps.focusMode?.includes('continuous')) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+    if (caps.torch) {
+      let torch = false;
+      button('torch').hidden = false;
+      button('torch').onclick = () => {
+        torch = !torch;
+        track.applyConstraints({ advanced: [{ torch }] }).catch(() => {});
+      };
     }
-    return null;
+
+    let detector;
+    try {
+      status.textContent = 'Preparando o leitor…';
+      detector = await barcodeDetector();
+    } catch (err) {
+      status.textContent = 'Leitor indisponível. Use 📸 Tirar foto.';
+      return await result;
+    }
+    status.textContent = 'Procurando o código de barras…';
+    (async () => {
+      for (let i = 0; !done; i++) {
+        const codes = await detector.detect(frame(i % 3 === 2 ? null : boxCrop())).catch(() => []);
+        for (const code of codes) {
+          const vin = vinFromCode(code.rawValue);
+          if (vin) return finish(vin);
+          status.textContent = 'Achei um código, mas não é o VIN. Procure o código com 17 letras e números.';
+        }
+        await new Promise((r) => setTimeout(r, 120));
+      }
+    })();
+    return await result;
   } finally {
+    done = true;
+    window.removeEventListener('popstate', onBack);
+    if (history.state?.scanner) history.back();
     stream?.getTracks().forEach((t) => t.stop());
     overlay.remove();
   }
