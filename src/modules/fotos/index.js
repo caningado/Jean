@@ -238,6 +238,10 @@ function routes(api, ctx) {
 
 export default {
   name: 'fotos',
+  exportColumns: (ctx) => {
+    const count = ctx.db.prepare('SELECT COUNT(*) AS n FROM photos WHERE service_id = ?');
+    return [{ header: 'Fotos', width: 7, type: 'number', value: (s) => count.get(s.id).n }];
+  },
   label: 'Fotos',
   migrations,
   commands,

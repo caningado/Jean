@@ -124,8 +124,39 @@ function summaryLines(s) {
   return lines;
 }
 
+// Planilha: aba Despesas.
+function exportSheets({ ctx, from, to, userId }) {
+  const where = ['e.created_at >= ?', 'e.created_at < ?'];
+  const params = [from, to];
+  if (userId) {
+    where.push('e.user_id = ?');
+    params.push(userId);
+  }
+  const rows = ctx.db
+    .prepare(
+      `SELECT e.*, u.name AS user_name FROM expenses e LEFT JOIN users u ON u.id = e.user_id
+       WHERE ${where.join(' AND ')} ORDER BY e.id`
+    )
+    .all(...params);
+  return [
+    {
+      name: 'Despesas',
+      columns: [
+        { header: 'Data', width: 17, type: 'date' },
+        { header: 'Valor', width: 11, type: 'money' },
+        { header: 'Tipo', width: 14 },
+        { header: 'Descrição', width: 30 },
+        { header: 'Quem gastou', width: 14 },
+        { header: 'Serviço nº', width: 10, type: 'number' },
+      ],
+      rows: rows.map((e) => [e.created_at, e.amount_cents / 100, CATEGORIES[e.category] || e.category, e.description, e.user_name, e.service_id]),
+    },
+  ];
+}
+
 export default {
   name: 'despesas',
+  exportSheets,
   label: 'Despesas',
   migrations,
   commands,
