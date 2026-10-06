@@ -576,7 +576,7 @@ screens.resumo = async (params) => {
     </div>
     ${s.received_cents != null && s.expenses_cents != null ? `<div class="card"><div class="sub">Saldo (recebido − despesas)</div><div class="big">${money(s.received_cents - s.expenses_cents)}</div></div>` : ''}
     ${s.received_by_method ? `<div class="card"><h2>Recebido por forma</h2><ul class="list">${Object.entries(s.received_by_method).map(([k, v]) => `<li><div class="row"><span>${METHODS[k]}</span><span>${money(v)}</span></div></li>`).join('') || '<li class="empty">Nada recebido.</li>'}</ul></div>` : ''}
-    ${s.cash_by_driver && Object.keys(s.cash_by_driver).length ? `<div class="card"><h2>💵 Dinheiro com cada motorista</h2><ul class="list">${Object.entries(s.cash_by_driver).map(([k, v]) => `<li><div class="row"><span>${esc(k)}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}
+    <div id="caixa"></div>
     ${s.open_cents || s.to_receive_cents ? `<div class="card"><h2>Pendências (todas)</h2><p>Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
     ${s.expenses_by_category && Object.keys(s.expenses_by_category).length ? `<div class="card"><h2>Despesas</h2><ul class="list">${Object.entries(s.expenses_by_category).map(([k, v]) => `<li><div class="row"><span>${CATEGORIES[k] || k}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}
     ${has('planilha') ? `<a class="card linkcard" href="#/planilha"><span>📊 Planilha do Excel</span><span>›</span></a>` : ''}`;
@@ -584,6 +584,7 @@ screens.resumo = async (params) => {
     b.classList.toggle('active', b.dataset.p === period);
     b.onclick = () => (location.hash = `#/resumo?p=${b.dataset.p}`);
   });
+  if (has('pagamentos')) cashCard(view.querySelector('#caixa'));
 };
 
 // Planilha: baixar o Excel do mês e (dono) o link que mantém uma planilha sempre atualizada.
@@ -646,6 +647,39 @@ screens.planilha = async () => {
     screens.planilha();
   });
 };
+
+// Dinheiro e cheques que estão com cada motorista, acumulando até o dono recolher.
+async function cashCard(box) {
+  const list = await api('/caixa');
+  const owner = state.me.role === 'dono';
+  if (!list.length) {
+    box.innerHTML = owner ? '<div class="card"><h2>💵 Dinheiro em mãos</h2><p class="sub">Nenhum motorista com dinheiro ou cheque em mãos.</p></div>' : '';
+    return;
+  }
+  const lastText = (d) => (d.last_collection ? `Último recolhimento: ${when(d.last_collection.created_at)} (${money(d.last_collection.amount_cents)})` : 'Ainda não recolhido');
+  box.innerHTML = `<div class="card cash"><h2>💵 Dinheiro em mãos</h2><ul class="list">${list
+    .map(
+      (d) => `<li><div class="row"><div><strong>${owner ? esc(d.name) : 'Com você'}</strong><div class="sub">${lastText(d)}</div>
+          ${d.payments.length ? `<details><summary class="sub">Ver ${d.payments.length === 1 ? "o pagamento" : `os ${d.payments.length} pagamentos`}</summary><ul class="sub">${d.payments.map((p) => `<li>#${p.service_id} ${esc(p.contact_name || '')} · ${METHODS[p.method]} ${money(p.amount_cents)} · ${when(p.received_at)}</li>`).join('')}</ul></details>` : ''}</div>
+        <div class="right"><div class="big">${money(d.in_hand_cents)}</div>
+          ${owner && d.in_hand_cents > 0 ? `<button class="secondary small" data-collect="${d.driver_id}">Recolhi</button>` : ''}</div></div></li>`
+    )
+    .join('')}</ul>${owner ? '<p class="sub">Toque em <strong>Recolhi</strong> quando pegar o dinheiro: o valor do motorista volta para zero.</p>' : ''}</div>`;
+  box.querySelectorAll('[data-collect]').forEach((b) => {
+    b.onclick = async () => {
+      const d = list.find((x) => String(x.driver_id) === b.dataset.collect);
+      const value = prompt(`Quanto você pegou de ${d.name}?\n(Deixe o valor todo para zerar)`, (d.in_hand_cents / 100).toFixed(2));
+      if (value == null) return;
+      try {
+        const after = await api(`/caixa/${d.driver_id}/recolher`, { method: 'POST', body: { amount: value } });
+        toast(after.in_hand_cents ? `Ainda fica com ${d.name}: ${money(after.in_hand_cents)}` : `${d.name} zerado ✅`);
+        cashCard(box);
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+  });
+}
 
 screens.pendentes = async () => {
   setScreen('Pendências', { tab: 'resumo', back: '#/resumo' });

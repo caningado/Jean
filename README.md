@@ -22,6 +22,8 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 | `antes` / `depois` + fotos | Guarda as fotos da retirada ou da entrega |
 | foto com legenda `vin` ou `vin 1HGCM82633A004352` | Salva o VIN |
 | `pago 250 zelle` | Registra pagamento (zelle, dinheiro, cartão, cheque, aaa, agero…) |
+| `caixa` | Quanto dinheiro/cheque está em mãos com cada motorista (acumula até o dono recolher) |
+| `recolhi Jorge` / `recolhi 200 Jorge` | (dono) Pegou o dinheiro do motorista: zera, ou desconta só uma parte |
 | `cobrar` | Mensagem pronta com o Zelle para encaminhar ao cliente |
 | `gasto 80 diesel` | Registra despesa |
 | `entregue` | Finaliza o serviço em andamento |
