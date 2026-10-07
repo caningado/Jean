@@ -190,3 +190,15 @@ summary { cursor: pointer; font-weight: 600; }
 .cash button.small { padding: 6px 12px; font-size: 14px; margin-top: 6px; width: auto; }
 .cash details ul { margin: 4px 0 0; padding-left: 16px; }
 #driver { margin-bottom: 12px; }
+
+/* Avisos e manutenção */
+.alerts { border-color: var(--warn); }
+.alerts .list a span:first-child { white-space: normal; }
+.list li.late strong { color: var(--bad); }
+.truck h2 { margin: 0; }
+.truck .odo { margin: 10px 0 4px; }
+.truck .right button.small { padding: 6px 12px; font-size: 14px; width: auto; }
+.truck button.link { background: none; border: none; color: var(--muted); padding: 4px; display: block; margin-left: auto; }
+.list li.m-vencido strong { color: var(--bad); }
+.list li.m-perto strong { color: var(--warn); }
+.truck details { margin-top: 8px; }

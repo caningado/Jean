@@ -12,6 +12,9 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 - **Pagamentos**: Zelle, dinheiro, cartão, cheque e seguradora/motor club (AAA, Agero, Honk…). Mostra o que falta receber, quanto dinheiro está com cada motorista, e gera a mensagem de cobrança com o Zelle.
 - **Despesas**: combustível, pedágio, manutenção…
 - **Resumo** do dia e do mês: faturado, recebido, despesas e saldo.
+- **Cobrança atrasada**: avisa quem deve há mais de `COBRANCA_DIAS` dias (padrão 7).
+- **Manutenção do caminhão**: milhas, troca de óleo, pneus, freios, inspeção e registro, com aviso quando está perto ou atrasado (`odometro 123456`, `fiz oleo`, `caminhao`).
+- **Aviso da manhã**: todo dia às `AVISO_HORA` (padrão 8h) o dono recebe no WhatsApp o que precisa de atenção.
 - **Modular**: cada função é um módulo que pode ser ligado ou desligado. Veja [src/modules/README.md](src/modules/README.md) para criar novos.
 
 ## Comandos do robô (WhatsApp)
@@ -24,6 +27,9 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 | `pago 250 zelle` | Registra pagamento (zelle, dinheiro, cartão, cheque, aaa, agero…) |
 | `caixa` | Quanto dinheiro/cheque está em mãos com cada motorista (acumula até o dono recolher) |
 | `recolhi Jorge` / `recolhi 200 Jorge` | (dono) Pegou o dinheiro do motorista: zera, ou desconta só uma parte |
+| `caminhao` | Milhas e manutenção do caminhão (óleo, pneus, freios, inspeção, registro) |
+| `odometro 123456` | Atualiza as milhas do caminhão |
+| `fiz oleo` / `troquei pneus` | Registra a manutenção feita |
 | `cobrar` | Mensagem pronta com o Zelle para encaminhar ao cliente |
 | `gasto 80 diesel` | Registra despesa |
 | `entregue` | Finaliza o serviço em andamento |
@@ -80,7 +86,8 @@ Veja [.env.example](.env.example). As principais: `PRICE_BASE`, `PRICE_PER_MILE`
 ```
 src/
   core/        núcleo: equipe, contatos, serviços e o "cérebro" do robô
-  modules/     vin, fotos, pagamentos, despesas, whatsapp
+  modules/     vin, fotos, pagamentos, despesas, whatsapp, planilha, manutencao
+  lib/daily.js aviso da manhã (junta os alertas dos módulos)
   app.js       junta núcleo + módulos ligados
 public/        painel (abre no navegador do celular, dá para instalar na tela inicial)
 test/          testes automáticos (npm test)

@@ -623,6 +623,7 @@ screens.resumo = async (params) => {
   const s = await api(`/summary?period=${period}`);
   const stat = (label, value) => `<div class="card"><div class="sub">${label}</div><div class="big">${value}</div></div>`;
   view.innerHTML = `
+    <div id="alertas"></div>
     <div class="segmented"><button data-p="dia">Hoje</button><button data-p="mes">Este mês</button></div>
     <div class="stats">
       ${stat('Serviços', `${s.services}`)}
@@ -641,7 +642,18 @@ screens.resumo = async (params) => {
     b.onclick = () => (location.hash = `#/resumo?p=${b.dataset.p}`);
   });
   if (has('pagamentos')) cashCard(view.querySelector('#caixa'));
+  alertsCard(view.querySelector('#alertas'));
 };
+
+// Avisos (cobrança atrasada, manutenção do caminhão): os mesmos do WhatsApp da manhã.
+async function alertsCard(box) {
+  const list = await api('/alerts').catch(() => []);
+  box.innerHTML = list.length
+    ? `<div class="card alerts"><h2>⚠️ Atenção</h2><ul class="list">${list
+        .map((a) => `<li>${a.href ? `<a href="${esc(a.href)}"><span>${esc(a.text.replace(/\*/g, ''))}</span><span>›</span></a>` : esc(a.text)}</li>`)
+        .join('')}</ul></div>`
+    : '';
+}
 
 // Planilha: baixar o Excel do mês e (dono) o link que mantém uma planilha sempre atualizada.
 screens.planilha = async () => {
@@ -752,9 +764,11 @@ async function cashCard(box) {
 screens.pendentes = async () => {
   setScreen('Pendências', { tab: 'resumo', back: '#/resumo' });
   const list = await api('/payments/pending');
-  view.innerHTML = `<div class="card"><ul class="list">${
+  const late = list.filter((s) => s.overdue).length;
+  const age = (d) => (d === 0 ? 'hoje' : d === 1 ? 'há 1 dia' : `há ${d} dias`);
+  view.innerHTML = `${late ? `<div class="card alerts"><strong>⚠️ ${late === 1 ? '1 atrasado' : `${late} atrasados`}</strong><div class="sub">Abra o serviço e toque em <strong>Cobrar cliente</strong> para mandar a mensagem com o Zelle.</div></div>` : ''}<div class="card"><ul class="list">${
     list.length
-      ? list.map((s) => `<li><a href="#/servico/${s.id}"><div><strong>#${s.id} ${esc(s.contact_name || '')}</strong><div class="sub">${when(s.created_at)}</div></div>
+      ? list.map((s) => `<li${s.overdue ? ' class="late"' : ''}><a href="#/servico/${s.id}"><div><strong>${s.overdue ? '⚠️ ' : ''}#${s.id} ${esc(s.contact_name || '')}</strong><div class="sub">${when(s.completed_at || s.created_at)} · ${age(s.days)}</div></div>
           <div class="right">${s.open_cents ? 'Cliente ' + money(s.open_cents) : ''}${s.to_receive_cents ? '<br>Seguradora ' + money(s.to_receive_cents) : ''}</div></a></li>`).join('')
       : '<li class="empty">Nada pendente 👍</li>'
   }</ul></div>`;
@@ -766,11 +780,112 @@ screens.mais = async () => {
     <div class="card"><p><strong>${esc(state.me.name)}</strong><br><span class="sub">${phoneFmt(state.me.phone)} · ${state.me.role === 'dono' ? 'Dono' : 'Motorista'}</span></p></div>
     <div class="card"><ul class="list">
       ${has('despesas') ? '<li><a href="#/despesas"><span>🧾 Despesas</span><span>›</span></a></li>' : ''}
+      ${has('manutencao') ? '<li><a href="#/caminhoes"><span>🔧 Caminhões e manutenção</span><span>›</span></a></li>' : ''}
       ${state.me.role === 'dono' ? '<li><a href="#/equipe"><span>👥 Equipe</span><span>›</span></a></li>' : ''}
       <li><a href="#/robo"><span>💬 Testar o robô do WhatsApp</span><span>›</span></a></li>
       <li><a href="#/sair"><span>🚪 Sair</span><span>›</span></a></li>
     </ul></div>
     <p class="sub">Dica: no navegador do celular, use "Adicionar à tela inicial" para abrir como aplicativo.</p>`;
+};
+
+// Caminhões: milhas e manutenção (óleo, pneus, freios, inspeção...).
+screens.caminhoes = async () => {
+  setScreen('Caminhões', { tab: 'mais', back: '#/mais' });
+  const owner = state.me.role === 'dono';
+  const [trucks, users] = await Promise.all([api('/trucks'), owner ? api('/users') : []]);
+  const miles = (n) => `${Number(n || 0).toLocaleString('en-US')} mi`;
+  const ICON = { ok: '✅', perto: '🟡', vencido: '🔴' };
+  const drivers = users.filter((u) => u.active);
+  const driverSelect = (selected) =>
+    `<select name="driver_id"><option value="">Sem motorista fixo</option>${drivers.map((u) => `<option value="${u.id}"${u.id === selected ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}</select>`;
+  const every = (i) => [i.every_miles ? `a cada ${miles(i.every_miles)}` : '', i.every_days ? `a cada ${i.every_days} dias` : ''].filter(Boolean).join(' ou ');
+  view.innerHTML = `${trucks
+    .map(
+      (t) => `<div class="card truck" data-truck="${t.id}">
+        <div class="row"><div><h2>🚛 ${esc(t.name)}${t.plate ? ` <span class="sub">${esc(t.plate)}</span>` : ''}</h2>
+          <div class="sub">${t.driver_name ? esc(t.driver_name) + ' · ' : ''}atualizado ${when(t.odometer_at)}</div></div>
+          <div class="right"><div class="big">${miles(t.odometer)}</div></div></div>
+        <form class="copyrow odo"><input name="odometer" inputmode="numeric" placeholder="Milhas no painel do caminhão"><button>Atualizar</button></form>
+        <ul class="list">${t.items
+          .map(
+            (i) => `<li class="m-${i.state}"><div class="row"><div><strong>${ICON[i.state]} ${esc(i.name)}</strong>
+              <div class="sub">${esc(i.note || '')}${i.note ? ' · ' : ''}${every(i)}</div></div>
+              <div class="right"><button class="secondary small" data-done="${i.id}">Feito</button>
+              ${owner ? `<button class="link small" data-edit="${i.id}">Editar</button>` : ''}</div></div></li>`
+          )
+          .join('')}</ul>
+        ${owner ? `<details><summary class="sub">Mais opções</summary>
+          <form class="additem"><label>Novo item</label><input name="name" placeholder="Filtro de ar, correia…" required>
+            <div class="row2"><div><label>A cada (milhas)</label><input name="every_miles" inputmode="numeric"></div><div><label>A cada (dias)</label><input name="every_days" inputmode="numeric"></div></div>
+            <button class="secondary block">Adicionar item</button></form>
+          <form class="edittruck"><label>Motorista</label>${driverSelect(t.driver_id)}<button class="secondary block">Salvar motorista</button></form>
+          <button class="danger" data-deltruck="${t.id}">Apagar caminhão</button></details>` : ''}
+      </div>`
+    )
+    .join('')}
+    ${!trucks.length ? `<div class="card empty">${owner ? 'Cadastre seu caminhão abaixo. Ele já vem com troca de óleo, pneus, freios, inspeção e registro.' : 'Nenhum caminhão cadastrado. Peça para o dono cadastrar.'}</div>` : ''}
+    ${owner ? `<form class="card" id="novo"><h2>Cadastrar caminhão</h2>
+      <div class="row2"><div><label>Nome</label><input name="name" placeholder="F-550" required></div><div><label>Placa</label><input name="plate"></div></div>
+      <label>Milhas agora</label><input name="odometer" inputmode="numeric" required placeholder="123456">
+      <label>Motorista</label>${driverSelect(null)}
+      <p class="sub">Óleo a cada 5.000 mi, rodízio de pneus a cada 6.000 mi, freios a cada 25.000 mi, inspeção e registro todo ano. Dá para mudar depois.</p>
+      <button class="block">Cadastrar</button></form>` : ''}
+    <p class="sub">Pelo WhatsApp: <strong>odometro 123456</strong> para atualizar as milhas e <strong>fiz oleo</strong> quando fizer a manutenção.</p>`;
+
+  const run = async (fn, ok) => {
+    try {
+      await fn();
+      if (ok) toast(ok);
+      screens.caminhoes();
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  view.querySelector('#novo')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    run(() => api('/trucks', { method: 'POST', body: formData(e.target) }), 'Caminhão cadastrado');
+  });
+  view.querySelectorAll('[data-truck]').forEach((card) => {
+    const id = card.dataset.truck;
+    const truck = trucks.find((t) => String(t.id) === id);
+    card.querySelector('.odo').onsubmit = (e) => {
+      e.preventDefault();
+      run(() => api(`/trucks/${id}`, { method: 'PATCH', body: formData(e.target) }), 'Milhas atualizadas');
+    };
+    card.querySelector('.additem')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      run(() => api(`/trucks/${id}/items`, { method: 'POST', body: formData(e.target) }), 'Item adicionado');
+    });
+    card.querySelector('.edittruck')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      run(() => api(`/trucks/${id}`, { method: 'PATCH', body: formData(e.target) }), 'Salvo');
+    });
+    card.querySelectorAll('[data-done]').forEach((b) => {
+      b.onclick = () => {
+        const item = truck.items.find((i) => String(i.id) === b.dataset.done);
+        const value = prompt(`${item.name} feito com quantas milhas?`, truck.odometer);
+        if (value == null) return;
+        run(() => api(`/maintenance/${item.id}/done`, { method: 'POST', body: { miles: value } }), `${item.name} registrado ✅`);
+      };
+    });
+    card.querySelectorAll('[data-edit]').forEach((b) => {
+      b.onclick = () => {
+        const item = truck.items.find((i) => String(i.id) === b.dataset.edit);
+        const m = prompt(`${item.name}: a cada quantas milhas? (vazio = não conta milhas)`, item.every_miles || '');
+        if (m == null) return;
+        const d = prompt(`${item.name}: a cada quantos dias? (vazio = não conta dias)\nPara apagar o item, deixe os dois vazios.`, item.every_days || '');
+        if (d == null) return;
+        if (!m && !d) {
+          if (confirm(`Apagar "${item.name}"?`)) run(() => api(`/maintenance/${item.id}`, { method: 'DELETE' }), 'Item apagado');
+          return;
+        }
+        run(() => api(`/maintenance/${item.id}`, { method: 'PATCH', body: { every_miles: m, every_days: d } }), 'Salvo');
+      };
+    });
+  });
+  view.querySelectorAll('[data-deltruck]').forEach((b) => {
+    b.onclick = () => confirm('Apagar este caminhão e a manutenção dele?') && run(() => api(`/trucks/${b.dataset.deltruck}`, { method: 'DELETE' }), 'Caminhão apagado');
+  });
 };
 
 screens.despesas = async () => {

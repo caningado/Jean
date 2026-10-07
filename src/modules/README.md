@@ -46,6 +46,9 @@ export default {
   summary: ({ ctx, since, userId }) => ({ /* números para o resumo */ }),
   summaryLines: (summary) => [/* linhas do resumo no WhatsApp */],
 
+  // Avisos (topo do Resumo no painel e mensagem da manhã no WhatsApp para o dono).
+  alerts: ({ ctx, user }) => [{ text: '🔴 Algo atrasado', href: '#/tela' }],
+
   // Planilha (módulo planilha): abas próprias e colunas extras na aba Serviços.
   // type: 'text', 'number', 'money' (dólares) ou 'date'.
   exportSheets: ({ ctx, from, to, userId }) => [{ name: 'Aba', columns: [{ header, width, type }], rows: [[...]] }],
