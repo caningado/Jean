@@ -3,6 +3,7 @@
 // o meio de transporte, e o simulador do painel usa este mesmo código.
 import { normalizePhone, simplify, nowIso } from '../lib/util.js';
 import { ValidationError } from '../lib/validate.js';
+import { servicesBlocked } from '../lib/daily.js';
 
 // Resposta inválida numa conversa: o robô mostra a mensagem e repete a pergunta.
 export class FlowError extends ValidationError {}
@@ -122,7 +123,7 @@ export function createBot(ctx) {
       const command = findCommand(word);
       if (command) {
         const original = String(text).trim().split(/\s+/).slice(1).join(' ');
-        reply = await command.run({ ctx, user, args: rest, rawArgs: original, text });
+        reply = (command.blockable && servicesBlocked(ctx, user)) || (await command.run({ ctx, user, args: rest, rawArgs: original, text }));
       } else {
         reply = 'Não entendi. Mande *ajuda* para ver os comandos.';
       }

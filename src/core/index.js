@@ -2,7 +2,7 @@
 import express from 'express';
 import { FlowError } from './bot.js';
 import { hashPin, verifyPin, signToken } from '../lib/auth.js';
-import { collectAlerts } from '../lib/daily.js';
+import { collectAlerts, servicesBlocked } from '../lib/daily.js';
 import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkMoney, isMapReference } from '../lib/validate.js';
 import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfMonthIso, formatPhone } from '../lib/util.js';
 
@@ -359,11 +359,13 @@ const commands = [
   },
   {
     names: ['novo', 'nova', 'chamado'],
+    blockable: true, // fica suspenso se o motorista está devendo a milhagem
     help: '*novo* – registrar um serviço',
     run: ({ ctx, user }) => ctx.bot.startFlow(user, 'novo'),
   },
   {
     names: ['atual', 'servico', 'serviço'],
+    blockable: true, // fica suspenso se o motorista está devendo a milhagem
     help: '*atual* – ver o serviço em andamento',
     run({ ctx, user }) {
       const service = ctx.data.services.active(user);
@@ -384,6 +386,7 @@ const commands = [
   },
   {
     names: ['abrir', 'voltar'],
+    blockable: true, // fica suspenso se o motorista está devendo a milhagem
     help: '*abrir 12* – voltar a mexer no serviço #12',
     run({ ctx, user, args }) {
       const id = Number(String(args[0] || '').replace('#', ''));
@@ -546,6 +549,8 @@ function routes(api, ctx) {
 
   // Serviços
   api.get('/services', (req, res) => {
+    const blocked = servicesBlocked(ctx, req.user);
+    if (blocked) throw new HttpError(423, blocked.replace(/\*/g, ''));
     const driverId = req.user.role === 'dono' ? Number(req.query.driver) || null : req.user.id;
     res.json(data.services.list({ status: req.query.status || null, driverId, limit: Number(req.query.limit) || 100 }));
   });
@@ -563,6 +568,8 @@ function routes(api, ctx) {
   });
 
   api.post('/services', async (req, res) => {
+    const blocked = servicesBlocked(ctx, req.user);
+    if (blocked) throw new HttpError(423, blocked.replace(/\*/g, ''));
     const body = req.body || {};
     // Confere tudo antes de criar qualquer coisa.
     const fields = serviceFields(body);
