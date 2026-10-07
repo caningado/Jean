@@ -109,12 +109,15 @@ export function draftFor(ctx, service) {
         .get(contact.id)
     : null;
   const issue = today(ctx);
+  // Cliente empresa (módulo empresas): cobra a empresa e diz quem pediu.
+  const account = contact && ctx.api.empresas?.forContact(contact.id);
+  const details = [serviceDetails(ctx, service), account ? `Requested by: ${contact.name}` : ''].filter(Boolean).join(' - ');
   return {
     number: nextNumber(ctx),
-    bill_to: previous?.bill_to || contact?.name || '',
+    bill_to: account ? account.bill_to || account.name : previous?.bill_to || contact?.name || '',
     issue_date: issue,
     due_date: addDays(issue, company.dueDays),
-    items: [{ description: company.itemName, details: serviceDetails(ctx, service), qty: 1, unit_cents: service.price_cents || 0 }],
+    items: [{ description: company.itemName, details, qty: 1, unit_cents: service.price_cents || 0 }],
     notes: '',
   };
 }
@@ -352,10 +355,20 @@ function exportColumns(ctx) {
   return [{ header: 'Invoice nº', width: 11, value: (service) => q.get(service.id).n || '' }];
 }
 
+function setup(ctx) {
+  ctx.api.invoice = {
+    getCompany: () => getCompany(ctx),
+    logo: () => fs.readFileSync(logoFile(ctx)),
+    publicBase: () => publicBase(ctx),
+    numbersFor: (serviceId) => ctx.db.prepare('SELECT number FROM invoices WHERE service_id = ? ORDER BY number').all(serviceId).map((r) => r.number),
+  };
+}
+
 export default {
   name: 'invoice',
   label: 'Invoice / recibo',
   migrations,
+  setup,
   commands,
   routes,
   publicRoutes,

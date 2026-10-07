@@ -1,14 +1,14 @@
 // Desenha o invoice em PDF (em inglês, para o cliente nos EUA), no estilo do modelo da Towing J&J.
 import PDFDocument from 'pdfkit';
 
-const RED = '#C8102E';
-const DARK = '#1F2328';
-const GRAY = '#6B7280';
-const LINE = '#E5E7EB';
-const SOFT = '#F7F7F8';
+export const RED = '#C8102E';
+export const DARK = '#1F2328';
+export const GRAY = '#6B7280';
+export const LINE = '#E5E7EB';
+export const SOFT = '#F7F7F8';
 
-const usd = (cents) => '$' + ((cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const amount = (cents) => ((cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const usd = (cents) => '$' + ((cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const amount = (cents) => ((cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // "2026-10-06" -> "Oct 06, 2026"
 export function longDate(day) {
@@ -24,41 +24,11 @@ const qtyText = (q) => (Number.isInteger(q) ? String(q) : String(Number(q).toFix
 //          service: { vehicle, vin, plate, pickup, dropoff, miles } | null, paid_cents }
 export function renderInvoice(data) {
   const { company, logo, invoice, service } = data;
-  const doc = new PDFDocument({ size: 'LETTER', margin: 50, info: { Title: `Invoice ${invoice.number} - ${company.name}`, Author: company.name } });
-  const chunks = [];
-  doc.on('data', (c) => chunks.push(c));
-  const done = new Promise((resolve, reject) => {
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-  });
-
+  const { doc, done } = startDoc(`Invoice ${invoice.number} - ${company.name}`, company);
   const L = 50;
   const R = doc.page.width - 50;
   const W = R - L;
-
-  // ---- Cabeçalho: logo à esquerda, empresa à direita ----
-  let logoBottom = 50;
-  if (logo) {
-    try {
-      doc.image(logo, L, 40, { fit: [110, 110] });
-      logoBottom = 150;
-    } catch {
-      logo = null;
-    }
-  }
-  if (!logo) {
-    doc.font('Helvetica-Bold').fontSize(22).fillColor(RED).text(company.name, L, 50, { width: W / 2 });
-    logoBottom = doc.y + 10;
-  }
-  const companyLines = [
-    ...String(company.address || '').split('\n').filter(Boolean),
-    [company.contact, company.phone].filter(Boolean).join('  ·  '),
-    company.email,
-  ].filter(Boolean);
-  doc.font('Helvetica-Bold').fontSize(13).fillColor(DARK).text(company.name, L + W / 2, 52, { width: W / 2, align: 'right' });
-  doc.font('Helvetica').fontSize(9.5).fillColor(GRAY);
-  for (const line of companyLines) doc.text(line, { width: W / 2, align: 'right', lineGap: 1.5 });
-  let y = Math.max(logoBottom, doc.y) + 14;
+  let y = drawLetterhead(doc, company, logo);
 
   // ---- Faixa do título ----
   doc.rect(L, y, W, 2).fill(RED);
@@ -79,7 +49,7 @@ export function renderInvoice(data) {
 
   // ---- Bill to | Serviço ----
   const colW = (W - 20) / 2;
-  const label = (text, x, yy) => doc.font('Helvetica-Bold').fontSize(8.5).fillColor(RED).text(text, x, yy, { characterSpacing: 1 });
+  const label = (text, x, yy) => sectionLabel(doc, text, x, yy);
   label('BILL TO', L, y);
   doc.font('Helvetica-Bold').fontSize(10.5).fillColor(DARK);
   const billLines = String(invoice.bill_to || '').split('\n').filter(Boolean);
@@ -190,14 +160,68 @@ export function renderInvoice(data) {
     y = doc.y + 12;
   }
 
-  // ---- Rodapé ----
-  const fy = doc.page.height - 70;
-  doc.page.margins.bottom = 0;
-  doc.moveTo(L, fy).lineTo(R, fy).lineWidth(0.5).strokeColor(LINE).stroke();
-  doc.font('Helvetica-Bold').fontSize(10).fillColor(RED).text('Thank you for your business!', L, fy + 10, { width: W, align: 'center', lineBreak: false });
-  doc.font('Helvetica').fontSize(8.5).fillColor(GRAY)
-    .text([company.name, company.phone, company.email].filter(Boolean).join('  ·  '), L, fy + 25, { width: W, align: 'center', lineBreak: false });
+  drawFooter(doc, company);
 
   doc.end();
   return done;
+}
+
+// ---- Partes comuns (invoice e extrato) ----
+
+export function startDoc(title, company) {
+  const doc = new PDFDocument({ size: 'LETTER', margin: 50, info: { Title: title, Author: company.name } });
+  const chunks = [];
+  doc.on('data', (c) => chunks.push(c));
+  const done = new Promise((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+  });
+  return { doc, done };
+}
+
+export function sectionLabel(doc, text, x, y) {
+  return doc.font('Helvetica-Bold').fontSize(8.5).fillColor(RED).text(text, x, y, { characterSpacing: 1 });
+}
+
+// Logo à esquerda, dados da empresa à direita. Devolve onde o conteúdo começa.
+export function drawLetterhead(doc, company, logo) {
+  const L = 50;
+  const R = doc.page.width - 50;
+  const W = R - L;
+  let logoBottom = 50;
+  if (logo) {
+    try {
+      doc.image(logo, L, 40, { fit: [110, 110] });
+      logoBottom = 150;
+    } catch {
+      logo = null;
+    }
+  }
+  if (!logo) {
+    doc.font('Helvetica-Bold').fontSize(22).fillColor(RED).text(company.name, L, 50, { width: W / 2 });
+    logoBottom = doc.y + 10;
+  }
+  const companyLines = [
+    ...String(company.address || '').split('\n').filter(Boolean),
+    [company.contact, company.phone].filter(Boolean).join('  ·  '),
+    company.email,
+  ].filter(Boolean);
+  doc.font('Helvetica-Bold').fontSize(13).fillColor(DARK).text(company.name, L + W / 2, 52, { width: W / 2, align: 'right' });
+  doc.font('Helvetica').fontSize(9.5).fillColor(GRAY);
+  for (const line of companyLines) doc.text(line, { width: W / 2, align: 'right', lineGap: 1.5 });
+  return Math.max(logoBottom, doc.y) + 14;
+}
+
+export function drawFooter(doc, company, note = 'Thank you for your business!') {
+  const L = 50;
+  const R = doc.page.width - 50;
+  const W = R - L;
+  const fy = doc.page.height - 70;
+  const bottom = doc.page.margins.bottom;
+  doc.page.margins.bottom = 0;
+  doc.moveTo(L, fy).lineTo(R, fy).lineWidth(0.5).strokeColor(LINE).stroke();
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(RED).text(note, L, fy + 10, { width: W, align: 'center', lineBreak: false });
+  doc.font('Helvetica').fontSize(8.5).fillColor(GRAY)
+    .text([company.name, company.phone, company.email].filter(Boolean).join('  ·  '), L, fy + 25, { width: W, align: 'center', lineBreak: false });
+  doc.page.margins.bottom = bottom;
 }

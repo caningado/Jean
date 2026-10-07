@@ -321,7 +321,7 @@ screens.servico = async (params, id) => {
   view.innerHTML = `
     <div class="card">
       <div class="row" style="display:flex;justify-content:space-between;align-items:center">
-        <h2 style="margin:0">${esc(s.contact_name || 'Sem cliente')}</h2>
+        <h2 style="margin:0">${esc(s.contact_name || 'Sem cliente')}${s.company_name ? ` <span class="sub">· ${esc(s.company_name)}</span>` : ''}</h2>
         <span class="badge ${s.status}">${STATUS[s.status]}</span>
       </div>
       ${s.contact_phone ? `<p><a href="tel:+${s.contact_phone}">📞 ${phoneFmt(s.contact_phone)}</a> · <a href="https://wa.me/${s.contact_phone}" target="_blank" rel="noopener">WhatsApp</a></p>` : ''}
@@ -533,6 +533,7 @@ screens.contatos = async (params) => {
     ${state.me.role === 'dono' && !canPickContacts ? `<details class="card"><summary>Como trazer a agenda do celular</summary>
       <p class="sub"><strong>iPhone:</strong> no app <strong>Contatos</strong>, toque em <strong>Listas</strong> (no alto, à esquerda), segure o dedo em <strong>Todos os Contatos</strong> e toque em <strong>Exportar</strong>. Salve em Arquivos e depois toque em <strong>📥 Importar arquivo (.vcf)</strong> aqui e escolha o arquivo.</p>
       <p class="sub"><strong>Android:</strong> abra o painel pelo <strong>Chrome</strong>: aparece o botão <strong>📇 Da agenda do celular</strong>.</p></details>` : ''}
+    ${has('empresas') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/empresas"><span>🏢 Empresas (oficinas, dealers) e extrato</span><span>›</span></a>' : ''}
     <div class="card"><ul class="list" id="list"><li class="empty">Carregando…</li></ul></div>`;
   view.querySelector('#search').onsubmit = (e) => {
     e.preventDefault();
@@ -592,9 +593,13 @@ screens.contato = async (params, id) => {
   const isNew = id === 'novo';
   setScreen(isNew ? 'Novo contato' : 'Contato', { tab: 'contatos', back: '#/contatos' });
   const c = isNew ? { services: [] } : await api(`/contacts/${id}`);
+  const companies = has('empresas') ? await api('/companies') : [];
   view.innerHTML = `
     <form class="card" id="f">
       <label>Nome</label><input name="name" value="${esc(c.name)}" required>
+      ${has('empresas') ? `<label>Empresa (se pede serviço por uma oficina ou dealer)</label><select name="company_id"><option value="">Nenhuma (cliente particular)</option>${companies
+        .map((co) => `<option value="${co.id}"${co.id === c.company_id ? ' selected' : ''}>${esc(co.name)}</option>`)
+        .join('')}</select>` : ''}
       <label>Telefone</label><input name="phone" type="tel" value="${esc(c.phone ? phoneFmt(c.phone) : '')}">
       <label>E-mail</label><input name="email" type="email" value="${esc(c.email)}">
       <label>Observações</label><textarea name="notes" rows="2">${esc(c.notes)}</textarea>
@@ -608,8 +613,11 @@ screens.contato = async (params, id) => {
   view.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
     try {
-      const body = formData(e.target);
+      const { company_id, ...body } = formData(e.target);
       const saved = isNew ? await api('/contacts', { method: 'POST', body }) : await api(`/contacts/${id}`, { method: 'PATCH', body });
+      if (company_id !== undefined && String(company_id || '') !== String(c.company_id || '')) {
+        await api(`/contacts/${saved.id}/company`, { method: 'PUT', body: { company_id: company_id || null } });
+      }
       toast('Contato salvo');
       location.hash = `#/contato/${saved.id}`;
     } catch (err) {
@@ -1033,6 +1041,127 @@ screens.empresa = async () => {
       }
     };
     input.click();
+  };
+};
+
+// Empresas clientes (oficinas, dealers) com vários solicitantes, e o extrato para cobrar tudo junto.
+screens.empresas = async () => {
+  setScreen('Empresas', { tab: 'contatos', back: '#/contatos' });
+  const list = await api('/companies');
+  view.innerHTML = `
+    <div class="card"><ul class="list">${
+      list.length
+        ? list.map((c) => `<li><a href="#/cliente/${c.id}"><div><strong>${esc(c.name)}</strong><div class="sub">${c.requesters_count} solicitante(s)</div></div><div class="right">${c.due_cents ? `<strong>${money(c.due_cents)}</strong><div class="sub">em aberto</div>` : '<span class="sub">em dia ✅</span>'}</div></a></li>`).join('')
+        : '<li class="empty">Nenhuma empresa ainda.</li>'
+    }</ul></div>
+    <form class="card" id="f">
+      <h2>Nova empresa</h2>
+      <label>Nome</label><input name="name" required placeholder="Ex.: USAVE Motors">
+      <label>Para quem sai a cobrança (Bill to): nome e endereço</label><textarea name="bill_to" rows="3" placeholder="Nome, rua, cidade, estado e CEP"></textarea>
+      <div class="row2"><div><label>Telefone</label><input name="phone" type="tel"></div><div><label>E-mail</label><input name="email" type="email"></div></div>
+      <button class="block">Cadastrar</button>
+    </form>`;
+  view.querySelector('#f').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const c = await api('/companies', { method: 'POST', body: formData(e.target) });
+      toast('Empresa cadastrada');
+      location.hash = `#/cliente/${c.id}`;
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+};
+
+screens.cliente = async (params, id) => {
+  setScreen('Empresa', { tab: 'contatos', back: '#/empresas' });
+  const periodo = params.get('periodo') || 'abertos';
+  const [c, contacts] = await Promise.all([api(`/companies/${id}?periodo=${periodo}`), api('/contacts')]);
+  const st = c.statement;
+  const now = new Date();
+  const months = [...Array(12)].map((_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const monthName = (m) => new Date(`${m}-15T12:00:00`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const pdfUrl = `/api/companies/${id}/statement.pdf?periodo=${periodo}`;
+  const free = contacts.filter((p) => !c.requesters.some((r) => r.id === p.id));
+  view.innerHTML = `
+    <div class="card">
+      <h2>${esc(c.name)}</h2>
+      <label>Extrato de</label>
+      <select id="periodo"><option value="abertos">Tudo que está em aberto</option>${months.map((m) => `<option value="${m}"${m === periodo ? ' selected' : ''}>${monthName(m)} (todos)</option>`).join('')}</select>
+      <p class="big" style="margin:12px 0 0">${money(st.due_cents)}</p>
+      <p class="sub" style="margin-top:2px">em aberto · ${st.count} serviço(s)${st.paid_cents ? ` · já pago ${money(st.paid_cents)}` : ''}</p>
+      <div class="actions"><a class="btn secondary" href="${pdfUrl}" target="_blank" rel="noopener">Ver PDF</a><button id="share">📤 Mandar extrato</button></div>
+    </div>
+    ${st.groups
+      .map(
+        (g) => `<div class="card"><h2>👤 ${esc(g.requester)} <span class="sub">· ${money(g.due_cents)}</span></h2><ul class="list">${g.services
+          .map((s) => `<li><a href="#/servico/${s.id}"><div>#${s.id} ${esc(s.vehicle || '')}<div class="sub">${s.day.split('-').reverse().join('/')}${s.invoices.length ? ` · invoice ${s.invoices.join(', ')}` : ''}</div></div><div class="right">${s.due_cents ? money(s.due_cents) : '<span class="sub">pago ✅</span>'}</div></a></li>`)
+          .join('')}</ul></div>`
+      )
+      .join('')}
+    <div class="card"><h2>Solicitantes</h2><ul class="list">${
+      c.requesters.length
+        ? c.requesters.map((r) => `<li><div class="row"><a href="#/contato/${r.id}">${esc(r.name)}<div class="sub">${r.phone ? phoneFmt(r.phone) : ''}</div></a><button class="danger" data-unlink="${r.id}">Tirar</button></div></li>`).join('')
+        : '<li class="empty">Ninguém ainda. Ligue abaixo as pessoas que pedem serviço por esta empresa.</li>'
+    }</ul>
+      <label>Adicionar solicitante</label>
+      <div class="copyrow"><select id="addReq"><option value="">Escolha um contato…</option>${free.map((p) => `<option value="${p.id}">${esc(p.name)}${p.phone ? ' · ' + phoneFmt(p.phone) : ''}</option>`).join('')}</select><button class="secondary" id="addBtn">Adicionar</button></div>
+      <p class="sub">Pelo WhatsApp: abra o serviço e mande <strong>empresa ${esc(c.name.split(' ')[0].toLowerCase())}</strong>.</p>
+    </div>
+    <details class="card"><summary>Dados da empresa</summary>
+      <form id="f">
+        <label>Nome</label><input name="name" value="${esc(c.name)}" required>
+        <label>Para quem sai a cobrança (Bill to)</label><textarea name="bill_to" rows="3">${esc(c.bill_to || '')}</textarea>
+        <div class="row2"><div><label>Telefone</label><input name="phone" type="tel" value="${esc(c.phone || '')}"></div><div><label>E-mail</label><input name="email" type="email" value="${esc(c.email || '')}"></div></div>
+        <label>Observações</label><textarea name="notes" rows="2">${esc(c.notes || '')}</textarea>
+        <button class="block">Salvar</button>
+      </form>
+      <button class="danger" id="del">Apagar empresa</button>
+    </details>`;
+  const reload = () => screens.cliente(params, id);
+  view.querySelector('#periodo').onchange = (e) => (location.hash = `#/cliente/${id}?periodo=${e.target.value}`);
+  view.querySelector('#share').onclick = async () => {
+    const name = `Statement ${c.name}.pdf`;
+    try {
+      const file = new File([await (await fetch(pdfUrl)).blob()], name, { type: 'application/pdf' });
+      if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: name });
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+    }
+    if (c.link && navigator.share) return navigator.share({ title: name, text: `Here is your statement: ${c.link}` }).catch(() => {});
+    location.href = pdfUrl + '&download=1';
+  };
+  view.querySelector('#addBtn').onclick = async () => {
+    const pid = view.querySelector('#addReq').value;
+    if (!pid) return toast('Escolha um contato');
+    await api(`/contacts/${pid}/company`, { method: 'PUT', body: { company_id: Number(id) } });
+    toast('Solicitante adicionado');
+    reload();
+  };
+  view.querySelectorAll('[data-unlink]').forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm('Tirar esta pessoa da empresa? Os serviços dela saem do extrato.')) return;
+      await api(`/contacts/${b.dataset.unlink}/company`, { method: 'PUT', body: { company_id: null } });
+      reload();
+    };
+  });
+  view.querySelector('#f').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api(`/companies/${id}`, { method: 'PATCH', body: formData(e.target) });
+      toast('Salvo');
+      reload();
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  view.querySelector('#del').onclick = async () => {
+    if (!confirm(`Apagar ${c.name}? Os solicitantes continuam nos contatos.`)) return;
+    await api(`/companies/${id}`, { method: 'DELETE' });
+    location.hash = '#/empresas';
   };
 };
 
