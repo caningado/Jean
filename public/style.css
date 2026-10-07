@@ -211,3 +211,5 @@ summary { cursor: pointer; font-weight: 600; }
 input[type=date] { min-width: 0; width: 100%; box-sizing: border-box; }
 .truck-month { margin-top: 10px; }
 .truck-month .copyrow .btn { white-space: nowrap; }
+.list li.week-now { background: var(--chip); border-radius: 10px; padding-left: 8px; padding-right: 8px; }
+.actions .small, .actions .btn.small { padding: 6px 12px; font-size: 14px; width: auto; }

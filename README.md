@@ -17,6 +17,7 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 - **Invoice / recibo em PDF**: no modelo da Towing J&J (logo, dados da empresa, Zelle), em inglês, com numeração própria; sai com PAID quando o serviço está pago. Pelo painel (botão Mandar) ou pelo robô (`invoice`).
 - **Empresas e extrato**: oficinas e dealers com vários solicitantes. O extrato em PDF junta os serviços da empresa, separados por quem pediu, com o total a pagar (tudo em aberto ou por mês).
 - **Despesas por caminhão**: cada despesa fica ligada ao caminhão (o do motorista, ou escolhido). Extrato mensal em PDF com total por tipo, milhas rodadas e custo por milha.
+- **Pagamento dos motoristas**: % do faturamento do mês (padrão 30% / 35% a partir de $5.000 / 40% a partir de $10.000). Pagamento semanal com a % do mês até a semana e acerto no fechamento. PDF da semana e PDF do mês.
 - **Aviso da manhã**: todo dia às `AVISO_HORA` (padrão 8h) o dono recebe no WhatsApp o que precisa de atenção.
 - **Modular**: cada função é um módulo que pode ser ligado ou desligado. Veja [src/modules/README.md](src/modules/README.md) para criar novos.
 
@@ -36,6 +37,7 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 | `invoice` | Invoice em PDF do serviço, com link para mandar ao cliente |
 | `empresa usave` | Liga quem pediu o serviço atual à empresa |
 | `extrato usave` | (dono) Quanto a empresa deve, por solicitante, com link do PDF |
+| `comissao` | Motorista: faturamento e quanto recebe na semana e no mês (dono: `comissao Jorge`) |
 | `cobrar` | Mensagem pronta com o Zelle para encaminhar ao cliente |
 | `gasto 80 diesel` | Registra despesa |
 | `entregue` | Finaliza o serviço em andamento |
@@ -92,7 +94,7 @@ Veja [.env.example](.env.example). As principais: `PRICE_BASE`, `PRICE_PER_MILE`
 ```
 src/
   core/        núcleo: equipe, contatos, serviços e o "cérebro" do robô
-  modules/     vin, fotos, pagamentos, despesas, whatsapp, planilha, manutencao, invoice, empresas
+  modules/     vin, fotos, pagamentos, despesas, whatsapp, planilha, manutencao, invoice, empresas, comissao
   lib/daily.js aviso da manhã (junta os alertas dos módulos)
   app.js       junta núcleo + módulos ligados
 public/        painel (abre no navegador do celular, dá para instalar na tela inicial)
