@@ -377,7 +377,8 @@ screens.servico = async (params, id) => {
         <label class="payer hidden">Seguradora / motor club</label><input class="payer hidden" name="payer" placeholder="AAA, Agero, Honk…">
         <div class="actions"><button>Registrar pagamento</button>${b?.open_cents ? '<button type="button" class="secondary" id="charge">Cobrar cliente</button>' : ''}</div>
       </form>
-    </div>` : ''}`;
+    </div>` : ''}
+    ${has('invoice') ? `<a class="card linkcard" href="#/invoice/${s.id}"><span>🧾 Invoice para o cliente${s.invoice_number ? ` <span class="sub">nº ${s.invoice_number}</span>` : ''}</span><span>›</span></a>` : ''}`;
 
   const reload = () => screens.servico(params, id);
   const on = (sel, fn) => view.querySelector(sel) && (view.querySelector(sel).onclick = fn);
@@ -782,6 +783,7 @@ screens.mais = async () => {
       ${has('despesas') ? '<li><a href="#/despesas"><span>🧾 Despesas</span><span>›</span></a></li>' : ''}
       ${has('manutencao') ? '<li><a href="#/caminhoes"><span>🔧 Caminhões e manutenção</span><span>›</span></a></li>' : ''}
       ${state.me.role === 'dono' ? '<li><a href="#/equipe"><span>👥 Equipe</span><span>›</span></a></li>' : ''}
+      ${has('invoice') && state.me.role === 'dono' ? '<li><a href="#/empresa"><span>🏢 Dados da empresa (invoice)</span><span>›</span></a></li>' : ''}
       <li><a href="#/robo"><span>💬 Testar o robô do WhatsApp</span><span>›</span></a></li>
       <li><a href="#/sair"><span>🚪 Sair</span><span>›</span></a></li>
     </ul></div>
@@ -886,6 +888,152 @@ screens.caminhoes = async () => {
   view.querySelectorAll('[data-deltruck]').forEach((b) => {
     b.onclick = () => confirm('Apagar este caminhão e a manutenção dele?') && run(() => api(`/trucks/${b.dataset.deltruck}`, { method: 'DELETE' }), 'Caminhão apagado');
   });
+};
+
+// Invoice (fatura/recibo em PDF) do serviço, no modelo da empresa.
+const centsToInput = (c) => ((c || 0) / 100).toFixed(2);
+const dayFmt = (day) => (day ? day.split('-').reverse().join('/') : '');
+
+async function shareInvoice(inv) {
+  const name = `Invoice ${inv.number}.pdf`;
+  try {
+    const res = await fetch(`/api/invoices/${inv.id}/pdf`);
+    const file = new File([await res.blob()], name, { type: 'application/pdf' });
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: name, text: `Invoice #${inv.number}` });
+      return;
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+  }
+  if (inv.link && navigator.share) {
+    await navigator.share({ title: name, text: `Here is your invoice #${inv.number}: ${inv.link}` }).catch(() => {});
+    return;
+  }
+  location.href = `/api/invoices/${inv.id}/pdf?download=1`;
+}
+
+screens.invoice = async (params, id) => {
+  setScreen('Invoice', { tab: 'servicos', back: `#/servico/${id}` });
+  const { draft, invoices } = await api(`/services/${id}/invoices`);
+  const editId = params.get('editar');
+  const editing = editId ? invoices.find((i) => String(i.id) === editId) : null;
+  const showForm = editing || !invoices.length || params.get('novo') === '1';
+  const inv = editing || draft;
+  const itemRow = (it = { description: '', details: '', qty: 1, unit_cents: 0 }) => `
+    <div class="inv-item">
+      <label>Descrição</label><input name="description" value="${esc(it.description)}" required>
+      <div class="row2"><div><label>Qtd.</label><input name="qty" inputmode="decimal" value="${esc(it.qty)}"></div><div><label>Preço ($)</label><input name="unit" inputmode="decimal" value="${centsToInput(it.unit_cents)}"></div></div>
+      <label>Detalhe (aparece embaixo, menor)</label><input name="details" value="${esc(it.details || '')}">
+      <button type="button" class="danger small" data-rm>Tirar item</button>
+    </div>`;
+  view.innerHTML = `
+    ${invoices.length ? `<div class="card"><h2>Invoices deste serviço</h2><ul class="list">${invoices
+      .map(
+        (i) => `<li><div class="row"><div><strong>Nº ${i.number}</strong> · ${money(i.total_cents)}<div class="sub">${dayFmt(i.issue_date)} · ${esc((i.bill_to || '').split('\n')[0])}</div></div></div>
+        <div class="actions"><a class="btn secondary" href="/api/invoices/${i.id}/pdf" target="_blank" rel="noopener">Ver PDF</a>
+          <button data-share="${i.id}">📤 Mandar</button>
+          <a class="btn secondary" href="#/invoice/${id}?editar=${i.id}">Editar</a></div></li>`
+      )
+      .join('')}</ul>${showForm ? '' : `<a class="btn secondary block" href="#/invoice/${id}?novo=1">Fazer outro invoice</a>`}</div>` : ''}
+    ${showForm ? `<form class="card" id="f">
+      <h2>${editing ? `Editar invoice nº ${editing.number}` : 'Novo invoice'}</h2>
+      <div class="row2"><div><label>Número</label><input name="number" inputmode="numeric" value="${inv.number}" ${editing ? 'disabled' : ''}></div><div></div></div>
+      <label>Para (Bill to): nome, endereço…</label><textarea name="bill_to" rows="3">${esc(inv.bill_to || '')}</textarea>
+      <div class="row2"><div><label>Data</label><input type="date" name="issue_date" value="${inv.issue_date}"></div><div><label>Vencimento</label><input type="date" name="due_date" value="${inv.due_date}"></div></div>
+      <h3>Itens</h3><div id="items">${inv.items.map(itemRow).join('')}</div>
+      <button type="button" class="secondary" id="addItem">+ Item (milhas extras, espera, pedágio…)</button>
+      <label>Observação (opcional)</label><textarea name="notes" rows="2">${esc(inv.notes || '')}</textarea>
+      <p class="sub">O invoice sai em inglês, com o logo e os dados da empresa (Mais › Dados da empresa). Se o serviço já foi pago, sai com "PAID".</p>
+      <button class="block">${editing ? 'Salvar' : 'Criar invoice'}</button>
+    </form>` : ''}`;
+  const form = view.querySelector('#f');
+  if (form) {
+    const items = form.querySelector('#items');
+    const wire = () => items.querySelectorAll('[data-rm]').forEach((b) => (b.onclick = () => items.children.length > 1 && b.closest('.inv-item').remove()));
+    wire();
+    form.querySelector('#addItem').onclick = () => {
+      items.insertAdjacentHTML('beforeend', itemRow());
+      wire();
+    };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const body = {
+        number: form.number.value,
+        bill_to: form.bill_to.value,
+        issue_date: form.issue_date.value,
+        due_date: form.due_date.value,
+        notes: form.notes.value,
+        items: [...items.querySelectorAll('.inv-item')].map((row) => ({
+          description: row.querySelector('[name=description]').value,
+          details: row.querySelector('[name=details]').value,
+          qty: row.querySelector('[name=qty]').value,
+          unit: row.querySelector('[name=unit]').value,
+        })),
+      };
+      try {
+        const saved = editing
+          ? await api(`/invoices/${editing.id}`, { method: 'PUT', body })
+          : await api(`/services/${id}/invoices`, { method: 'POST', body });
+        toast(`Invoice nº ${saved.number} pronto`);
+        if (location.hash === `#/invoice/${id}`) screens.invoice(new URLSearchParams(), id);
+        else location.hash = `#/invoice/${id}`;
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+  }
+  view.querySelectorAll('[data-share]').forEach((b) => {
+    b.onclick = () => shareInvoice(invoices.find((i) => String(i.id) === b.dataset.share));
+  });
+};
+
+// Dados que aparecem no invoice: nome, endereço, telefone, Zelle, logo e numeração.
+screens.empresa = async () => {
+  setScreen('Dados da empresa', { tab: 'mais', back: '#/mais' });
+  const c = await api('/company');
+  const field = (name, label, extra = '') => `<label>${label}</label><input name="${name}" value="${esc(c[name] ?? '')}" ${extra}>`;
+  view.innerHTML = `
+    <form class="card" id="f">
+      <h2>Aparece no invoice</h2>
+      ${field('name', 'Nome da empresa', 'required')}
+      <label>Endereço</label><textarea name="address" rows="3">${esc(c.address || '')}</textarea>
+      <div class="row2"><div>${field('contact', 'Contato')}</div><div>${field('phone', 'Telefone', 'type="tel"')}</div></div>
+      ${field('email', 'E-mail', 'type="email"')}
+      <div class="row2"><div>${field('zelle', 'Zelle')}</div><div>${field('zelleName', 'Nome no Zelle')}</div></div>
+      ${field('itemName', 'Nome do serviço no invoice')}
+      <div class="row2"><div><label>Próximo número</label><input name="nextNumber" inputmode="numeric" value="${c.next_number}"></div>
+        <div><label>Prazo (dias)</label><input name="dueDays" inputmode="numeric" value="${c.dueDays}"></div></div>
+      <button class="block">Salvar</button>
+    </form>
+    <div class="card"><h2>Logo</h2><img class="logo-preview" src="/api/company/logo?t=${Date.now()}" alt="Logo">
+      <button class="secondary block" id="logo">Trocar logo (JPG ou PNG)</button></div>`;
+  view.querySelector('#f').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api('/company', { method: 'PUT', body: formData(e.target) });
+      toast('Salvo');
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  view.querySelector('#logo').onclick = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg';
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      try {
+        await api('/company/logo', { method: 'POST', raw: file, type: file.type });
+        toast('Logo trocado');
+        screens.empresa();
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+    input.click();
+  };
 };
 
 screens.despesas = async () => {
