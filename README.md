@@ -14,6 +14,7 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 - **Resumo** do dia e do mês: faturado, recebido, despesas e saldo.
 - **Cobrança atrasada**: avisa quem deve há mais de `COBRANCA_DIAS` dias (padrão 7).
 - **Manutenção do caminhão**: milhas, troca de óleo, pneus, freios, inspeção e registro, com aviso quando está perto ou atrasado (`odometro 123456`, `fiz oleo`, `caminhao`).
+- **Invoice / recibo em PDF**: no modelo da Towing J&J (logo, dados da empresa, Zelle), em inglês, com numeração própria; sai com PAID quando o serviço está pago. Pelo painel (botão Mandar) ou pelo robô (`invoice`).
 - **Aviso da manhã**: todo dia às `AVISO_HORA` (padrão 8h) o dono recebe no WhatsApp o que precisa de atenção.
 - **Modular**: cada função é um módulo que pode ser ligado ou desligado. Veja [src/modules/README.md](src/modules/README.md) para criar novos.
 
@@ -30,6 +31,7 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 | `caminhao` | Milhas e manutenção do caminhão (óleo, pneus, freios, inspeção, registro) |
 | `odometro 123456` | Atualiza as milhas do caminhão |
 | `fiz oleo` / `troquei pneus` | Registra a manutenção feita |
+| `invoice` | Invoice em PDF do serviço, com link para mandar ao cliente |
 | `cobrar` | Mensagem pronta com o Zelle para encaminhar ao cliente |
 | `gasto 80 diesel` | Registra despesa |
 | `entregue` | Finaliza o serviço em andamento |
@@ -86,7 +88,7 @@ Veja [.env.example](.env.example). As principais: `PRICE_BASE`, `PRICE_PER_MILE`
 ```
 src/
   core/        núcleo: equipe, contatos, serviços e o "cérebro" do robô
-  modules/     vin, fotos, pagamentos, despesas, whatsapp, planilha, manutencao
+  modules/     vin, fotos, pagamentos, despesas, whatsapp, planilha, manutencao, invoice
   lib/daily.js aviso da manhã (junta os alertas dos módulos)
   app.js       junta núcleo + módulos ligados
 public/        painel (abre no navegador do celular, dá para instalar na tela inicial)
