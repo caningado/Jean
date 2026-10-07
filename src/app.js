@@ -20,10 +20,11 @@ import whatsapp from './modules/whatsapp/index.js';
 import planilha from './modules/planilha/index.js';
 import manutencao from './modules/manutencao/index.js';
 import invoice from './modules/invoice/index.js';
+import empresas from './modules/empresas/index.js';
 
 // Para criar um módulo novo: faça uma pasta em src/modules, exporte o objeto
 // do módulo (veja src/modules/README.md) e acrescente ele aqui.
-export const AVAILABLE_MODULES = { vin, fotos, pagamentos, despesas, whatsapp, planilha, manutencao, invoice };
+export const AVAILABLE_MODULES = { vin, fotos, pagamentos, despesas, whatsapp, planilha, manutencao, invoice, empresas };
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
