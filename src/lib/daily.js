@@ -57,9 +57,32 @@ export async function runDaily(ctx, date = new Date()) {
   return sent;
 }
 
+// Tarefas que os módulos conferem a cada 10 minutos (ex.: cobrança da milhagem de hora em hora).
+export async function runTick(ctx, now = new Date()) {
+  for (const m of ctx.loaded) {
+    try {
+      await m.tick?.({ ctx, now });
+    } catch (err) {
+      ctx.log(`Erro na tarefa do módulo ${m.name}`, err);
+    }
+  }
+}
+
+// Algum módulo suspendeu os serviços deste usuário? Devolve a mensagem, ou null.
+export function servicesBlocked(ctx, user) {
+  for (const m of ctx.loaded) {
+    const msg = m.blockServices?.({ ctx, user });
+    if (msg) return msg;
+  }
+  return null;
+}
+
 // Confere a cada 10 minutos (não segura o processo aberto).
 export function startDaily(ctx) {
-  const tick = () => runDaily(ctx).catch((err) => ctx.log('Erro no aviso da manhã', err));
+  const tick = () =>
+    runDaily(ctx)
+      .catch((err) => ctx.log('Erro no aviso da manhã', err))
+      .then(() => runTick(ctx));
   setTimeout(tick, 30_000).unref();
   setInterval(tick, 10 * 60_000).unref();
 }

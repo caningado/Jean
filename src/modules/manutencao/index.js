@@ -72,7 +72,21 @@ const migrations = [
    ALTER TABLE maintenance_log ADD COLUMN next_date TEXT;
    ALTER TABLE maintenance_log ADD COLUMN expense_id INTEGER;
    ALTER TABLE odometer_readings ADD COLUMN user_id INTEGER REFERENCES users(id);`,
+  // Cobrança da milhagem da semana: quantos lembretes já foram e quando a lista foi suspensa.
+  `CREATE TABLE mileage_chase (
+     driver_id INTEGER NOT NULL REFERENCES users(id),
+     week TEXT NOT NULL,
+     count INTEGER NOT NULL DEFAULT 0,
+     last_at TEXT,
+     blocked_at TEXT,
+     PRIMARY KEY (driver_id, week)
+   );`,
 ];
+// Cobrança: começa na sexta na hora do aviso da manhã, repete de hora em hora 3 vezes;
+// sem resposta, suspende a lista de serviços do motorista até ele mandar a milhagem.
+const CHASE_DAYS = [5, 6, 0];
+const CHASE_TIMES = 3;
+const HOUR = 3600000;
 
 const fmtMiles = (n) => `${Number(n).toLocaleString('en-US')} mi`;
 const fmtDate = (iso) => {
@@ -283,10 +297,12 @@ const commands = [
       if (!truck) return `De qual caminhão? Ex: *odometro ${simplify(trucks[0].name).split(' ')[0]} ${miles}*\nCaminhões: ${truckNames(trucks)}`;
       if (miles < truck.odometer) return `⚠️ ${fmtMiles(miles)} é menos do que o último registrado (${fmtMiles(truck.odometer)}). Confira o número.`;
       if (miles - truck.odometer > 20000) return `⚠️ ${fmtMiles(miles - truck.odometer)} a mais desde a última vez? Confira o número.`;
+      const wasBlocked = blockServices({ ctx, user });
       const updated = setOdometer(ctx, truck, miles, user.id);
+      const freed = wasBlocked && !blockServices({ ctx, user });
       const [t] = listTrucks(ctx).filter((x) => x.id === updated.id);
       const attention = t.items.filter((i) => i.state !== 'ok').map((i) => `${ICON[i.state]} ${i.name}: ${i.note}`);
-      return [`📏 ${t.name}: ${fmtMiles(miles)} registrado.`, ...attention].join('\n');
+      return [`📏 ${t.name}: ${fmtMiles(miles)} registrado.`, ...attention, ...(freed ? ['✅ Obrigado! Sua lista de serviços foi liberada.'] : [])].join('\n');
     },
   },
   {
@@ -699,7 +715,6 @@ export function weekText(data, link = null) {
 }
 
 // Roda uma vez por dia junto com o aviso da manhã.
-// Sexta a domingo: lembra o motorista que ainda não mandou a milhagem da semana.
 // Segunda (ou o primeiro dia depois, se o servidor estava parado): relatório da semana passada para o dono.
 async function daily({ ctx, day }) {
   const monday = mondayOf(day);
@@ -713,29 +728,78 @@ async function daily({ ctx, day }) {
     }
   };
 
-  if ([5, 6, 0].includes(weekday(day)) && getSetting(ctx, 'frota_lembrete') !== monday) {
-    setSetting(ctx, 'frota_lembrete', monday);
-    const from = dayStart(ctx, monday);
-    const informed = ctx.db.prepare('SELECT 1 FROM odometer_readings WHERE truck_id = ? AND at >= ? AND user_id IS NOT NULL LIMIT 1');
-    const byDriver = new Map();
-    for (const t of trucks) {
-      if (!t.driver_id || informed.get(t.id, from)) continue;
-      byDriver.set(t.driver_id, [...(byDriver.get(t.driver_id) || []), t]);
-    }
-    for (const [driverId, list] of byDriver) {
-      const u = ctx.db.prepare('SELECT * FROM users WHERE id = ? AND active = 1').get(driverId);
-      if (!u) continue;
-      const names = list.map((t) => t.name).join(' e ');
-      const ex = list.length > 1 ? `odometro ${simplify(list[0].name).split(' ')[0]} 123456` : 'odometro 123456';
-      await send(u.phone, `📏 Oi, ${u.name.split(' ')[0]}! Falta mandar a milhagem do ${names} desta semana.\nOlhe o painel do caminhão e mande: *${ex}*`);
-    }
-  }
-
   const lastWeek = addDays(monday, -7);
   if (getSetting(ctx, 'frota_relatorio') !== lastWeek) {
     setSetting(ctx, 'frota_relatorio', lastWeek);
     const text = weekText(weekReport(ctx, lastWeek), weekLink(ctx, lastWeek));
     for (const owner of ctx.db.prepare("SELECT * FROM users WHERE role = 'dono' AND active = 1").all()) await send(owner.phone, text);
+  }
+}
+
+// Caminhões do motorista que ainda não tiveram a milhagem informada desde o começo da semana.
+function missingMileage(ctx, driverId, week) {
+  const from = dayStart(ctx, week);
+  return ctx.db
+    .prepare(
+      `SELECT t.* FROM trucks t WHERE t.active = 1 AND t.driver_id = ?
+       AND NOT EXISTS (SELECT 1 FROM odometer_readings r WHERE r.truck_id = t.id AND r.at >= ? AND r.user_id IS NOT NULL)
+       ORDER BY t.id`
+    )
+    .all(driverId, from);
+}
+
+const mileageExample = (trucks) => (trucks.length > 1 ? `odometro ${simplify(trucks[0].name).split(' ')[0]} 123456` : 'odometro 123456');
+
+// Mensagem de bloqueio, ou null se o motorista pode ver os serviços.
+function blockServices({ ctx, user }) {
+  if (!user || user.role === 'dono') return null;
+  const row = ctx.db.prepare('SELECT * FROM mileage_chase WHERE driver_id = ? AND blocked_at IS NOT NULL ORDER BY week DESC LIMIT 1').get(user.id);
+  if (!row) return null;
+  const missing = missingMileage(ctx, user.id, row.week);
+  if (!missing.length) return null;
+  return `🚫 Sua lista de serviços está suspensa até você mandar a milhagem do ${missing.map((t) => t.name).join(' e ')}.\nMande: *${mileageExample(missing)}* (ou no painel, em Mais › Caminhões).`;
+}
+
+// Roda a cada 10 minutos.
+async function tick({ ctx, now = new Date() }) {
+  const hour0 = ctx.config.dailyHour;
+  if (hour0 == null) return;
+  const day = localDay(ctx, now);
+  const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: ctx.config.timeZone, hour: '2-digit', hourCycle: 'h23' }).format(now));
+  if (!CHASE_DAYS.includes(weekday(day)) || hour < hour0) return;
+  const week = mondayOf(day);
+  const drivers = ctx.db
+    .prepare('SELECT DISTINCT u.* FROM users u JOIN trucks t ON t.driver_id = u.id AND t.active = 1 WHERE u.active = 1')
+    .all();
+  const send = async (phone, text) => {
+    try {
+      await ctx.send(phone, text);
+    } catch (err) {
+      ctx.log(`Não consegui mandar a cobrança da milhagem para ${phone}`, err);
+    }
+  };
+  for (const u of drivers) {
+    const missing = missingMileage(ctx, u.id, week);
+    if (!missing.length) continue;
+    ctx.db.prepare('INSERT OR IGNORE INTO mileage_chase (driver_id, week) VALUES (?, ?)').run(u.id, week);
+    const row = ctx.db.prepare('SELECT * FROM mileage_chase WHERE driver_id = ? AND week = ?').get(u.id, week);
+    if (row.blocked_at) continue;
+    const waited = !row.last_at || now.getTime() - Date.parse(row.last_at) >= HOUR - 60000;
+    if (!waited) continue;
+    const names = missing.map((t) => t.name).join(' e ');
+    const first = u.name.split(' ')[0];
+    if (row.count < CHASE_TIMES) {
+      const n = row.count + 1;
+      const last = n === CHASE_TIMES && u.role !== 'dono' ? '\n⚠️ Último aviso: se não mandar em 1 hora, sua lista de serviços fica suspensa.' : '';
+      ctx.db.prepare('UPDATE mileage_chase SET count = ?, last_at = ? WHERE driver_id = ? AND week = ?').run(n, now.toISOString(), u.id, week);
+      await send(u.phone, `📏 ${first}, falta a milhagem do ${names} desta semana (aviso ${n} de ${CHASE_TIMES}).\nOlhe o painel do caminhão e mande: *${mileageExample(missing)}*${last}`);
+    } else if (u.role !== 'dono') {
+      ctx.db.prepare('UPDATE mileage_chase SET blocked_at = ? WHERE driver_id = ? AND week = ?').run(now.toISOString(), u.id, week);
+      await send(u.phone, blockServices({ ctx, user: u }));
+      for (const owner of ctx.db.prepare("SELECT * FROM users WHERE role = 'dono' AND active = 1").all()) {
+        await send(owner.phone, `🚫 ${u.name} não mandou a milhagem do ${names} depois de ${CHASE_TIMES} avisos. A lista de serviços dele está suspensa até ele mandar (ou até você atualizar as milhas em Caminhões).`);
+      }
+    }
   }
 }
 
@@ -789,5 +853,7 @@ export default {
   publicRoutes,
   alerts,
   daily,
+  tick,
+  blockServices,
   exportSheets,
 };
