@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/app.js';
 import { makeContext, chat, DRIVER_PHONE, OWNER_PHONE } from './helpers.js';
-import { runDaily } from '../src/lib/daily.js';
+import { runDaily, runTick } from '../src/lib/daily.js';
 import { weekReport, weekText } from '../src/modules/manutencao/index.js';
 
 async function start(t, env = {}) {
@@ -100,13 +100,62 @@ test('relatório da semana: milhas rodadas, quem informou, serviços e próximas
   assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0, 5).toString(), '%PDF-');
 });
 
-test('lembrete de milhagem na sexta e relatório para o dono na segunda', async (t) => {
-  const { ctx, call, base, driver } = await start(t, { AVISO_HORA: '8' });
-  const { body: truck } = await call('POST', '/trucks', { name: 'F-550', odometer: 100000, driver_id: driver.id });
-  // Tudo cadastrado bem antes da semana testada.
+test('cobrança da milhagem: 3 avisos de hora em hora, depois suspende a lista de serviços', async (t) => {
+  const { ctx, call, login, base, driver } = await start(t, { AVISO_HORA: '8' });
+  await call('POST', '/trucks', { name: 'F-550', odometer: 100000, driver_id: driver.id });
   ctx.db.prepare("UPDATE odometer_readings SET at = '2026-09-01T12:00:00Z'").run();
-  ctx.db.prepare("UPDATE trucks SET odometer_at = '2026-09-01T12:00:00Z', created_at = '2026-09-01T12:00:00Z'").run();
-  ctx.db.prepare("UPDATE maintenance_items SET last_date = '2026-09-01T12:00:00Z', created_at = '2026-09-01T12:00:00Z'").run();
+  const sent = [];
+  ctx.send = async (phone, text) => {
+    sent.push({ phone, text });
+    return true;
+  };
+  const toDriver = () => sent.filter((m) => m.phone === DRIVER_PHONE);
+  const at = (iso) => runTick(ctx, new Date(iso));
+
+  // Quinta: ainda não cobra. Sexta 7h (NY): cedo demais.
+  await at('2026-10-08T13:00:00Z');
+  await at('2026-10-09T11:00:00Z');
+  assert.equal(sent.length, 0);
+  // Sexta 8h: 1º aviso; 10 min depois não repete; 9h e 10h: 2º e 3º.
+  await at('2026-10-09T12:00:00Z');
+  await at('2026-10-09T12:10:00Z');
+  assert.equal(toDriver().length, 1);
+  assert.match(toDriver()[0].text, /aviso 1 de 3/);
+  await at('2026-10-09T13:00:00Z');
+  await at('2026-10-09T14:00:00Z');
+  assert.equal(toDriver().length, 3);
+  assert.match(toDriver()[2].text, /Último aviso/);
+  const [ok] = await chat(ctx, DRIVER_PHONE, 'atual');
+  assert.doesNotMatch(ok, /suspensa/);
+
+  // 11h sem resposta: suspende e avisa o dono.
+  await at('2026-10-09T15:00:00Z');
+  assert.match(toDriver()[3].text, /lista de serviços está suspensa/);
+  assert.ok(sent.some((m) => m.phone === OWNER_PHONE && /Jorge não mandou a milhagem/.test(m.text)));
+  await at('2026-10-09T16:00:00Z');
+  assert.equal(toDriver().length, 4, 'não manda mais nada depois de suspender');
+
+  const [novo] = await chat(ctx, DRIVER_PHONE, 'novo');
+  assert.match(novo, /suspensa até você mandar a milhagem do F-550/);
+  const drv = await login(DRIVER_PHONE, '5678');
+  const list = await fetch(`${base}/api/services`, { headers: { Cookie: drv } });
+  assert.equal(list.status, 423);
+  assert.match((await list.json()).error, /suspensa/);
+  // O dono continua vendo tudo.
+  assert.equal((await call('GET', '/services')).status, 200);
+
+  // Mandou a milhagem: libera.
+  const [km] = await chat(ctx, DRIVER_PHONE, 'odometro 100900');
+  assert.match(km, /lista de serviços foi liberada/);
+  const [again] = await chat(ctx, DRIVER_PHONE, 'atual');
+  assert.doesNotMatch(again, /suspensa/);
+  assert.equal((await fetch(`${base}/api/services`, { headers: { Cookie: drv } })).status, 200);
+});
+
+test('relatório da semana passada chega para o dono na segunda, com link do PDF', async (t) => {
+  const { ctx, call, base, driver } = await start(t, { AVISO_HORA: '8' });
+  await call('POST', '/trucks', { name: 'F-550', odometer: 100000, driver_id: driver.id });
+  ctx.db.prepare("UPDATE odometer_readings SET at = '2026-09-01T12:00:00Z'").run();
   ctx.db.prepare("INSERT INTO settings (key, value) VALUES ('public_url', 'https://guincho.test') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
   const sent = [];
   ctx.send = async (phone, text) => {
@@ -117,16 +166,8 @@ test('lembrete de milhagem na sexta e relatório para o dono na segunda', async 
   await runDaily(ctx, new Date('2026-10-07T13:00:00Z'));
   assert.equal(sent.filter((m) => m.phone === OWNER_PHONE && /Relatório semanal/.test(m.text)).length, 1);
   sent.length = 0;
-
-  // Sexta 9h (Nova York): o motorista não mandou a milhagem ainda.
   await runDaily(ctx, new Date('2026-10-09T13:00:00Z'));
-  const toDriver = sent.filter((m) => m.phone === DRIVER_PHONE);
-  assert.equal(toDriver.length, 1);
-  assert.match(toDriver[0].text, /Falta mandar a milhagem do F-550/);
-  // Sábado: não repete.
-  sent.length = 0;
-  await runDaily(ctx, new Date('2026-10-10T13:00:00Z'));
-  assert.equal(sent.filter((m) => m.phone === DRIVER_PHONE).length, 0);
+  assert.equal(sent.filter((m) => /Relatório semanal/.test(m.text)).length, 0, 'só uma vez por semana');
 
   // Segunda: relatório da semana 05/10 a 11/10, com o link do PDF.
   await runDaily(ctx, new Date('2026-10-12T13:00:00Z'));
@@ -135,8 +176,6 @@ test('lembrete de milhagem na sexta e relatório para o dono na segunda', async 
   assert.match(report.text, /05\/10 a 11\/10/);
   assert.match(report.text, /milhagem \*não informada\*/);
   const link = report.text.match(/https:\/\/guincho\.test(\S+)/)[1];
-  const pdf = await fetch(`${base}${link}`);
-  assert.equal(pdf.status, 200);
+  assert.equal((await fetch(`${base}${link}`)).status, 200);
   assert.equal((await fetch(`${base}/frota/errado/2026-10-05.pdf`)).status, 404);
-  assert.ok(truck.id);
 });

@@ -222,7 +222,15 @@ screens.servicos = async (params) => {
   });
   const select = view.querySelector('#driver');
   if (select) select.onchange = () => (location.hash = query(status, select.value));
-  const list = await api(`/services?status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}`);
+  let list;
+  try {
+    list = await api(`/services?status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}`);
+  } catch (err) {
+    // Lista suspensa por falta da milhagem da semana: mostra o que fazer.
+    if (!/suspensa/.test(err.message)) throw err;
+    view.innerHTML = `<div class="card"><h2>🚫 Lista suspensa</h2><p>${esc(err.message)}</p><a class="btn block" href="#/caminhoes">📏 Mandar a milhagem</a></div>`;
+    return;
+  }
   view.querySelector('#list').innerHTML = list.length
     ? list
         .map(
@@ -848,7 +856,7 @@ screens.caminhoes = async () => {
       <label>Motorista</label>${driverSelect(null)}
       <p class="sub">Óleo a cada 5.000 mi, rodízio de pneus a cada 6.000 mi, freios a cada 25.000 mi, inspeção e registro todo ano. Dá para mudar depois.</p>
       <button class="block">Cadastrar</button></form>` : ''}
-    <p class="sub">Pelo WhatsApp: <strong>odometro 123456</strong> para atualizar as milhas (o motorista recebe um lembrete na sexta se ainda não mandou na semana) e <strong>fiz oleo</strong> quando fizer a manutenção.</p>`;
+    <p class="sub">Pelo WhatsApp: <strong>odometro 123456</strong> para atualizar as milhas (se o motorista não mandar até sexta, recebe 3 avisos de hora em hora e depois a lista de serviços dele fica suspensa até mandar) e <strong>fiz oleo</strong> quando fizer a manutenção.</p>`;
 
   const week = view.querySelector('#semana');
   if (week) {
