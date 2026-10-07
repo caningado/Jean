@@ -56,6 +56,9 @@ O sistema precisa ficar num servidor com **https** e **disco que não se apaga**
 fotos ficam na pasta `DATA_DIR`). Serve qualquer serviço que rode Docker com volume persistente
 (Railway, Render, Fly.io) ou uma VPS. O `Dockerfile` já está pronto e guarda os dados em `/data`.
 
+Para o Google Cloud grátis (banco e fotos guardados de verdade), veja o passo a passo em
+[`deploy/google-cloud/README.md`](deploy/google-cloud/README.md).
+
 ## Ligar o WhatsApp (API oficial da Meta)
 
 1. Em [developers.facebook.com](https://developers.facebook.com), crie um app do tipo **Business** e adicione o produto **WhatsApp**.
