@@ -68,6 +68,19 @@ async function api(path, { method = 'GET', body, raw, type } = {}) {
   return data;
 }
 
+// Agenda do celular (Contact Picker): funciona no Chrome do Android. O iPhone ainda não deixa.
+const canPickContacts = 'contacts' in navigator && 'ContactsManager' in window;
+
+// Abre a agenda do celular e devolve [{ name, phones: [...] }].
+async function pickPhoneContacts(multiple = false) {
+  const picked = await navigator.contacts.select(['name', 'tel'], { multiple });
+  return picked
+    .map((c) => ({ name: (c.name || []).find(Boolean) || '', phones: [...new Set((c.tel || []).map((t) => t.trim()).filter(Boolean))] }))
+    .filter((c) => c.name || c.phones.length);
+}
+
+const vcfEscape = (v) => String(v).replace(/[\\,;]/g, (m) => '\\' + m).replace(/\n/g, ' ');
+
 // Sugestões de endereço do mapa enquanto digita (retirada e destino).
 function placeSuggestions(input) {
   const list = document.createElement('datalist');
@@ -231,7 +244,8 @@ screens.novo = async () => {
   const priced = pricing && (pricing.baseCents || pricing.perMileCents);
   view.innerHTML = `
     <form class="card" id="f">
-      <label>Telefone do cliente</label><input name="contact_phone" type="tel" list="contacts" placeholder="(508) 555-0123">
+      <label>Telefone do cliente</label>
+      <div class="copyrow"><input name="contact_phone" type="tel" list="contacts" placeholder="(508) 555-0123">${canPickContacts ? '<button type="button" class="secondary" id="agenda">📇 Agenda</button>' : ''}</div>
       <label>Nome do cliente</label><input name="contact_name">
       <label>Retirada (onde pegar)</label><input name="pickup" required placeholder="Endereço ou link do mapa">
       <label>Destino (para onde levar)</label><input name="dropoff" placeholder="Endereço ou link do mapa">
@@ -251,6 +265,26 @@ screens.novo = async () => {
   const form = view.querySelector('#f');
   placeSuggestions(form.pickup);
   placeSuggestions(form.dropoff);
+  // Escolher o cliente direto da agenda do celular.
+  const agenda = view.querySelector('#agenda');
+  if (agenda) {
+    agenda.onclick = async () => {
+      try {
+        const [contact] = await pickPhoneContacts();
+        if (!contact) return;
+        let phone = contact.phones[0] || '';
+        if (contact.phones.length > 1) {
+          const choice = prompt(`Qual número de ${contact.name}?\n${contact.phones.map((p, i) => `${i + 1}) ${p}`).join('\n')}`, '1');
+          if (choice == null) return;
+          phone = contact.phones[Number(choice) - 1] || phone;
+        }
+        form.contact_phone.value = phone;
+        form.contact_name.value = contact.name;
+      } catch (err) {
+        toast('Não consegui abrir a agenda do celular.');
+      }
+    };
+  }
   // Ao digitar o telefone, completa o nome se o cliente já estiver na agenda.
   form.contact_phone.onchange = async () => {
     const q = form.contact_phone.value.replace(/\D/g, '');
@@ -492,14 +526,36 @@ screens.contatos = async (params) => {
     <form id="search" class="actions" style="margin-top:0;margin-bottom:12px"><input name="q" type="search" placeholder="Buscar nome ou telefone" value="${esc(q)}"></form>
     <div class="actions" style="margin-bottom:12px">
       <button class="secondary" id="add">➕ Novo contato</button>
-      ${state.me.role === 'dono' ? '<button class="secondary" id="import">📥 Importar agenda (.vcf)</button>' : ''}
+      ${state.me.role === 'dono' && canPickContacts ? '<button class="secondary" id="pick">📇 Da agenda do celular</button>' : ''}
+      ${state.me.role === 'dono' ? '<button class="secondary" id="import">📥 Importar arquivo (.vcf)</button>' : ''}
     </div>
+    ${state.me.role === 'dono' && !canPickContacts ? `<details class="card"><summary>Como trazer a agenda do celular</summary>
+      <p class="sub"><strong>iPhone:</strong> no app <strong>Contatos</strong>, toque em <strong>Listas</strong> (no alto, à esquerda), segure o dedo em <strong>Todos os Contatos</strong> e toque em <strong>Exportar</strong>. Salve em Arquivos e depois toque em <strong>📥 Importar arquivo (.vcf)</strong> aqui e escolha o arquivo.</p>
+      <p class="sub"><strong>Android:</strong> abra o painel pelo <strong>Chrome</strong>: aparece o botão <strong>📇 Da agenda do celular</strong>.</p></details>` : ''}
     <div class="card"><ul class="list" id="list"><li class="empty">Carregando…</li></ul></div>`;
   view.querySelector('#search').onsubmit = (e) => {
     e.preventDefault();
     location.hash = `#/contatos?q=${encodeURIComponent(e.target.q.value)}`;
   };
   view.querySelector('#add').onclick = () => (location.hash = '#/contato/novo');
+  // Escolhe vários contatos da agenda do celular e manda como um .vcf.
+  const pickBtn = view.querySelector('#pick');
+  if (pickBtn) {
+    pickBtn.onclick = async () => {
+      try {
+        const picked = await pickPhoneContacts(true);
+        if (!picked.length) return;
+        const vcf = picked
+          .map((c) => ['BEGIN:VCARD', 'VERSION:3.0', `FN:${vcfEscape(c.name || c.phones[0])}`, ...c.phones.slice(0, 1).map((p) => `TEL:${p}`), 'END:VCARD'].join('\n'))
+          .join('\n');
+        const r = await api('/contacts/import', { method: 'POST', raw: vcf, type: 'text/vcard' });
+        toast(`${r.created} novos, ${r.updated} atualizados${r.skipped ? `, ${r.skipped} sem telefone` : ''}`);
+        screens.contatos(params);
+      } catch (err) {
+        toast(err.message || 'Não consegui abrir a agenda do celular.');
+      }
+    };
+  }
   const importBtn = view.querySelector('#import');
   if (importBtn) {
     importBtn.onclick = () => {
@@ -528,7 +584,7 @@ screens.contatos = async (params) => {
           <div class="right sub">${c.services_count ? c.services_count + ' serviço' + (c.services_count > 1 ? 's' : '') : ''}</div></a></li>`
         )
         .join('')
-    : '<li class="empty">Nenhum contato. Importe a agenda do celular (.vcf) ou adicione um.</li>';
+    : '<li class="empty">Nenhum contato. Traga a agenda do celular ou adicione um.</li>';
 };
 
 screens.contato = async (params, id) => {
