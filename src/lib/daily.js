@@ -45,6 +45,14 @@ export async function runDaily(ctx, date = new Date()) {
       ctx.log(`Não consegui mandar o aviso da manhã para ${owner.name}`, err);
     }
   }
+  // Tarefas diárias dos módulos (ex.: lembrete de milhagem e relatório da semana).
+  for (const m of ctx.loaded) {
+    try {
+      await m.daily?.({ ctx, day });
+    } catch (err) {
+      ctx.log(`Erro na tarefa diária do módulo ${m.name}`, err);
+    }
+  }
   ctx.log(`Aviso da manhã (${day}): ${sent} mensagem(ns) às ${nowIso()}`);
   return sent;
 }

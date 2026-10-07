@@ -197,7 +197,7 @@ summary { cursor: pointer; font-weight: 600; }
 .list li.late strong { color: var(--bad); }
 .truck h2 { margin: 0; }
 .truck .odo { margin: 10px 0 4px; }
-.truck .right button.small { padding: 6px 12px; font-size: 14px; width: auto; }
+.truck .right button.small, .truck .right a.small { padding: 6px 12px; font-size: 14px; width: auto; }
 .truck button.link { background: none; border: none; color: var(--muted); padding: 4px; display: block; margin-left: auto; }
 .list li.m-vencido strong { color: var(--bad); }
 .list li.m-perto strong { color: var(--warn); }

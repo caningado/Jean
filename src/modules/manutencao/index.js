@@ -1,15 +1,17 @@
 // Módulo de manutenção: caminhões, milhagem e o que precisa trocar (óleo, pneus, freios,
 // inspeção, registro). Avisa quando está perto ou já passou.
-import { simplify, nowIso, HttpError } from '../../lib/util.js';
-import { monthRange } from '../planilha/index.js';
+import crypto from 'node:crypto';
+import { simplify, nowIso, HttpError, parseMoney } from '../../lib/util.js';
+import { monthRange, zonedMidnight } from '../planilha/index.js';
 import { renderTruckMonth } from './extrato.js';
+import { renderFleetWeek } from './semana.js';
 
 const DAY = 86400000;
 // "Perto" = faltam menos que isso.
 const NEAR_MILES = 500;
 const NEAR_DAYS = 15;
 // Pede para atualizar as milhas se ninguém mandou há mais que isso.
-const STALE_DAYS = 14;
+const STALE_DAYS = 7;
 
 // Itens que todo caminhão novo já ganha (o dono pode mudar os intervalos no painel).
 export const DEFAULT_ITEMS = [
@@ -60,6 +62,16 @@ const migrations = [
    );
    CREATE INDEX odometer_truck ON odometer_readings(truck_id, at);
    INSERT INTO odometer_readings (truck_id, miles, at) SELECT id, odometer, COALESCE(odometer_at, created_at) FROM trucks;`,
+  // Próxima troca marcada à mão (senão conta pelo intervalo), oficina e valor do serviço,
+  // e quem mandou cada milhagem (para o relatório da semana).
+  `ALTER TABLE maintenance_items ADD COLUMN next_miles INTEGER;
+   ALTER TABLE maintenance_items ADD COLUMN next_date TEXT;
+   ALTER TABLE maintenance_log ADD COLUMN cost_cents INTEGER;
+   ALTER TABLE maintenance_log ADD COLUMN shop TEXT;
+   ALTER TABLE maintenance_log ADD COLUMN next_miles INTEGER;
+   ALTER TABLE maintenance_log ADD COLUMN next_date TEXT;
+   ALTER TABLE maintenance_log ADD COLUMN expense_id INTEGER;
+   ALTER TABLE odometer_readings ADD COLUMN user_id INTEGER REFERENCES users(id);`,
 ];
 
 const fmtMiles = (n) => `${Number(n).toLocaleString('en-US')} mi`;
@@ -77,8 +89,14 @@ export function itemStatus(truck, item, now = Date.now()) {
   };
   let miles_left = null;
   let days_left = null;
-  if (item.every_miles) {
-    miles_left = (item.last_miles ?? 0) + item.every_miles - truck.odometer;
+  const due_miles = item.next_miles ?? (item.every_miles ? (item.last_miles ?? 0) + item.every_miles : null);
+  const dueTime = item.next_date
+    ? Date.parse(`${item.next_date}T12:00:00Z`)
+    : item.every_days
+      ? new Date(item.last_date || item.created_at).getTime() + item.every_days * DAY
+      : null;
+  if (due_miles != null) {
+    miles_left = due_miles - truck.odometer;
     if (miles_left <= 0) {
       worse('vencido');
       notes.push(`passou ${fmtMiles(-miles_left)}`);
@@ -87,10 +105,9 @@ export function itemStatus(truck, item, now = Date.now()) {
       notes.push(`faltam ${fmtMiles(miles_left)}`);
     }
   }
-  if (item.every_days) {
-    const due = new Date(item.last_date || item.created_at).getTime() + item.every_days * DAY;
-    days_left = Math.ceil((due - now) / DAY);
-    const date = fmtDate(new Date(due).toISOString());
+  if (dueTime != null) {
+    days_left = Math.ceil((dueTime - now) / DAY);
+    const date = fmtDate(new Date(dueTime).toISOString());
     if (days_left <= 0) {
       worse('vencido');
       notes.push(`venceu em ${date}`);
@@ -99,7 +116,8 @@ export function itemStatus(truck, item, now = Date.now()) {
       notes.push(`até ${date}`);
     }
   }
-  return { state, miles_left, days_left, note: notes.join(' ou ') };
+  const due_date = dueTime != null ? new Date(dueTime).toISOString().slice(0, 10) : null;
+  return { state, miles_left, days_left, due_miles, due_date, note: notes.join(' ou ') };
 }
 
 function listTrucks(ctx, user) {
@@ -121,13 +139,13 @@ function getTruck(ctx, id) {
   return ctx.db.prepare('SELECT * FROM trucks WHERE id = ? AND active = 1').get(Number(id));
 }
 
-function createTruck(ctx, { name, plate = null, odometer = 0, driverId = null }) {
+function createTruck(ctx, { name, plate = null, odometer = 0, driverId = null, userId = null }) {
   const now = nowIso();
   const info = ctx.db
     .prepare('INSERT INTO trucks (name, plate, driver_id, odometer, odometer_at, created_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(name, plate, driverId, odometer, now, now);
   const id = Number(info.lastInsertRowid);
-  ctx.db.prepare('INSERT INTO odometer_readings (truck_id, miles, at) VALUES (?, ?, ?)').run(id, odometer, now);
+  ctx.db.prepare('INSERT INTO odometer_readings (truck_id, miles, at, user_id) VALUES (?, ?, ?, ?)').run(id, odometer, now, userId);
   const add = ctx.db.prepare(
     'INSERT INTO maintenance_items (truck_id, name, every_miles, every_days, last_miles, last_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
@@ -135,22 +153,76 @@ function createTruck(ctx, { name, plate = null, odometer = 0, driverId = null })
   return getTruck(ctx, id);
 }
 
-function setOdometer(ctx, truck, miles) {
+function setOdometer(ctx, truck, miles, userId = null) {
   const now = nowIso();
   ctx.db.prepare('UPDATE trucks SET odometer = ?, odometer_at = ? WHERE id = ?').run(miles, now, truck.id);
-  ctx.db.prepare('INSERT INTO odometer_readings (truck_id, miles, at) VALUES (?, ?, ?)').run(truck.id, miles, now);
+  ctx.db.prepare('INSERT INTO odometer_readings (truck_id, miles, at, user_id) VALUES (?, ?, ?, ?)').run(truck.id, miles, now, userId);
   return getTruck(ctx, truck.id);
 }
 
-function markDone(ctx, { truck, item, miles, userId, notes = null }) {
+// Dias no fuso da empresa ("2026-10-07").
+const localDay = (ctx, d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: ctx.config.timeZone }).format(d);
+const addDays = (day, n) => new Date(Date.parse(`${day}T12:00:00Z`) + n * DAY).toISOString().slice(0, 10);
+const weekday = (day) => new Date(`${day}T12:00:00Z`).getUTCDay(); // 0 = domingo
+const mondayOf = (day) => addDays(day, -((weekday(day) + 6) % 7));
+const dayStart = (ctx, day) => {
+  const [y, m, d] = day.split('-').map(Number);
+  return zonedMidnight(y, m, d, ctx.config.timeZone);
+};
+const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) && !Number.isNaN(Date.parse(`${v}T12:00:00Z`));
+
+// Registra um serviço feito (óleo, freio...). Sem item = serviço avulso ("Outro").
+// next_miles/next_date: próxima troca; vazio = conta pelo intervalo do item.
+function markDone(ctx, { truck, item = null, name = null, miles = null, userId, notes = null, date = null, costCents = null, shop = null, nextMiles = null, nextDate = null }) {
   const at = miles ?? truck.odometer;
-  const now = nowIso();
-  if (at > truck.odometer) truck = setOdometer(ctx, truck, at);
-  ctx.db.prepare('UPDATE maintenance_items SET last_miles = ?, last_date = ? WHERE id = ?').run(at, now, item.id);
-  ctx.db
-    .prepare('INSERT INTO maintenance_log (truck_id, item_id, item_name, miles, user_id, notes, done_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(truck.id, item.id, item.name, at, userId, notes, now);
-  return ctx.db.prepare('SELECT * FROM maintenance_items WHERE id = ?').get(item.id);
+  const doneAt = !date || date >= localDay(ctx) ? nowIso() : new Date(Date.parse(dayStart(ctx, date)) + 12 * 3600000).toISOString();
+  if (at > truck.odometer) truck = setOdometer(ctx, truck, at, userId);
+
+  if (!item && (nextMiles != null || nextDate)) {
+    // Serviço novo com próxima troca: vira um item para o sistema avisar.
+    const info = ctx.db
+      .prepare('INSERT INTO maintenance_items (truck_id, name, every_miles, every_days, last_miles, last_date, created_at) VALUES (?, ?, NULL, NULL, ?, ?, ?)')
+      .run(truck.id, name, at, doneAt, nowIso());
+    item = ctx.db.prepare('SELECT * FROM maintenance_items WHERE id = ?').get(Number(info.lastInsertRowid));
+  }
+  // Só guarda a próxima à mão se for diferente do intervalo normal (assim mudar o intervalo depois vale).
+  const autoMiles = item?.every_miles ? at + item.every_miles : null;
+  const autoDate = item?.every_days ? localDay(ctx, new Date(Date.parse(doneAt) + item.every_days * DAY)) : null;
+  const keepMiles = nextMiles != null && nextMiles !== autoMiles ? nextMiles : null;
+  const keepDate = nextDate && nextDate !== autoDate ? nextDate : null;
+
+  let expenseId = null;
+  if (costCents && ctx.api.despesas) {
+    const label = item?.name || name;
+    expenseId = ctx.api.despesas.add({ userId, amountCents: costCents, category: 'manutencao', description: shop ? `${label} (${shop})` : label, truckId: truck.id, at: doneAt }).id;
+  }
+  if (item) {
+    // Serviço antigo lançado depois de um mais novo não mexe na próxima troca.
+    const newer = ctx.db.prepare('SELECT 1 FROM maintenance_log WHERE item_id = ? AND done_at > ?').get(item.id, doneAt);
+    if (!newer) {
+      ctx.db.prepare('UPDATE maintenance_items SET last_miles = ?, last_date = ?, next_miles = ?, next_date = ? WHERE id = ?').run(at, doneAt, keepMiles, keepDate, item.id);
+    }
+  }
+  const info = ctx.db
+    .prepare(
+      `INSERT INTO maintenance_log (truck_id, item_id, item_name, miles, user_id, notes, done_at, cost_cents, shop, next_miles, next_date, expense_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(truck.id, item?.id ?? null, item?.name || name, at, userId, notes, doneAt, costCents || null, shop, keepMiles, keepDate, expenseId);
+  const log = ctx.db.prepare('SELECT * FROM maintenance_log WHERE id = ?').get(Number(info.lastInsertRowid));
+  return { log, item: item && ctx.db.prepare('SELECT * FROM maintenance_items WHERE id = ?').get(item.id) };
+}
+
+// Apaga um serviço lançado errado. Se era o último daquele item, volta a próxima troca para o anterior.
+function removeLog(ctx, log) {
+  ctx.db.prepare('DELETE FROM maintenance_log WHERE id = ?').run(log.id);
+  if (log.expense_id && ctx.api.despesas) ctx.api.despesas.remove(log.expense_id);
+  if (!log.item_id) return;
+  const latest = ctx.db.prepare('SELECT * FROM maintenance_log WHERE item_id = ? ORDER BY done_at DESC, id DESC LIMIT 1').get(log.item_id);
+  if (latest && latest.done_at >= log.done_at) return;
+  if (latest) {
+    ctx.db.prepare('UPDATE maintenance_items SET last_miles = ?, last_date = ?, next_miles = ?, next_date = ? WHERE id = ?').run(latest.miles, latest.done_at, latest.next_miles, latest.next_date, log.item_id);
+  }
 }
 
 // Milhas: "123456", "123,456", "123.456" ou "123k".
@@ -211,7 +283,7 @@ const commands = [
       if (!truck) return `De qual caminhão? Ex: *odometro ${simplify(trucks[0].name).split(' ')[0]} ${miles}*\nCaminhões: ${truckNames(trucks)}`;
       if (miles < truck.odometer) return `⚠️ ${fmtMiles(miles)} é menos do que o último registrado (${fmtMiles(truck.odometer)}). Confira o número.`;
       if (miles - truck.odometer > 20000) return `⚠️ ${fmtMiles(miles - truck.odometer)} a mais desde a última vez? Confira o número.`;
-      const updated = setOdometer(ctx, truck, miles);
+      const updated = setOdometer(ctx, truck, miles, user.id);
       const [t] = listTrucks(ctx).filter((x) => x.id === updated.id);
       const attention = t.items.filter((i) => i.state !== 'ok').map((i) => `${ICON[i.state]} ${i.name}: ${i.note}`);
       return [`📏 ${t.name}: ${fmtMiles(miles)} registrado.`, ...attention].join('\n');
@@ -237,7 +309,7 @@ const commands = [
         return `O que foi feito no ${truck.name}? Ex: *fiz oleo*\nItens: ${items.map((i) => i.name).join(', ')}`;
       }
       if (miles != null && miles < (found[0].last_miles ?? 0)) return `⚠️ ${fmtMiles(miles)} é menos que a última vez (${fmtMiles(found[0].last_miles)}). Confira o número.`;
-      const item = markDone(ctx, { truck, item: found[0], miles, userId: user.id });
+      const { item } = markDone(ctx, { truck, item: found[0], miles, userId: user.id });
       const fresh = getTruck(ctx, truck.id);
       return `🔧 ${item.name} do ${truck.name} registrado em ${fmtMiles(item.last_miles)}.\nPróximo: ${itemStatus(fresh, item).note || 'sem intervalo'}.`;
     },
@@ -308,6 +380,7 @@ function routes(api, ctx) {
         plate: String(plate || '').trim() || null,
         odometer: int(odometer || 0, 'Milhas'),
         driverId: driver_id ? Number(driver_id) : null,
+        userId: req.user.id,
       })
     );
   });
@@ -319,7 +392,7 @@ function routes(api, ctx) {
     if (body.odometer != null && body.odometer !== '') {
       const miles = int(body.odometer, 'Milhas');
       if (miles < truck.odometer && req.user.role !== 'dono') throw new HttpError(400, `As milhas não podem ser menores que ${fmtMiles(truck.odometer)}.`);
-      setOdometer(ctx, truck, miles);
+      setOdometer(ctx, truck, miles, req.user.id);
     }
     if (req.user.role === 'dono') {
       if (body.name != null && String(body.name).trim()) ctx.db.prepare('UPDATE trucks SET name = ? WHERE id = ?').run(String(body.name).trim(), truck.id);
@@ -378,7 +451,65 @@ function routes(api, ctx) {
     const truck = item && getTruck(ctx, item.truck_id);
     if (!canEdit(req.user, truck)) throw new HttpError(404, 'Item não encontrado.');
     const miles = req.body?.miles == null || req.body.miles === '' ? null : int(req.body.miles, 'Milhas');
-    res.status(201).json(markDone(ctx, { truck, item, miles, userId: req.user.id, notes: req.body?.notes || null }));
+    res.status(201).json(markDone(ctx, { truck, item, miles, userId: req.user.id, notes: req.body?.notes || null }).item);
+  });
+
+  // Tela "Registrar serviço": o que foi feito, quando, milhas, oficina, valor e a próxima troca.
+  api.post('/trucks/:id/services', (req, res) => {
+    const truck = getTruck(ctx, req.params.id);
+    if (!canEdit(req.user, truck)) throw new HttpError(404, 'Caminhão não encontrado.');
+    const b = req.body || {};
+    const item = b.item_id ? ctx.db.prepare('SELECT * FROM maintenance_items WHERE id = ? AND truck_id = ?').get(Number(b.item_id), truck.id) : null;
+    if (b.item_id && !item) throw new HttpError(400, 'Esse item não é deste caminhão.');
+    const name = String(b.name || '').trim();
+    if (!item && !name) throw new HttpError(400, 'Diga o que foi feito (ex.: Troca de bateria).');
+    const opt = (v) => v == null || String(v).trim() === '';
+    const miles = opt(b.miles) ? null : int(b.miles, 'Milhas');
+    if (miles != null && miles + 50000 < truck.odometer) throw new HttpError(400, `As milhas estão muito abaixo das atuais (${fmtMiles(truck.odometer)}). Confira o número.`);
+    if (miles != null && miles - truck.odometer > 20000) throw new HttpError(400, `${fmtMiles(miles - truck.odometer)} a mais que o último registrado? Confira o número.`);
+    if (!opt(b.date) && !isDay(b.date)) throw new HttpError(400, 'Data inválida.');
+    if (!opt(b.date) && b.date > localDay(ctx)) throw new HttpError(400, 'A data do serviço não pode ser no futuro.');
+    if (!opt(b.next_date) && !isDay(b.next_date)) throw new HttpError(400, 'Data da próxima troca inválida.');
+    const nextMiles = opt(b.next_miles) ? null : int(b.next_miles, 'Próxima troca (milhas)');
+    if (nextMiles != null && nextMiles <= (miles ?? truck.odometer)) throw new HttpError(400, 'A próxima troca tem que ser com mais milhas do que agora.');
+    let costCents = null;
+    if (!opt(b.cost)) {
+      costCents = parseMoney(String(b.cost));
+      if (!costCents || costCents < 0 || costCents > 5_000_000) throw new HttpError(400, 'Valor inválido.');
+    }
+    const out = markDone(ctx, {
+      truck,
+      item,
+      name: name || null,
+      miles,
+      userId: req.user.id,
+      notes: String(b.notes || '').trim() || null,
+      date: opt(b.date) ? null : b.date,
+      costCents,
+      shop: String(b.shop || '').trim() || null,
+      nextMiles,
+      nextDate: opt(b.next_date) ? null : b.next_date,
+    });
+    res.status(201).json(out);
+  });
+
+  api.delete('/maintenance-log/:id', (req, res) => {
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode apagar.');
+    const log = ctx.db.prepare('SELECT * FROM maintenance_log WHERE id = ?').get(Number(req.params.id));
+    if (!log) throw new HttpError(404, 'Serviço não encontrado.');
+    removeLog(ctx, log);
+    res.json({ ok: true });
+  });
+
+  // Relatório da semana (segunda a domingo) de todos os caminhões.
+  api.get('/frota/semana', (req, res) => {
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono vê o relatório.');
+    res.json(weekReport(ctx, String(req.query.dia || '')));
+  });
+
+  api.get('/frota/semana.pdf', async (req, res) => {
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono vê o relatório.');
+    await sendWeekPdf(ctx, res, String(req.query.dia || ''), req.query.download === '1');
   });
 
   // Extrato do mês: despesas por tipo, milhas rodadas e custo por milha.
@@ -447,12 +578,182 @@ function exportSheets({ ctx, from, to }) {
         { header: 'Caminhão', width: 16 },
         { header: 'O que foi feito', width: 24 },
         { header: 'Milhas', width: 11, type: 'number' },
+        { header: 'Oficina', width: 18 },
+        { header: 'Valor', width: 11, type: 'money' },
         { header: 'Quem registrou', width: 16 },
         { header: 'Obs.', width: 30 },
       ],
-      rows: rows.map((r) => [r.done_at, r.truck_name, r.item_name, r.miles, r.user_name || '', r.notes || '']),
+      rows: rows.map((r) => [r.done_at, r.truck_name, r.item_name, r.miles, r.shop || '', r.cost_cents != null ? r.cost_cents / 100 : '', r.user_name || '', r.notes || '']),
     },
   ];
+}
+
+// ---------- Relatório semanal ----------
+
+const getSetting = (ctx, key) => ctx.db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
+const setSetting = (ctx, key, value) =>
+  ctx.db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+
+// Semana (segunda a domingo) que contém o dia. Sem dia = esta semana.
+export function weekReport(ctx, day = '') {
+  const start = mondayOf(isDay(day) ? day : localDay(ctx));
+  const end = addDays(start, 6);
+  const from = dayStart(ctx, start);
+  const to = dayStart(ctx, addDays(start, 7));
+  const before = ctx.db.prepare('SELECT miles FROM odometer_readings WHERE truck_id = ? AND at < ? ORDER BY at DESC, id DESC LIMIT 1');
+  const readings = ctx.db.prepare(
+    `SELECT r.*, u.name AS user_name FROM odometer_readings r LEFT JOIN users u ON u.id = r.user_id
+     WHERE r.truck_id = ? AND r.at >= ? AND r.at < ? ORDER BY r.at, r.id`
+  );
+  const services = ctx.db.prepare(
+    `SELECT l.*, u.name AS user_name FROM maintenance_log l LEFT JOIN users u ON u.id = l.user_id
+     WHERE l.truck_id = ? AND l.done_at >= ? AND l.done_at < ? ORDER BY l.done_at, l.id`
+  );
+  const spent = ctx.has('despesas') ? ctx.db.prepare('SELECT COALESCE(SUM(amount_cents), 0) AS c FROM expenses WHERE truck_id = ? AND created_at >= ? AND created_at < ?') : null;
+  const ORDER = { vencido: 0, perto: 1, ok: 2 };
+  const trucks = listTrucks(ctx).map((t) => {
+    const rs = readings.all(t.id, from, to);
+    const startMiles = before.get(t.id, from)?.miles ?? rs[0]?.miles ?? null;
+    const endMiles = rs.length ? rs[rs.length - 1].miles : null;
+    const informed = rs.filter((r) => r.user_id);
+    const last = informed[informed.length - 1] || null;
+    return {
+      id: t.id,
+      name: t.name,
+      plate: t.plate,
+      driver_name: t.driver_name || null,
+      odometer: t.odometer,
+      miles_start: startMiles,
+      miles_end: endMiles,
+      miles: startMiles != null && endMiles != null ? Math.max(0, endMiles - startMiles) : 0,
+      reported: Boolean(last),
+      reported_by: last?.user_name || null,
+      reported_at: last?.at || null,
+      services: services.all(t.id, from, to),
+      expenses_cents: spent ? spent.get(t.id, from, to).c : null,
+      items: [...t.items].sort((a, b) => ORDER[a.state] - ORDER[b.state]),
+    };
+  });
+  const all = (f) => trucks.reduce((n, t) => n + f(t), 0);
+  return {
+    start,
+    end,
+    timeZone: ctx.config.timeZone,
+    trucks,
+    totals: {
+      miles: all((t) => t.miles),
+      services: all((t) => t.services.length),
+      services_cents: all((t) => t.services.reduce((c, l) => c + (l.cost_cents || 0), 0)),
+      late: all((t) => t.items.filter((i) => i.state === 'vencido').length),
+      near: all((t) => t.items.filter((i) => i.state === 'perto').length),
+      missing: trucks.filter((t) => !t.reported).length,
+    },
+  };
+}
+
+async function sendWeekPdf(ctx, res, day, download = false) {
+  const data = weekReport(ctx, day);
+  const buf = await renderFleetWeek({
+    company: ctx.api.invoice?.getCompany() || { name: ctx.config.companyName },
+    logo: ctx.api.invoice ? ctx.api.invoice.logo() : null,
+    data,
+  });
+  res.set('Content-Type', 'application/pdf');
+  res.set('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="Relatorio frota ${data.start}.pdf"`);
+  res.set('Cache-Control', 'no-store');
+  res.send(buf);
+}
+
+// Link do PDF sem login, para abrir direto da mensagem do WhatsApp.
+function weekLink(ctx, start) {
+  const base = ctx.api.invoice?.publicBase();
+  if (!base) return null;
+  let token = getSetting(ctx, 'frota_token');
+  if (!token) {
+    token = crypto.randomBytes(16).toString('hex');
+    setSetting(ctx, 'frota_token', token);
+  }
+  return `${base}/frota/${token}/${start}.pdf`;
+}
+
+const dm = (day) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
+const money = (c) => `$${(c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+export function weekText(data, link = null) {
+  const lines = [`📊 *Relatório semanal da frota* (${dm(data.start)} a ${dm(data.end)})`];
+  for (const t of data.trucks) {
+    lines.push('');
+    lines.push(
+      t.reported
+        ? `🚛 *${t.name}*: ${fmtMiles(t.miles)} rodadas (agora ${fmtMiles(t.miles_end)}), informado por ${t.reported_by || 'alguém'}`
+        : `🚛 *${t.name}*: ⚠️ milhagem *não informada* na semana${t.driver_name ? ` (${t.driver_name})` : ''}`
+    );
+    for (const l of t.services) lines.push(`   🔧 ${l.item_name} em ${fmtMiles(l.miles)}${l.shop ? ` – ${l.shop}` : ''}${l.cost_cents ? ` – ${money(l.cost_cents)}` : ''}`);
+    for (const i of t.items.filter((x) => x.state !== 'ok')) lines.push(`   ${ICON[i.state]} ${i.name}: ${i.note}`);
+    const next = t.items.find((x) => x.state === 'ok' && x.note);
+    if (next && !t.items.some((x) => x.state !== 'ok')) lines.push(`   ✅ Tudo em dia. Próximo: ${next.name} (${next.note})`);
+    if (t.expenses_cents) lines.push(`   💵 Gastos da semana: ${money(t.expenses_cents)}`);
+  }
+  if (link) lines.push('', `📄 PDF: ${link}`);
+  return lines.join('\n');
+}
+
+// Roda uma vez por dia junto com o aviso da manhã.
+// Sexta a domingo: lembra o motorista que ainda não mandou a milhagem da semana.
+// Segunda (ou o primeiro dia depois, se o servidor estava parado): relatório da semana passada para o dono.
+async function daily({ ctx, day }) {
+  const monday = mondayOf(day);
+  const trucks = listTrucks(ctx);
+  if (!trucks.length) return;
+  const send = async (phone, text) => {
+    try {
+      await ctx.send(phone, text);
+    } catch (err) {
+      ctx.log(`Não consegui mandar a mensagem da manutenção para ${phone}`, err);
+    }
+  };
+
+  if ([5, 6, 0].includes(weekday(day)) && getSetting(ctx, 'frota_lembrete') !== monday) {
+    setSetting(ctx, 'frota_lembrete', monday);
+    const from = dayStart(ctx, monday);
+    const informed = ctx.db.prepare('SELECT 1 FROM odometer_readings WHERE truck_id = ? AND at >= ? AND user_id IS NOT NULL LIMIT 1');
+    const byDriver = new Map();
+    for (const t of trucks) {
+      if (!t.driver_id || informed.get(t.id, from)) continue;
+      byDriver.set(t.driver_id, [...(byDriver.get(t.driver_id) || []), t]);
+    }
+    for (const [driverId, list] of byDriver) {
+      const u = ctx.db.prepare('SELECT * FROM users WHERE id = ? AND active = 1').get(driverId);
+      if (!u) continue;
+      const names = list.map((t) => t.name).join(' e ');
+      const ex = list.length > 1 ? `odometro ${simplify(list[0].name).split(' ')[0]} 123456` : 'odometro 123456';
+      await send(u.phone, `📏 Oi, ${u.name.split(' ')[0]}! Falta mandar a milhagem do ${names} desta semana.\nOlhe o painel do caminhão e mande: *${ex}*`);
+    }
+  }
+
+  const lastWeek = addDays(monday, -7);
+  if (getSetting(ctx, 'frota_relatorio') !== lastWeek) {
+    setSetting(ctx, 'frota_relatorio', lastWeek);
+    const text = weekText(weekReport(ctx, lastWeek), weekLink(ctx, lastWeek));
+    for (const owner of ctx.db.prepare("SELECT * FROM users WHERE role = 'dono' AND active = 1").all()) await send(owner.phone, text);
+  }
+}
+
+function publicRoutes(app, ctx) {
+  app.get('/frota/:token/:start.pdf', async (req, res, next) => {
+    try {
+      const token = getSetting(ctx, 'frota_token');
+      const a = Buffer.from(String(req.params.token));
+      const b = Buffer.from(token || '');
+      if (!token || a.length !== b.length || !crypto.timingSafeEqual(a, b) || !isDay(req.params.start)) {
+        res.status(404).send('Não encontrado');
+        return;
+      }
+      await sendWeekPdf(ctx, res, req.params.start);
+    } catch (err) {
+      next(err);
+    }
+  });
 }
 
 function setup(ctx) {
@@ -485,6 +786,8 @@ export default {
   migrations,
   commands,
   routes,
+  publicRoutes,
   alerts,
+  daily,
   exportSheets,
 };
