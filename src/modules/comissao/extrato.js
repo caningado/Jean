@@ -120,18 +120,26 @@ export function renderDriverStatement({ company, logo, data, week = null }) {
     rows(cols, data.weeks, (x) => [semana(x), x.services, amount(x.revenue_cents), amount(x.month_to_date_cents), `${x.pct}%`, amount(x.amount_cents), x.paid_cents ? amount(x.paid_cents) : '–']);
     y += 16;
 
-    // Acerto
-    need(110);
+    // Acerto: cada pagamento aparece numa linha.
+    const weekly = data.payments.filter((p) => p.kind === 'semanal');
+    const settles = data.payments.filter((p) => p.kind === 'acerto');
+    need(110 + (Math.max(1, weekly.length) + settles.length) * 17);
     sectionLabel(doc, 'ACERTO DO MÊS', L, y);
     y += 16;
     const line = (k, v, bold = false) => {
-      doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).fillColor(bold ? DARK : GRAY).text(k, L, y, { width: 300 });
+      doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).fillColor(bold ? DARK : GRAY).text(k, L, y, { width: W - 160, lineBreak: false });
       doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).fillColor(DARK).text(v, R - 150, y, { width: 150, align: 'right' });
       y += 17;
     };
     line(`Faturamento do mês ${usd(data.revenue_cents)} × ${data.pct}%`, usd(data.commission_cents));
-    line('Já pago nas semanas', `- ${usd(data.weekly_paid_cents)}`);
-    if (data.settled_cents) line('Acerto já pago', `- ${usd(data.settled_cents)}`);
+    const paidOn = (p) => new Date(p.created_at).toLocaleDateString('pt-BR', { timeZone: data.timeZone, day: '2-digit', month: '2-digit' });
+    const weekOf = (p) => data.weeks.find((x) => x.start === p.week_start);
+    if (!weekly.length) line('Nenhum pagamento semanal feito', usd(0));
+    for (const p of weekly) {
+      const wk = weekOf(p);
+      line(`Pagamento da semana ${wk ? semana(wk) : dm(p.week_start || '')} (pago em ${paidOn(p)})`, `- ${usd(p.amount_cents)}`);
+    }
+    for (const p of settles) line(`Acerto pago em ${paidOn(p)}`, `- ${usd(p.amount_cents)}`);
     y += 4;
     const owed = due;
     doc.rect(L, y, W, 32).fill(owed > 0 ? RED : owed < 0 ? '#B45309' : GREEN);
