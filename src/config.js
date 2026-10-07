@@ -12,7 +12,7 @@ function loadDotEnv(file) {
   }
 }
 
-export const ALL_MODULES = ['vin', 'fotos', 'pagamentos', 'despesas', 'whatsapp', 'planilha'];
+export const ALL_MODULES = ['vin', 'fotos', 'pagamentos', 'despesas', 'whatsapp', 'planilha', 'manutencao'];
 
 export function loadConfig(overrides = {}) {
   loadDotEnv(path.resolve('.env'));
@@ -46,6 +46,10 @@ export function loadConfig(overrides = {}) {
       // Resposta automática para quem não é da equipe: diaria (padrão), nunca ou sempre.
       outsiderReply: ['nunca', 'sempre'].includes(env.WHATSAPP_RESPOSTA_FORA) ? env.WHATSAPP_RESPOSTA_FORA : 'diaria',
     },
+    // Cobrança atrasada: avisa quando passa desse número de dias sem receber.
+    overdueDays: Number(env.COBRANCA_DIAS) > 0 ? Number(env.COBRANCA_DIAS) : 7,
+    // Hora do aviso da manhã para o dono (pelo WhatsApp), no fuso da empresa. AVISO_HORA=off desliga.
+    dailyHour: env.AVISO_HORA === 'off' ? null : Number.isInteger(Number(env.AVISO_HORA)) && env.AVISO_HORA !== '' && env.AVISO_HORA != null ? Number(env.AVISO_HORA) : 8,
     anthropicApiKey: env.ANTHROPIC_API_KEY || '',
     // Conferir endereços no mapa (Census + OpenStreetMap, grátis). GEOCODER=off desliga.
     geocoder: env.GEOCODER !== 'off',

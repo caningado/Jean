@@ -2,6 +2,7 @@
 import express from 'express';
 import { FlowError } from './bot.js';
 import { hashPin, verifyPin, signToken } from '../lib/auth.js';
+import { collectAlerts } from '../lib/daily.js';
 import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkMoney, isMapReference } from '../lib/validate.js';
 import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfMonthIso, formatPhone } from '../lib/util.js';
 
@@ -51,6 +52,8 @@ const migrations = [
      data TEXT NOT NULL,
      updated_at TEXT NOT NULL
    );`,
+  // Valores soltos do sistema (ex.: dia do último aviso da manhã).
+  `CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);`,
 ];
 
 function publicUser(u) {
@@ -457,6 +460,11 @@ function serviceFields(body, { partial = false } = {}) {
 
 function routes(api, ctx) {
   const { data, db } = ctx;
+
+  // Alertas para o topo do painel (cobrança atrasada, manutenção...).
+  api.get('/alerts', (req, res) => {
+    res.json(collectAlerts(ctx, req.user));
+  });
 
   api.get('/me', (req, res) => {
     res.json({

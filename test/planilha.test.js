@@ -117,7 +117,7 @@ test('painel: baixar a planilha e link automático para o Google Planilhas', asy
   // Link automático
   assert.equal((await (await fetch(`${base}/api/planilha/link`, { headers: { Cookie: owner } })).json()).active, false);
   const link = await (await fetch(`${base}/api/planilha/link`, { method: 'POST', headers: { Cookie: owner } })).json();
-  assert.deepEqual(link.sheets.map((s) => s.name), ['Serviços', 'Pagamentos', 'Despesas']);
+  assert.deepEqual(link.sheets.map((s) => s.name), ['Serviços', 'Pagamentos', 'Despesas', 'Manutenção']);
   const url = link.sheets[0].url.replace(/^https?:\/\/[^/]+/, base);
   assert.match(url, /\/planilha\/[\w-]{20,}\/servicos\.csv$/);
   res = await fetch(url);

@@ -137,13 +137,40 @@ export function chargeMessage(ctx, service, amountCents) {
   return `${greeting} The total for your tow service #${service.id} is ${formatMoney(amountCents)}.${zelle}\nThank you! – ${ctx.config.companyName}`;
 }
 
+// Dias desde o serviço (conta da entrega, ou da criação se ainda não entregou).
+const daysSince = (iso, now = Date.now()) => Math.max(0, Math.floor((now - new Date(iso).getTime()) / 86400000));
+
+// Serviços com dinheiro para receber, do mais antigo para o mais novo.
+// overdue = passou de COBRANCA_DIAS sem receber.
 function pendingList(ctx, userId) {
   const services = ctx.data.services
     .list({ driverId: userId, limit: 1000 })
     .filter((s) => s.status !== 'cancelado' && s.price_cents);
   return services
-    .map((s) => ({ ...s, ...balance(ctx, s) }))
-    .filter((s) => s.open_cents > 0 || s.to_receive_cents > 0);
+    .map((s) => {
+      const days = daysSince(s.completed_at || s.created_at);
+      return { ...s, ...balance(ctx, s), days, overdue: days >= ctx.config.overdueDays };
+    })
+    .filter((s) => s.open_cents > 0 || s.to_receive_cents > 0)
+    .sort((a, b) => b.days - a.days || a.id - b.id);
+}
+
+// Alerta de cobrança atrasada (aviso da manhã e topo do painel).
+function alerts({ ctx, user }) {
+  const late = pendingList(ctx, user.role === 'dono' ? null : user.id).filter((s) => s.overdue);
+  if (!late.length) return [];
+  const clients = late.filter((s) => s.open_cents > 0);
+  const insurers = late.filter((s) => s.to_receive_cents > 0);
+  const out = [];
+  if (clients.length) {
+    const total = clients.reduce((sum, s) => sum + s.open_cents, 0);
+    out.push({ text: `💰 ${clients.length} cliente(s) devendo há mais de ${ctx.config.overdueDays} dias: ${formatMoney(total)}`, href: '#/pendentes' });
+  }
+  if (insurers.length) {
+    const total = insurers.reduce((sum, s) => sum + s.to_receive_cents, 0);
+    out.push({ text: `🧾 ${insurers.length} serviço(s) de seguradora sem pagar há mais de ${ctx.config.overdueDays} dias: ${formatMoney(total)}`, href: '#/pendentes' });
+  }
+  return out;
 }
 
 const commands = [
@@ -202,10 +229,13 @@ const commands = [
       const lines = list.slice(0, 20).map((s) => {
         const parts = [];
         if (s.open_cents) parts.push(`falta ${formatMoney(s.open_cents)}`);
-        if (s.to_receive_cents) parts.push(`seguradora ${formatMoney(s.to_receive_cents)}`);
-        return `#${s.id} ${s.contact_name || ''} – ${parts.join(', ')}`;
+        if (s.to_receive_cents) parts.push(`${s.payer || 'seguradora'} ${formatMoney(s.to_receive_cents)}`);
+        const age = s.days === 0 ? 'hoje' : s.days === 1 ? 'há 1 dia' : `há ${s.days} dias`;
+        return `${s.overdue ? '⚠️ ' : ''}#${s.id} ${s.contact_name || ''} – ${parts.join(', ')} (${age})`;
       });
-      return ['*Pendentes*', ...lines].join('\n');
+      const late = list.filter((s) => s.overdue).length;
+      const head = late ? `*Pendentes* (⚠️ ${late} atrasado(s), mais de ${ctx.config.overdueDays} dias)` : '*Pendentes*';
+      return [head, ...lines, '', `Para cobrar: *abrir ${list[0].id}* e depois *cobrar*.`].join('\n');
     },
   },
   {
@@ -420,6 +450,7 @@ function exportSheets({ ctx, from, to, userId }) {
 
 export default {
   name: 'pagamentos',
+  alerts,
   exportColumns,
   exportSheets,
   label: 'Pagamentos',
