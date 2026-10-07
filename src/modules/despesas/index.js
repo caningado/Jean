@@ -21,6 +21,8 @@ const migrations = [
      created_at TEXT NOT NULL
    );
    CREATE INDEX expenses_date ON expenses(created_at);`,
+  // Caminhão da despesa (módulo manutencao), para o extrato de cada caminhão.
+  `ALTER TABLE expenses ADD COLUMN truck_id INTEGER;`,
 ];
 
 const KEYWORDS = [
@@ -36,10 +38,12 @@ export function guessCategory(text) {
   return 'outros';
 }
 
-function addExpense(ctx, { userId, serviceId = null, amountCents, category, description }) {
+function addExpense(ctx, { userId, serviceId = null, amountCents, category, description, truckId }) {
+  // Sem caminhão escolhido: vai para o caminhão do motorista.
+  if (truckId === undefined) truckId = ctx.api.manutencao?.truckFor(userId)?.id ?? null;
   const info = ctx.db
-    .prepare('INSERT INTO expenses (user_id, service_id, amount_cents, category, description, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(userId, serviceId, amountCents, category, description || null, nowIso());
+    .prepare('INSERT INTO expenses (user_id, service_id, amount_cents, category, description, truck_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(userId, serviceId, amountCents, category, description || null, truckId || null, nowIso());
   return ctx.db.prepare('SELECT * FROM expenses WHERE id = ?').get(Number(info.lastInsertRowid));
 }
 
@@ -63,11 +67,18 @@ const commands = [
       const category = first === 'abasteci' ? 'combustivel' : guessCategory(description);
       // Despesa no meio de um serviço fica ligada a ele.
       const service = ctx.data.services.active(user);
-      addExpense(ctx, { userId: user.id, serviceId: service?.id ?? null, amountCents, category, description });
-      return `🧾 Despesa de ${formatMoney(amountCents)} (${CATEGORIES[category]}${description ? ': ' + description : ''}) registrada.`;
+      // "gasto 300 pneu F550": caminhão pelo nome; senão o do motorista.
+      const named = ctx.api.manutencao?.findTruck(words);
+      const expense = addExpense(ctx, { userId: user.id, serviceId: service?.id ?? null, amountCents, category, description, truckId: named?.id });
+      const truck = expense.truck_id && ctx.api.manutencao?.get(expense.truck_id);
+      return `🧾 Despesa de ${formatMoney(amountCents)} (${CATEGORIES[category]}${description ? ': ' + description : ''}) registrada${truck ? ` no ${truck.name}` : ''}.`;
     },
   },
 ];
+
+// Nome do caminhão junto da despesa, quando o módulo de manutenção está ligado.
+const truckJoin = (ctx) =>
+  ctx.has('manutencao') ? { select: ', t.name AS truck_name', join: ' LEFT JOIN trucks t ON t.id = e.truck_id' } : { select: '', join: '' };
 
 function routes(api, ctx) {
   api.get('/expenses', (req, res) => {
@@ -83,16 +94,18 @@ function routes(api, ctx) {
     }
     res.json(
       ctx.db
-        .prepare(`SELECT e.*, u.name AS user_name FROM expenses e LEFT JOIN users u ON u.id = e.user_id WHERE ${where} ORDER BY e.id DESC LIMIT 300`)
+        .prepare(`SELECT e.*, u.name AS user_name${truckJoin(ctx).select} FROM expenses e LEFT JOIN users u ON u.id = e.user_id${truckJoin(ctx).join} WHERE ${where} ORDER BY e.id DESC LIMIT 300`)
         .all(...params)
     );
   });
 
   api.post('/expenses', (req, res) => {
-    const { amount, category, description, service_id } = req.body || {};
+    const { amount, category, description, service_id, truck_id } = req.body || {};
     const amountCents = checkMoney(parseMoney(amount), { max: 5000, what: 'O valor da despesa' });
     const cat = CATEGORIES[category] ? category : guessCategory(description);
-    res.status(201).json(addExpense(ctx, { userId: req.user.id, serviceId: service_id || null, amountCents, category: cat, description }));
+    // truck_id: "" = sem caminhão; não mandado = caminhão do motorista.
+    const truckId = truck_id === undefined ? undefined : Number(truck_id) || null;
+    res.status(201).json(addExpense(ctx, { userId: req.user.id, serviceId: service_id || null, amountCents, category: cat, description, truckId }));
   });
 
   api.delete('/expenses/:id', (req, res) => {
@@ -134,7 +147,7 @@ function exportSheets({ ctx, from, to, userId }) {
   }
   const rows = ctx.db
     .prepare(
-      `SELECT e.*, u.name AS user_name FROM expenses e LEFT JOIN users u ON u.id = e.user_id
+      `SELECT e.*, u.name AS user_name${truckJoin(ctx).select} FROM expenses e LEFT JOIN users u ON u.id = e.user_id${truckJoin(ctx).join}
        WHERE ${where.join(' AND ')} ORDER BY e.id`
     )
     .all(...params);
@@ -148,8 +161,9 @@ function exportSheets({ ctx, from, to, userId }) {
         { header: 'Descrição', width: 30 },
         { header: 'Quem gastou', width: 14 },
         { header: 'Serviço nº', width: 10, type: 'number' },
+        { header: 'Caminhão', width: 14 },
       ],
-      rows: rows.map((e) => [e.created_at, e.amount_cents / 100, CATEGORIES[e.category] || e.category, e.description, e.user_name, e.service_id]),
+      rows: rows.map((e) => [e.created_at, e.amount_cents / 100, CATEGORIES[e.category] || e.category, e.description, e.user_name, e.service_id, e.truck_name || '']),
     },
   ];
 }

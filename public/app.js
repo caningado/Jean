@@ -824,6 +824,7 @@ screens.caminhoes = async () => {
               ${owner ? `<button class="link small" data-edit="${i.id}">Editar</button>` : ''}</div></div></li>`
           )
           .join('')}</ul>
+        ${owner ? `<div class="truck-month"><label>Despesas do mês</label><div class="copyrow"><input type="month" class="mes" value="${new Date().toISOString().slice(0, 7)}"><a class="btn secondary" data-pdf="${t.id}" target="_blank" rel="noopener">📄 Ver extrato</a></div><p class="sub month-sum"></p></div>` : ''}
         ${owner ? `<details><summary class="sub">Mais opções</summary>
           <form class="additem"><label>Novo item</label><input name="name" placeholder="Filtro de ar, correia…" required>
             <div class="row2"><div><label>A cada (milhas)</label><input name="every_miles" inputmode="numeric"></div><div><label>A cada (dias)</label><input name="every_days" inputmode="numeric"></div></div>
@@ -858,6 +859,18 @@ screens.caminhoes = async () => {
   view.querySelectorAll('[data-truck]').forEach((card) => {
     const id = card.dataset.truck;
     const truck = trucks.find((t) => String(t.id) === id);
+    const mes = card.querySelector('.mes');
+    if (mes) {
+      const show = async () => {
+        card.querySelector('[data-pdf]').href = `/api/trucks/${id}/extrato.pdf?mes=${mes.value}`;
+        const m = await api(`/trucks/${id}/month?mes=${mes.value}`).catch(() => null);
+        card.querySelector('.month-sum').textContent = m
+          ? `Gasto ${money(m.total_cents)} · ${m.miles ? `${m.miles.toLocaleString('en-US')} mi rodadas · ${money(m.cost_per_mile_cents)} por milha` : 'milhas do mês ainda não informadas'}`
+          : '';
+      };
+      mes.onchange = show;
+      show();
+    }
     card.querySelector('.odo').onsubmit = (e) => {
       e.preventDefault();
       run(() => api(`/trucks/${id}`, { method: 'PATCH', body: formData(e.target) }), 'Milhas atualizadas');
@@ -1167,7 +1180,9 @@ screens.cliente = async (params, id) => {
 
 screens.despesas = async () => {
   setScreen('Despesas', { tab: 'mais', back: '#/mais' });
-  const list = await api('/expenses');
+  const [list, trucks] = await Promise.all([api('/expenses'), has('manutencao') ? api('/trucks') : []]);
+  const mine = trucks.filter((t) => t.driver_id === state.me.id);
+  const defaultTruck = mine.length === 1 ? mine[0].id : trucks.length === 1 ? trucks[0].id : '';
   view.innerHTML = `
     <form class="card" id="f">
       <h2>Nova despesa</h2>
@@ -1176,11 +1191,12 @@ screens.despesas = async () => {
         <div><label>Tipo</label><select name="category">${Object.entries(CATEGORIES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
       </div>
       <label>Descrição</label><input name="description" placeholder="Diesel, pedágio I-90…">
+      ${trucks.length ? `<label>Caminhão</label><select name="truck_id"><option value="">Nenhum (despesa geral)</option>${trucks.map((t) => `<option value="${t.id}"${t.id === defaultTruck ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>` : ''}
       <button class="block">Registrar</button>
     </form>
     <div class="card"><ul class="list">${
       list.length
-        ? list.map((e) => `<li><div class="row"><div>${CATEGORIES[e.category] || e.category}${e.description ? ' · ' + esc(e.description) : ''}<div class="sub">${when(e.created_at)}${state.me.role === 'dono' && e.user_name ? ' · ' + esc(e.user_name) : ''}</div></div>
+        ? list.map((e) => `<li><div class="row"><div>${CATEGORIES[e.category] || e.category}${e.description ? ' · ' + esc(e.description) : ''}<div class="sub">${when(e.created_at)}${state.me.role === 'dono' && e.user_name ? ' · ' + esc(e.user_name) : ''}${e.truck_name ? ' · 🚛 ' + esc(e.truck_name) : ''}</div></div>
             <div class="right">${money(e.amount_cents)}<br><button class="danger" data-del="${e.id}">Apagar</button></div></div></li>`).join('')
         : '<li class="empty">Nenhuma despesa.</li>'
     }</ul></div>`;

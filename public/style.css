@@ -209,3 +209,5 @@ summary { cursor: pointer; font-weight: 600; }
 .logo-preview { display: block; max-width: 140px; max-height: 140px; margin: 0 auto 4px; }
 .row2 > div { min-width: 0; }
 input[type=date] { min-width: 0; width: 100%; box-sizing: border-box; }
+.truck-month { margin-top: 10px; }
+.truck-month .copyrow .btn { white-space: nowrap; }

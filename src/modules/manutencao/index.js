@@ -1,6 +1,8 @@
 // Módulo de manutenção: caminhões, milhagem e o que precisa trocar (óleo, pneus, freios,
 // inspeção, registro). Avisa quando está perto ou já passou.
 import { simplify, nowIso, HttpError } from '../../lib/util.js';
+import { monthRange } from '../planilha/index.js';
+import { renderTruckMonth } from './extrato.js';
 
 const DAY = 86400000;
 // "Perto" = faltam menos que isso.
@@ -49,6 +51,15 @@ const migrations = [
      notes TEXT,
      done_at TEXT NOT NULL
    );`,
+  // Histórico das milhas, para saber quanto o caminhão rodou no mês.
+  `CREATE TABLE odometer_readings (
+     id INTEGER PRIMARY KEY,
+     truck_id INTEGER NOT NULL REFERENCES trucks(id),
+     miles INTEGER NOT NULL,
+     at TEXT NOT NULL
+   );
+   CREATE INDEX odometer_truck ON odometer_readings(truck_id, at);
+   INSERT INTO odometer_readings (truck_id, miles, at) SELECT id, odometer, COALESCE(odometer_at, created_at) FROM trucks;`,
 ];
 
 const fmtMiles = (n) => `${Number(n).toLocaleString('en-US')} mi`;
@@ -116,6 +127,7 @@ function createTruck(ctx, { name, plate = null, odometer = 0, driverId = null })
     .prepare('INSERT INTO trucks (name, plate, driver_id, odometer, odometer_at, created_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(name, plate, driverId, odometer, now, now);
   const id = Number(info.lastInsertRowid);
+  ctx.db.prepare('INSERT INTO odometer_readings (truck_id, miles, at) VALUES (?, ?, ?)').run(id, odometer, now);
   const add = ctx.db.prepare(
     'INSERT INTO maintenance_items (truck_id, name, every_miles, every_days, last_miles, last_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
@@ -124,7 +136,9 @@ function createTruck(ctx, { name, plate = null, odometer = 0, driverId = null })
 }
 
 function setOdometer(ctx, truck, miles) {
-  ctx.db.prepare('UPDATE trucks SET odometer = ?, odometer_at = ? WHERE id = ?').run(miles, nowIso(), truck.id);
+  const now = nowIso();
+  ctx.db.prepare('UPDATE trucks SET odometer = ?, odometer_at = ? WHERE id = ?').run(miles, now, truck.id);
+  ctx.db.prepare('INSERT INTO odometer_readings (truck_id, miles, at) VALUES (?, ?, ?)').run(truck.id, miles, now);
   return getTruck(ctx, truck.id);
 }
 
@@ -241,6 +255,44 @@ function int(v, what, { allowNull = false } = {}) {
   return n;
 }
 
+// Despesas, milhas e manutenção do caminhão num mês ("2026-10").
+export function truckMonth(ctx, truck, mes) {
+  const range = monthRange(mes, ctx.config.timeZone);
+  if (range.label === 'tudo') throw new HttpError(400, 'Escolha o mês.');
+  const expenses = ctx.has('despesas')
+    ? ctx.db
+        .prepare(
+          `SELECT e.*, u.name AS user_name FROM expenses e LEFT JOIN users u ON u.id = e.user_id
+           WHERE e.truck_id = ? AND e.created_at >= ? AND e.created_at < ? ORDER BY e.created_at`
+        )
+        .all(truck.id, range.from, range.to)
+    : [];
+  const byCategory = {};
+  for (const e of expenses) byCategory[e.category] = (byCategory[e.category] || 0) + e.amount_cents;
+  const total = expenses.reduce((t, e) => t + e.amount_cents, 0);
+  // Milhas: última leitura do mês menos a última antes do mês (ou a primeira do mês).
+  const before = ctx.db.prepare('SELECT miles FROM odometer_readings WHERE truck_id = ? AND at < ? ORDER BY at DESC, id DESC LIMIT 1').get(truck.id, range.from);
+  const inMonth = ctx.db.prepare('SELECT miles FROM odometer_readings WHERE truck_id = ? AND at >= ? AND at < ? ORDER BY at, id').all(truck.id, range.from, range.to);
+  const start = before?.miles ?? inMonth[0]?.miles ?? null;
+  const end = inMonth.length ? inMonth[inMonth.length - 1].miles : null;
+  const miles = start != null && end != null ? Math.max(0, end - start) : 0;
+  const maintenance = ctx.db
+    .prepare('SELECT l.*, u.name AS user_name FROM maintenance_log l LEFT JOIN users u ON u.id = l.user_id WHERE l.truck_id = ? AND l.done_at >= ? AND l.done_at < ? ORDER BY l.done_at')
+    .all(truck.id, range.from, range.to);
+  const driver = truck.driver_id ? ctx.db.prepare('SELECT name FROM users WHERE id = ?').get(truck.driver_id)?.name : null;
+  return {
+    mes: range.label,
+    timeZone: ctx.config.timeZone,
+    truck: { id: truck.id, name: truck.name, plate: truck.plate, driver_name: driver || null, odometer: truck.odometer },
+    expenses,
+    by_category: byCategory,
+    total_cents: total,
+    miles,
+    cost_per_mile_cents: miles ? Math.round(total / miles) : null,
+    maintenance,
+  };
+}
+
 function routes(api, ctx) {
   api.get('/trucks', (req, res) => {
     res.json(listTrucks(ctx, req.user.role === 'dono' ? null : req.user));
@@ -329,6 +381,30 @@ function routes(api, ctx) {
     res.status(201).json(markDone(ctx, { truck, item, miles, userId: req.user.id, notes: req.body?.notes || null }));
   });
 
+  // Extrato do mês: despesas por tipo, milhas rodadas e custo por milha.
+  api.get('/trucks/:id/month', (req, res) => {
+    const truck = getTruck(ctx, req.params.id);
+    if (!canEdit(req.user, truck)) throw new HttpError(404, 'Caminhão não encontrado.');
+    res.json(truckMonth(ctx, truck, String(req.query.mes || '')));
+  });
+
+  api.get('/trucks/:id/extrato.pdf', async (req, res) => {
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono vê o extrato do caminhão.');
+    const truck = getTruck(ctx, req.params.id);
+    if (!truck) throw new HttpError(404, 'Caminhão não encontrado.');
+    const data = truckMonth(ctx, truck, String(req.query.mes || ''));
+    const buf = await renderTruckMonth({
+      company: ctx.api.invoice?.getCompany() || { name: ctx.config.companyName },
+      logo: ctx.api.invoice ? ctx.api.invoice.logo() : null,
+      data,
+    });
+    const name = `Despesas ${truck.name} ${data.mes}.pdf`.replace(/[^\w &.-]/g, '');
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="${name}"`);
+    res.set('Cache-Control', 'no-store');
+    res.send(buf);
+  });
+
   api.get('/trucks/:id/log', (req, res) => {
     const truck = getTruck(ctx, req.params.id);
     if (!canEdit(req.user, truck)) throw new HttpError(404, 'Caminhão não encontrado.');
@@ -379,8 +455,32 @@ function exportSheets({ ctx, from, to }) {
   ];
 }
 
+function setup(ctx) {
+  ctx.api.manutencao = {
+    get: (id) => getTruck(ctx, id),
+    // Caminhão do motorista; se só existe um caminhão, é ele.
+    truckFor(userId) {
+      const mine = ctx.db.prepare('SELECT * FROM trucks WHERE active = 1 AND driver_id = ? ORDER BY id').all(userId);
+      if (mine.length === 1) return mine[0];
+      const all = ctx.db.prepare('SELECT * FROM trucks WHERE active = 1').all();
+      return all.length === 1 ? all[0] : null;
+    },
+    // Caminhão citado pelo nome ou placa nas palavras ("f-550", "f550").
+    findTruck(words) {
+      const norm = (t) => simplify(t).replace(/[^a-z0-9]/g, '');
+      const ws = words.map(norm).filter((w) => w.length > 1);
+      const found = ctx.db
+        .prepare('SELECT * FROM trucks WHERE active = 1')
+        .all()
+        .filter((t) => ws.some((w) => w === norm(t.name) || (t.plate && w === norm(t.plate)) || simplify(t.name).split(/\s+/).map(norm).includes(w)));
+      return found.length === 1 ? found[0] : null;
+    },
+  };
+}
+
 export default {
   name: 'manutencao',
+  setup,
   label: 'Manutenção do caminhão',
   migrations,
   commands,

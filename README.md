@@ -16,6 +16,7 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 - **Manutenção do caminhão**: milhas, troca de óleo, pneus, freios, inspeção e registro, com aviso quando está perto ou atrasado (`odometro 123456`, `fiz oleo`, `caminhao`).
 - **Invoice / recibo em PDF**: no modelo da Towing J&J (logo, dados da empresa, Zelle), em inglês, com numeração própria; sai com PAID quando o serviço está pago. Pelo painel (botão Mandar) ou pelo robô (`invoice`).
 - **Empresas e extrato**: oficinas e dealers com vários solicitantes. O extrato em PDF junta os serviços da empresa, separados por quem pediu, com o total a pagar (tudo em aberto ou por mês).
+- **Despesas por caminhão**: cada despesa fica ligada ao caminhão (o do motorista, ou escolhido). Extrato mensal em PDF com total por tipo, milhas rodadas e custo por milha.
 - **Aviso da manhã**: todo dia às `AVISO_HORA` (padrão 8h) o dono recebe no WhatsApp o que precisa de atenção.
 - **Modular**: cada função é um módulo que pode ser ligado ou desligado. Veja [src/modules/README.md](src/modules/README.md) para criar novos.
 
