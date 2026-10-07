@@ -810,7 +810,12 @@ screens.caminhoes = async () => {
   const driverSelect = (selected) =>
     `<select name="driver_id"><option value="">Sem motorista fixo</option>${drivers.map((u) => `<option value="${u.id}"${u.id === selected ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}</select>`;
   const every = (i) => [i.every_miles ? `a cada ${miles(i.every_miles)}` : '', i.every_days ? `a cada ${i.every_days} dias` : ''].filter(Boolean).join(' ou ');
-  view.innerHTML = `${trucks
+  const today = new Intl.DateTimeFormat('en-CA').format(new Date());
+  view.innerHTML = `${owner && trucks.length ? `<div class="card" id="semana"><h2>📊 Relatório da semana</h2>
+      <p class="sub">Toda segunda de manhã o relatório da semana passada chega no seu WhatsApp. Para ver outra semana, escolha um dia dela.</p>
+      <div class="copyrow"><input type="date" class="dia" value="${today}" max="${today}"><a class="btn secondary" target="_blank" rel="noopener">📄 Ver relatório</a></div>
+      <p class="sub week-sum"></p></div>` : ''}
+    ${trucks
     .map(
       (t) => `<div class="card truck" data-truck="${t.id}">
         <div class="row"><div><h2>🚛 ${esc(t.name)}${t.plate ? ` <span class="sub">${esc(t.plate)}</span>` : ''}</h2>
@@ -821,10 +826,11 @@ screens.caminhoes = async () => {
           .map(
             (i) => `<li class="m-${i.state}"><div class="row"><div><strong>${ICON[i.state]} ${esc(i.name)}</strong>
               <div class="sub">${esc(i.note || '')}${i.note ? ' · ' : ''}${every(i)}</div></div>
-              <div class="right"><button class="secondary small" data-done="${i.id}">Feito</button>
+              <div class="right"><a class="btn secondary small" href="#/manutencao/${t.id}?item=${i.id}">Feito</a>
               ${owner ? `<button class="link small" data-edit="${i.id}">Editar</button>` : ''}</div></div></li>`
           )
           .join('')}</ul>
+        <div class="actions"><a class="btn" href="#/manutencao/${t.id}">🔧 Registrar serviço</a><a class="btn secondary" href="#/manutencao/${t.id}?ver=historico">Histórico</a></div>
         ${owner ? `<div class="truck-month"><label>Despesas do mês</label><div class="copyrow"><input type="month" class="mes" value="${new Date().toISOString().slice(0, 7)}"><a class="btn secondary" data-pdf="${t.id}" target="_blank" rel="noopener">📄 Ver extrato</a></div><p class="sub month-sum"></p></div>` : ''}
         ${owner ? `<details><summary class="sub">Mais opções</summary>
           <form class="additem"><label>Novo item</label><input name="name" placeholder="Filtro de ar, correia…" required>
@@ -842,7 +848,21 @@ screens.caminhoes = async () => {
       <label>Motorista</label>${driverSelect(null)}
       <p class="sub">Óleo a cada 5.000 mi, rodízio de pneus a cada 6.000 mi, freios a cada 25.000 mi, inspeção e registro todo ano. Dá para mudar depois.</p>
       <button class="block">Cadastrar</button></form>` : ''}
-    <p class="sub">Pelo WhatsApp: <strong>odometro 123456</strong> para atualizar as milhas e <strong>fiz oleo</strong> quando fizer a manutenção.</p>`;
+    <p class="sub">Pelo WhatsApp: <strong>odometro 123456</strong> para atualizar as milhas (o motorista recebe um lembrete na sexta se ainda não mandou na semana) e <strong>fiz oleo</strong> quando fizer a manutenção.</p>`;
+
+  const week = view.querySelector('#semana');
+  if (week) {
+    const dia = week.querySelector('.dia');
+    const show = async () => {
+      week.querySelector('a').href = `/api/frota/semana.pdf?dia=${dia.value}`;
+      const r = await api(`/frota/semana?dia=${dia.value}`).catch(() => null);
+      if (!r) return;
+      const d = (x) => x.slice(8, 10) + '/' + x.slice(5, 7);
+      week.querySelector('.week-sum').textContent = `${d(r.start)} a ${d(r.end)}: ${r.totals.miles.toLocaleString('en-US')} mi rodadas · ${r.totals.services} serviço(s)${r.totals.late ? ` · ${r.totals.late} atrasado(s)` : ''}${r.totals.missing ? ` · ${r.totals.missing} sem milhagem` : ''}`;
+    };
+    dia.onchange = show;
+    show();
+  }
 
   const run = async (fn, ok) => {
     try {
@@ -884,14 +904,6 @@ screens.caminhoes = async () => {
       e.preventDefault();
       run(() => api(`/trucks/${id}`, { method: 'PATCH', body: formData(e.target) }), 'Salvo');
     });
-    card.querySelectorAll('[data-done]').forEach((b) => {
-      b.onclick = () => {
-        const item = truck.items.find((i) => String(i.id) === b.dataset.done);
-        const value = prompt(`${item.name} feito com quantas milhas?`, truck.odometer);
-        if (value == null) return;
-        run(() => api(`/maintenance/${item.id}/done`, { method: 'POST', body: { miles: value } }), `${item.name} registrado ✅`);
-      };
-    });
     card.querySelectorAll('[data-edit]').forEach((b) => {
       b.onclick = () => {
         const item = truck.items.find((i) => String(i.id) === b.dataset.edit);
@@ -910,6 +922,84 @@ screens.caminhoes = async () => {
   view.querySelectorAll('[data-deltruck]').forEach((b) => {
     b.onclick = () => confirm('Apagar este caminhão e a manutenção dele?') && run(() => api(`/trucks/${b.dataset.deltruck}`, { method: 'DELETE' }), 'Caminhão apagado');
   });
+};
+
+// Registrar serviço do caminhão (óleo, freio...) com a próxima troca, e o histórico.
+screens.manutencao = async (params, id) => {
+  setScreen('Registrar serviço', { tab: 'mais', back: '#/caminhoes' });
+  const owner = state.me.role === 'dono';
+  const [trucks, log] = await Promise.all([api('/trucks'), api(`/trucks/${id}/log`)]);
+  const truck = trucks.find((t) => String(t.id) === String(id));
+  if (!truck) throw new Error('Caminhão não encontrado.');
+  const miles = (n) => `${Number(n || 0).toLocaleString('en-US')} mi`;
+  const today = new Intl.DateTimeFormat('en-CA').format(new Date());
+  const pre = params.get('item') || '';
+  view.innerHTML = `<form class="card" id="f">
+      <h2>🚛 ${esc(truck.name)}</h2><p class="sub">Agora: ${miles(truck.odometer)}</p>
+      <label>O que foi feito</label>
+      <select name="item_id">${truck.items.map((i) => `<option value="${i.id}"${String(i.id) === pre ? ' selected' : ''}>${esc(i.name)}</option>`).join('')}<option value="">Outro…</option></select>
+      <div class="outro" hidden><label>Qual serviço?</label><input name="name" placeholder="Bateria, correia, alinhamento…"></div>
+      <div class="row2"><div><label>Data</label><input type="date" name="date" value="${today}" max="${today}"></div>
+        <div><label>Milhas no dia</label><input name="miles" inputmode="numeric" value="${truck.odometer}"></div></div>
+      <div class="row2"><div><label>Valor ($)</label><input name="cost" inputmode="decimal" placeholder="opcional"></div>
+        <div><label>Oficina / onde</label><input name="shop" placeholder="opcional"></div></div>
+      <h3>Próxima troca</h3>
+      <div class="row2"><div><label>Com quantas milhas</label><input name="next_miles" inputmode="numeric"></div>
+        <div><label>Até que data</label><input type="date" name="next_date"></div></div>
+      <p class="sub next-help"></p>
+      <label>Observação</label><input name="notes" placeholder="opcional">
+      <button class="block">Salvar serviço</button>
+    </form>
+    <div class="card" id="historico"><h2>Histórico</h2>${log.length ? `<ul class="list">${log
+      .map(
+        (l) => `<li><div class="row"><div><strong>${esc(l.item_name)}</strong>
+          <div class="sub">${new Date(l.done_at).toLocaleDateString('pt-BR')} · ${miles(l.miles)}${l.shop ? ` · ${esc(l.shop)}` : ''}${l.user_name ? ` · ${esc(l.user_name)}` : ''}${l.notes ? ` · ${esc(l.notes)}` : ''}</div></div>
+          <div class="right">${l.cost_cents ? money(l.cost_cents) : ''}${owner ? `<button class="link small" data-del="${l.id}">Apagar</button>` : ''}</div></div></li>`
+      )
+      .join('')}</ul>` : '<p class="sub">Nenhum serviço registrado ainda.</p>'}</div>`;
+
+  const f = view.querySelector('#f');
+  // Preenche a próxima troca pelo intervalo do item, até a pessoa mexer no campo.
+  const touched = new Set();
+  ['next_miles', 'next_date'].forEach((n) => f[n].addEventListener('input', () => touched.add(n)));
+  const fill = () => {
+    const item = truck.items.find((i) => String(i.id) === f.item_id.value);
+    f.querySelector('.outro').hidden = Boolean(item);
+    const m = Number(String(f.miles.value).replace(/[^\d]/g, '')) || truck.odometer;
+    if (!touched.has('next_miles')) f.next_miles.value = item?.every_miles ? m + item.every_miles : '';
+    if (!touched.has('next_date')) {
+      f.next_date.value = item?.every_days && f.date.value ? new Date(Date.parse(f.date.value + 'T12:00:00Z') + item.every_days * 86400000).toISOString().slice(0, 10) : '';
+    }
+    const every = item ? [item.every_miles ? `a cada ${miles(item.every_miles)}` : '', item.every_days ? `a cada ${item.every_days} dias` : ''].filter(Boolean).join(' ou ') : '';
+    f.querySelector('.next-help').textContent = every
+      ? `Preenchido pelo intervalo (${every}). Pode mudar se a oficina indicou outro.`
+      : 'Deixe vazio se não precisa avisar de novo.';
+  };
+  ['item_id', 'miles', 'date'].forEach((n) => f[n].addEventListener(n === 'item_id' ? 'change' : 'input', fill));
+  fill();
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api(`/trucks/${id}/services`, { method: 'POST', body: formData(f) });
+      toast(`${r.log.item_name} registrado ✅`);
+      location.hash = '#/caminhoes';
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  view.querySelectorAll('[data-del]').forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm('Apagar este serviço do histórico?')) return;
+      try {
+        await api(`/maintenance-log/${b.dataset.del}`, { method: 'DELETE' });
+        toast('Apagado');
+        screens.manutencao(params, id);
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+  });
+  if (params.get('ver') === 'historico') view.querySelector('#historico').scrollIntoView();
 };
 
 // Invoice (fatura/recibo em PDF) do serviço, no modelo da empresa.

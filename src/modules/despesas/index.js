@@ -38,12 +38,12 @@ export function guessCategory(text) {
   return 'outros';
 }
 
-function addExpense(ctx, { userId, serviceId = null, amountCents, category, description, truckId }) {
+function addExpense(ctx, { userId, serviceId = null, amountCents, category, description, truckId, at = null }) {
   // Sem caminhão escolhido: vai para o caminhão do motorista.
   if (truckId === undefined) truckId = ctx.api.manutencao?.truckFor(userId)?.id ?? null;
   const info = ctx.db
     .prepare('INSERT INTO expenses (user_id, service_id, amount_cents, category, description, truck_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(userId, serviceId, amountCents, category, description || null, truckId || null, nowIso());
+    .run(userId, serviceId, amountCents, category, description || null, truckId || null, at || nowIso());
   return ctx.db.prepare('SELECT * FROM expenses WHERE id = ?').get(Number(info.lastInsertRowid));
 }
 
@@ -168,8 +168,16 @@ function exportSheets({ ctx, from, to, userId }) {
   ];
 }
 
+function setup(ctx) {
+  ctx.api.despesas = {
+    add: (fields) => addExpense(ctx, fields),
+    remove: (id) => ctx.db.prepare('DELETE FROM expenses WHERE id = ?').run(Number(id)),
+  };
+}
+
 export default {
   name: 'despesas',
+  setup,
   exportSheets,
   label: 'Despesas',
   migrations,

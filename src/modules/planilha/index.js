@@ -17,7 +17,7 @@ const migrations = [
 ];
 
 // Meia-noite de um dia no fuso da empresa, em ISO (UTC). Acerta o horário de verão.
-function zonedMidnight(year, month, day, timeZone) {
+export function zonedMidnight(year, month, day, timeZone) {
   const wanted = Date.UTC(year, month - 1, day);
   let guess = wanted;
   for (let i = 0; i < 3; i++) {
