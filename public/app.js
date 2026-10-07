@@ -790,6 +790,7 @@ screens.mais = async () => {
     <div class="card"><ul class="list">
       ${has('despesas') ? '<li><a href="#/despesas"><span>🧾 Despesas</span><span>›</span></a></li>' : ''}
       ${has('manutencao') ? '<li><a href="#/caminhoes"><span>🔧 Caminhões e manutenção</span><span>›</span></a></li>' : ''}
+      ${has('comissao') ? `<li><a href="${state.me.role === 'dono' ? '#/comissao' : `#/motorista/${state.me.id}`}"><span>💰 ${state.me.role === 'dono' ? 'Pagamento dos motoristas' : 'Meus ganhos'}</span><span>›</span></a></li>` : ''}
       ${state.me.role === 'dono' ? '<li><a href="#/equipe"><span>👥 Equipe</span><span>›</span></a></li>' : ''}
       ${has('invoice') && state.me.role === 'dono' ? '<li><a href="#/empresa"><span>🏢 Dados da empresa (invoice)</span><span>›</span></a></li>' : ''}
       <li><a href="#/robo"><span>💬 Testar o robô do WhatsApp</span><span>›</span></a></li>
@@ -1176,6 +1177,134 @@ screens.cliente = async (params, id) => {
     await api(`/companies/${id}`, { method: 'DELETE' });
     location.hash = '#/empresas';
   };
+};
+
+// Pagamento dos motoristas: % do faturamento do mês, pago por semana e acertado no fim do mês.
+const monthOptions = (selected) => {
+  const now = new Date();
+  return [...Array(12)]
+    .map((_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+      return `<option value="${m}"${m === selected ? ' selected' : ''}>${label}</option>`;
+    })
+    .join('');
+};
+
+screens.comissao = async (params) => {
+  setScreen('Pagamento dos motoristas', { tab: 'mais', back: '#/mais' });
+  const mes = params.get('mes') || '';
+  const data = await api(`/comissao${mes ? `?mes=${mes}` : ''}`);
+  const tiers = data.tiers;
+  view.innerHTML = `
+    <div class="card"><label>Mês</label><select id="mes">${monthOptions(data.mes)}</select></div>
+    <div class="card"><ul class="list">${
+      data.drivers.length
+        ? data.drivers
+            .map((d) => `<li><a href="#/motorista/${d.id}?mes=${data.mes}"><div><strong>${esc(d.name)}</strong>${d.active ? '' : ' <span class="badge cancelado">desativado</span>'}<div class="sub">Faturou ${money(d.revenue_cents)} · ${d.pct}%</div></div>
+              <div class="right"><strong>${money(d.commission_cents)}</strong><div class="sub">${d.settlement_cents > 0 ? `falta ${money(d.settlement_cents)}` : 'em dia ✅'}</div></div></a></li>`)
+            .join('')
+        : '<li class="empty">Nenhum motorista. Cadastre em Mais › Equipe.</li>'
+    }</ul></div>
+    <details class="card"><summary>Faixas de porcentagem</summary>
+      <form id="faixas">
+        <p class="sub">A % vale para todo o faturamento do mês do motorista.</p>
+        ${tiers
+          .map((t, i) => `<div class="row2"><div><label>${i ? 'A partir de ($)' : 'Abaixo da próxima faixa'}</label><input name="from" inputmode="decimal" value="${(t.from_cents / 100).toFixed(0)}" ${i ? '' : 'readonly'}></div><div><label>%</label><input name="pct" inputmode="decimal" value="${t.pct}"></div></div>`)
+          .join('')}
+        <button class="block">Salvar faixas</button>
+      </form>
+    </details>`;
+  view.querySelector('#mes').onchange = (e) => (location.hash = `#/comissao?mes=${e.target.value}`);
+  view.querySelector('#faixas').onsubmit = async (e) => {
+    e.preventDefault();
+    const froms = [...e.target.querySelectorAll('[name=from]')].map((i) => i.value);
+    const pcts = [...e.target.querySelectorAll('[name=pct]')].map((i) => i.value);
+    try {
+      await api('/comissao/faixas', { method: 'PUT', body: { tiers: froms.map((f, i) => ({ from: f, pct: pcts[i] })) } });
+      toast('Faixas salvas');
+      screens.comissao(params);
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+};
+
+async function sharePdf(url, name) {
+  try {
+    const file = new File([await (await fetch(url)).blob()], name, { type: 'application/pdf' });
+    if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: name });
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+  }
+  location.href = url + '&download=1';
+}
+
+screens.motorista = async (params, id) => {
+  const owner = state.me.role === 'dono';
+  const mes = params.get('mes') || '';
+  const m = await api(`/comissao/${id}${mes ? `?mes=${mes}` : ''}`);
+  setScreen(owner ? m.driver.name : 'Meus ganhos', { tab: 'mais', back: owner ? `#/comissao?mes=${m.mes}` : '#/mais' });
+  const pdf = (week) => `/api/comissao/${id}/extrato.pdf?mes=${m.mes}${week ? `&semana=${week}` : ''}`;
+  const dm = (d) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+  const due = m.settlement_cents - m.settled_cents;
+  view.innerHTML = `
+    <div class="card">
+      <label>Mês</label><select id="mes">${monthOptions(m.mes)}</select>
+      <div class="stats" style="margin-top:12px">
+        <div><div class="sub">Faturou no mês</div><div class="big">${money(m.revenue_cents)}</div></div>
+        <div><div class="sub">${m.pct}% do mês</div><div class="big">${money(m.commission_cents)}</div></div>
+      </div>
+      ${m.next_tier ? `<p class="sub">Faltam ${money(m.next_tier.missing_cents)} de faturamento para ${m.next_tier.pct}%.</p>` : ''}
+    </div>
+    <div class="card"><h2>Semanas</h2><ul class="list">${m.weeks
+      .map((w) => {
+        const paid = w.paid_cents >= w.amount_cents && w.amount_cents > 0;
+        return `<li class="${w.current ? 'week-now' : ''}"><div class="row"><div><strong>${dm(w.start)} a ${dm(w.end)}</strong>${w.current ? ' <span class="badge aberto">esta semana</span>' : ''}
+          <div class="sub">${w.services} serviço(s) · faturou ${money(w.revenue_cents)} · ${w.pct}%</div></div>
+          <div class="right"><strong>${money(w.amount_cents)}</strong><div class="sub">${paid ? 'pago ✅' : w.paid_cents ? `pago ${money(w.paid_cents)}` : w.amount_cents ? 'a pagar' : ''}</div></div></div>
+          ${w.services ? `<div class="actions"><a class="btn secondary small" href="${pdf(w.start)}" target="_blank" rel="noopener">📄 PDF da semana</a><button class="secondary small" data-share="${w.start}">📤 Mandar</button>${owner && !paid && w.amount_cents ? `<button class="small" data-pay="${w.start}">Paguei</button>` : ''}</div>` : ''}</li>`;
+      })
+      .join('')}</ul></div>
+    <div class="card"><h2>Fechamento do mês</h2>
+      <p>${money(m.revenue_cents)} × ${m.pct}% = <strong>${money(m.commission_cents)}</strong><br>
+      <span class="sub">Já pago nas semanas: ${money(m.weekly_paid_cents)}${m.settled_cents ? ` · acerto pago: ${money(m.settled_cents)}` : ''}</span></p>
+      <p class="big">${due > 0 ? `Acerto: ${money(due)}` : due < 0 ? `Recebeu ${money(-due)} a mais` : 'Mês quitado ✅'}</p>
+      ${m.month_over ? '' : '<p class="sub">O mês ainda não acabou: o acerto pode mudar até o último dia.</p>'}
+      <div class="actions"><a class="btn secondary" href="${pdf()}" target="_blank" rel="noopener">📄 PDF do mês</a><button class="secondary" data-share="">📤 Mandar</button>${owner && due ? '<button id="acerto">Paguei o acerto</button>' : ''}</div>
+    </div>
+    ${owner && m.payments.length ? `<details class="card"><summary>Pagamentos registrados</summary><ul class="list">${m.payments
+      .map((p) => `<li><div class="row"><div>${p.kind === 'acerto' ? 'Acerto do mês' : `Semana de ${dm(p.week_start)}`}<div class="sub">${when(p.created_at)}</div></div><div class="right">${money(p.amount_cents)}<br><button class="danger" data-delpay="${p.id}">Apagar</button></div></div></li>`)
+      .join('')}</ul></details>` : ''}`;
+  const reload = () => screens.motorista(params, id);
+  view.querySelector('#mes').onchange = (e) => (location.hash = `#/motorista/${id}?mes=${e.target.value}`);
+  view.querySelectorAll('[data-share]').forEach((b) => {
+    b.onclick = () => sharePdf(pdf(b.dataset.share), `${b.dataset.share ? `Semana ${b.dataset.share}` : `Fechamento ${m.mes}`} ${m.driver.name}.pdf`);
+  });
+  const pay = async (body, suggested) => {
+    const value = prompt(`Quanto você pagou para ${m.driver.name}?`, (suggested / 100).toFixed(2));
+    if (value == null) return;
+    try {
+      await api(`/comissao/${id}/pagamentos`, { method: 'POST', body: { mes: m.mes, amount: value, ...body } });
+      toast('Pagamento registrado ✅');
+      reload();
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  view.querySelectorAll('[data-pay]').forEach((b) => {
+    const w = m.weeks.find((x) => x.start === b.dataset.pay);
+    b.onclick = () => pay({ kind: 'semanal', week_start: w.start }, w.amount_cents - w.paid_cents);
+  });
+  view.querySelector('#acerto')?.addEventListener('click', () => pay({ kind: 'acerto' }, due));
+  view.querySelectorAll('[data-delpay]').forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm('Apagar este pagamento?')) return;
+      await api(`/comissao/pagamentos/${b.dataset.delpay}`, { method: 'DELETE' });
+      reload();
+    };
+  });
 };
 
 screens.despesas = async () => {
