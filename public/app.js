@@ -252,9 +252,12 @@ screens.novo = async () => {
   const priced = pricing && (pricing.baseCents || pricing.perMileCents);
   view.innerHTML = `
     <form class="card" id="f">
+      <input type="hidden" name="contact_id">
+      <label>Nome do cliente</label>
+      <div class="suggest-wrap"><input name="contact_name" autocomplete="off" placeholder="Digite o nome para buscar na agenda"><ul class="suggest" hidden></ul></div>
+      <p class="sub picked" hidden></p>
       <label>Telefone do cliente</label>
-      <div class="copyrow"><input name="contact_phone" type="tel" list="contacts" placeholder="(508) 555-0123">${canPickContacts ? '<button type="button" class="secondary" id="agenda">📇 Agenda</button>' : ''}</div>
-      <label>Nome do cliente</label><input name="contact_name">
+      <div class="copyrow"><input name="contact_phone" type="tel" autocomplete="off" placeholder="(508) 555-0123">${canPickContacts ? '<button type="button" class="secondary" id="agenda">📇 Agenda</button>' : ''}</div>
       <label>Retirada (onde pegar)</label><input name="pickup" required placeholder="Endereço ou link do mapa">
       <label>Destino (para onde levar)</label><input name="dropoff" placeholder="Endereço ou link do mapa">
       <div class="row2">
@@ -286,6 +289,7 @@ screens.novo = async () => {
           if (choice == null) return;
           phone = contact.phones[Number(choice) - 1] || phone;
         }
+        form.contact_id.value = '';
         form.contact_phone.value = phone;
         form.contact_name.value = contact.name;
       } catch (err) {
@@ -293,12 +297,53 @@ screens.novo = async () => {
       }
     };
   }
-  // Ao digitar o telefone, completa o nome se o cliente já estiver na agenda.
-  form.contact_phone.onchange = async () => {
-    const q = form.contact_phone.value.replace(/\D/g, '');
-    if (q.length < 7 || form.contact_name.value) return;
-    const found = await api(`/contacts?q=${q}`);
-    if (found.length === 1) form.contact_name.value = found[0].name;
+  // Busca na agenda enquanto digita o nome (ou o telefone) e preenche o resto.
+  const box = view.querySelector('.suggest');
+  const picked = view.querySelector('.picked');
+  let found = [];
+  let timer;
+  const choose = (c) => {
+    form.contact_id.value = c.id;
+    form.contact_name.value = c.name;
+    if (c.phone) form.contact_phone.value = phoneFmt(c.phone);
+    const filled = [];
+    if (c.last) {
+      if (!form.vehicle.value && c.last.vehicle) (form.vehicle.value = c.last.vehicle), filled.push('veículo');
+      if (!form.plate.value && c.last.plate) (form.plate.value = c.last.plate), filled.push('placa');
+    }
+    picked.hidden = false;
+    picked.innerHTML = `✅ ${esc(c.name)}${c.company_name ? ` · 🏢 ${esc(c.company_name)}` : ''}${
+      c.last ? `<br>Último serviço (#${c.last.id}, ${when(c.last.created_at).split(',')[0]}): ${esc([c.last.vehicle, c.last.plate].filter(Boolean).join(' · ') || 'sem veículo')}${filled.length ? ` <em>(${filled.join(' e ')} preenchido${filled.length > 1 ? 's' : ''})</em>` : ''}` : ''
+    }`;
+    box.hidden = true;
+  };
+  const search = (q) => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      found = q.trim().length >= 2 ? await api(`/contacts/suggest?q=${encodeURIComponent(q.trim())}`).catch(() => []) : [];
+      box.innerHTML = found
+        .map((c, i) => `<li><button type="button" data-i="${i}"><strong>${esc(c.name)}</strong><span class="sub">${c.phone ? phoneFmt(c.phone) : 'sem telefone'}${c.company_name ? ' · ' + esc(c.company_name) : ''}${c.last?.vehicle ? ' · ' + esc(c.last.vehicle) : ''}</span></button></li>`)
+        .join('');
+      box.hidden = !found.length;
+      box.querySelectorAll('button').forEach((b) => (b.onclick = () => choose(found[Number(b.dataset.i)])));
+    }, 250);
+  };
+  form.contact_name.oninput = () => {
+    // Mudou o nome à mão: deixa de ser o contato escolhido.
+    form.contact_id.value = '';
+    picked.hidden = true;
+    search(form.contact_name.value);
+  };
+  form.contact_name.onblur = () => setTimeout(() => (box.hidden = true), 200);
+  form.contact_phone.oninput = () => {
+    if (form.contact_id.value) return;
+    const digits = form.contact_phone.value.replace(/\D/g, '');
+    if (digits.length < 7) return;
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const list = await api(`/contacts/suggest?q=${digits}`).catch(() => []);
+      if (list.length === 1 && !form.contact_name.value) choose(list[0]);
+    }, 400);
   };
   form.miles.oninput = () => {
     if (!priced || form.price.dataset.touched) return;
