@@ -12,7 +12,7 @@ function loadDotEnv(file) {
   }
 }
 
-export const ALL_MODULES = ['vin', 'fotos', 'pagamentos', 'despesas', 'whatsapp', 'planilha', 'manutencao', 'invoice', 'empresas', 'comissao'];
+export const ALL_MODULES = ['vin', 'fotos', 'pagamentos', 'despesas', 'whatsapp', 'planilha', 'manutencao', 'invoice', 'empresas', 'comissao', 'backup'];
 
 export function loadConfig(overrides = {}) {
   loadDotEnv(path.resolve('.env'));
