@@ -211,10 +211,11 @@ screens.servicos = async (params) => {
   const drivers = state.me.role === 'dono' ? await api('/users') : [];
   const query = (s, d) => `#/servicos?status=${s}${d ? `&driver=${d}` : ''}`;
   // Fila: serviços pendentes, que ainda não têm motorista trabalhando.
-  const fila = await api('/services?status=pendente').catch(() => []);
+  // Só o dono vê a fila: é ele quem escolhe o motorista.
+  const fila = state.me.role === 'dono' ? await api('/services?status=pendente').catch(() => []) : [];
   view.innerHTML = `
     <div class="segmented">
-      <button data-s="pendente">Pendentes${fila.length ? ` <span class="badge pendente">${fila.length}</span>` : ''}</button><button data-s="aberto">Andamento</button><button data-s="concluido">Entregues</button><button data-s="">Todos</button>
+      ${state.me.role === 'dono' ? `<button data-s="pendente">Pendentes${fila.length ? ` <span class="badge pendente">${fila.length}</span>` : ''}</button>` : ''}<button data-s="aberto">Andamento</button><button data-s="concluido">Entregues</button><button data-s="">Todos</button>
     </div>
     ${drivers.length > 1 ? `<select id="driver" aria-label="Motorista"><option value="">Todos os motoristas</option>${drivers.map((d) => `<option value="${d.id}" ${String(d.id) === driver ? 'selected' : ''}>${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select>` : ''}
     <div class="card"><ul class="list" id="list"><li class="empty">Carregando…</li></ul></div>`;
@@ -348,11 +349,11 @@ screens.servico = async (params, id) => {
       <p class="sub">${when(s.created_at)}${s.driver_name ? ' · ' + esc(s.driver_name) : ''}</p>
       ${s.notes ? `<p>${esc(s.notes)}</p>` : ''}
       <div class="actions">
-        ${s.status === 'pendente' ? '<button id="take">🚚 Pegar este serviço</button>' : s.status === 'aberto' ? '<button id="done">✅ Entregue</button>' : '<button class="secondary" id="reopen">Reabrir</button>'}
+        ${s.status === 'pendente' ? '' : s.status === 'aberto' ? '<button id="done">✅ Entregue</button>' : '<button class="secondary" id="reopen">Reabrir</button>'}
         ${s.status !== 'pendente' || state.me.role === 'dono' ? '<button class="secondary" id="edit">Editar</button>' : ''}
       </div>
-      ${s.status === 'pendente' ? `<p class="sub">⏳ Na fila: ainda nenhum motorista está neste serviço.</p>${owner ? `<div class="actions"><select id="assign" aria-label="Passar para"><option value="">Passar para…</option>${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}">${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select></div>` : ''}` : ''}
-      ${s.status === 'aberto' && (owner || s.driver_id === state.me.id) ? '<div class="actions"><button class="secondary" id="queue">⏳ Voltar para a fila</button></div>' : ''}
+      ${s.status === 'pendente' ? `<p class="sub">⏳ Na fila: ainda sem motorista.</p>${owner ? `<label>Escolher o motorista</label><div class="actions"><select id="assign" aria-label="Escolher o motorista"><option value="">Quem vai fazer?</option>${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}">${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select></div>` : ''}` : ''}
+      ${s.status === 'aberto' && owner ? '<div class="actions"><button class="secondary" id="queue">⏳ Voltar para a fila</button></div>' : ''}
       ${(s.status === 'aberto' && (owner || s.driver_id === state.me.id)) || (s.status === 'pendente' && owner) ? '<div class="actions"><button class="danger" id="cancel">✖ Cancelar serviço</button></div>' : ''}
     </div>
 
@@ -407,21 +408,12 @@ screens.servico = async (params, id) => {
     toast('Serviço entregue');
     reload();
   });
-  on('#take', async () => {
-    try {
-      await api(`/services/${id}/pegar`, { method: 'POST' });
-      toast('Serviço é seu agora');
-      reload();
-    } catch (err) {
-      toast(err.message);
-    }
-  });
   const assign = view.querySelector('#assign');
   if (assign) {
     assign.onchange = async () => {
       if (!assign.value) return;
       try {
-        const done = await api(`/services/${id}/pegar`, { method: 'POST', body: { driver_id: Number(assign.value) } });
+        const done = await api(`/services/${id}/passar`, { method: 'POST', body: { driver_id: Number(assign.value) } });
         toast(`Passado para ${done.driver_name}`);
         reload();
       } catch (err) {

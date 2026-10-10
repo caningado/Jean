@@ -84,13 +84,12 @@ function requireOwner(req) {
   if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode fazer isso.');
 }
 
-// O motorista só vê os próprios serviços; o dono vê todos.
-// Serviço na fila (pendente, sem motorista) aparece para todos, para alguém pegar.
+// O motorista só vê os próprios serviços; o dono vê todos (inclusive a fila).
 function canSee(user, service) {
-  return service && (user.role === 'dono' || service.driver_id === user.id || (service.status === 'pendente' && !service.driver_id));
+  return service && (user.role === 'dono' || service.driver_id === user.id);
 }
 
-// Pega um serviço da fila: passa para o motorista e fica "em andamento".
+// Tira um serviço da fila: o dono passa para um motorista e fica "em andamento".
 function takeService(ctx, service, driverId) {
   const updated = ctx.data.services.update(service.id, { status: 'aberto', driver_id: driverId });
   // Vira o serviço "em mãos" do motorista, se ele não está com outro.
@@ -99,25 +98,15 @@ function takeService(ctx, service, driverId) {
   return updated;
 }
 
-// Avisa os motoristas que entrou serviço na fila (se o WhatsApp estiver ligado).
-async function announceQueue(ctx, service, byUser) {
-  if (!ctx.send) return;
-  const drivers = ctx.db.prepare("SELECT * FROM users WHERE active = 1 AND role = 'motorista' AND id <> ?").all(byUser.id);
-  const where = [service.pickup, service.dropoff].filter(Boolean).map((p) => String(p).replace(/https?:\/\/\S+/g, 'local no mapa'));
-  const text = [
-    `🆕 *Serviço #${service.id} na fila* (sem motorista)`,
-    where.length ? `📍 ${where.join(' → ')}` : '',
-    service.vehicle ? `🚗 ${service.vehicle}` : '',
-    `Para pegar, mande *pegar ${service.id}*.`,
-  ]
-    .filter(Boolean)
-    .join('\n');
-  for (const d of drivers) {
-    try {
-      await ctx.send(d.phone, text);
-    } catch (err) {
-      ctx.log(`Não consegui avisar ${d.name} do serviço na fila`, err);
-    }
+// Avisa o motorista que o dono passou um serviço da fila para ele (se o WhatsApp estiver ligado).
+async function notifyAssigned(ctx, service, byUser) {
+  if (!ctx.send || service.driver_id === byUser.id) return;
+  const driver = ctx.data.users.get(service.driver_id);
+  if (!driver) return;
+  try {
+    await ctx.send(driver.phone, [`🚚 ${byUser.name} passou um serviço para você.`, ctx.data.services.describe(service)].join('\n\n'));
+  } catch (err) {
+    ctx.log(`Não consegui avisar ${driver.name} do serviço #${service.id}`, err);
   }
 }
 
@@ -437,29 +426,13 @@ const commands = [
   },
   {
     names: ['fila'],
-    help: '*fila* – serviços pendentes, sem motorista',
-    blockable: true,
-    run({ ctx }) {
-      const list = ctx.data.services.list({ status: 'pendente', limit: 20 }).filter((s) => !s.driver_id);
+    help: '*fila* – serviços pendentes, sem motorista (só o dono)',
+    run({ ctx, user }) {
+      if (user.role !== 'dono') return 'Só o dono vê a fila e escolhe o motorista de cada serviço.';
+      const list = ctx.data.services.list({ status: 'pendente', limit: 20 });
       if (!list.length) return 'Nenhum serviço na fila. 👍';
       const lines = list.map((s) => `• *#${s.id}* ${s.contact_name || 'Sem cliente'} – ${String(s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa')}${s.vehicle ? ` (${s.vehicle})` : ''}`);
-      return [`⏳ *Fila* (${list.length})`, ...lines, '', `Para pegar um, mande *pegar ${list[0].id}*.`].join('\n');
-    },
-  },
-  {
-    names: ['pegar', 'peguei'],
-    help: '*pegar 12* – pegar o serviço #12 da fila',
-    blockable: true,
-    run({ ctx, user, args }) {
-      const id = Number(String(args[0] || '').replace('#', ''));
-      const service = id && ctx.data.services.get(id);
-      if (!service || !canSee(user, service)) return 'Não achei esse serviço. Mande *fila* para ver os pendentes.';
-      if (service.status !== 'pendente') {
-        return service.driver_id === user.id ? `O serviço #${id} já é seu.` : `O serviço #${id} não está mais na fila${service.driver_name ? ` (está com ${service.driver_name})` : ''}.`;
-      }
-      takeService(ctx, service, user.id);
-      ctx.data.services.setActive(user.id, service.id);
-      return [`🚚 Serviço #${id} é seu agora.`, ctx.data.services.describe(ctx.data.services.get(id))].join('\n\n');
+      return [`⏳ *Fila* (${list.length})`, ...lines, '', 'Para escolher o motorista, abra o serviço no painel.'].join('\n');
     },
   },
   {
@@ -470,7 +443,7 @@ const commands = [
       const id = Number(String(args[0] || '').replace('#', ''));
       const service = id && ctx.data.services.get(id);
       if (!canSee(user, service)) return 'Não achei esse serviço.';
-      if (service.status === 'pendente') takeService(ctx, service, service.driver_id || user.id);
+      if (service.status === 'pendente') takeService(ctx, service, user.id);
       else if (service.status !== 'aberto') ctx.data.services.update(service.id, { status: 'aberto' });
       ctx.data.services.setActive(user.id, service.id);
       return `Ok, agora estou no serviço #${service.id}.`;
@@ -631,10 +604,8 @@ function routes(api, ctx) {
     const blocked = servicesBlocked(ctx, req.user);
     if (blocked) throw new HttpError(423, blocked.replace(/\*/g, ''));
     const status = req.query.status || null;
-    // A fila (pendentes) é de todos: o motorista vê os pendentes sem dono para pegar.
-    const driverId = req.user.role === 'dono' ? Number(req.query.driver) || null : status === 'pendente' ? null : req.user.id;
-    const list = data.services.list({ status, driverId, limit: Number(req.query.limit) || 100 });
-    res.json(list.filter((s) => canSee(req.user, s)));
+    const driverId = req.user.role === 'dono' ? Number(req.query.driver) || null : req.user.id;
+    res.json(data.services.list({ status, driverId, limit: Number(req.query.limit) || 100 }));
   });
   // Sugestões de endereço enquanto digita no painel.
   api.get('/places', async (req, res) => {
@@ -662,10 +633,9 @@ function routes(api, ctx) {
     if (contactId && !data.contacts.get(contactId)) throw new HttpError(400, 'Cliente não encontrado.');
     if (!contactId && contactPhone) contactId = data.contacts.findOrCreate({ phone: contactPhone, name: contactName }).id;
     else if (!contactId && contactName) contactId = data.contacts.create({ name: contactName }).id;
-    // "fila": entra como pendente, sem motorista, até alguém pegar.
-    if (body.fila === true || body.fila === '1' || body.driver_id === 'fila' || body.status === 'pendente') {
+    // "fila": entra como pendente, sem motorista, até o dono escolher quem vai. Só o dono.
+    if (req.user.role === 'dono' && (body.fila === true || body.fila === '1' || body.driver_id === 'fila' || body.status === 'pendente')) {
       const service = data.services.create({ ...fields, driver_id: null, contact_id: contactId, status: 'pendente' });
-      announceQueue(ctx, service, req.user).catch(() => {});
       return res.status(201).json(service);
     }
     const driverId = req.user.role === 'dono' ? fields.driver_id || req.user.id : req.user.id;
@@ -689,8 +659,8 @@ function routes(api, ctx) {
     await checkPlaces(ctx, body, req.body || {}, service);
     if (body.pickup === null) delete body.pickup; // retirada não pode ficar vazia
     if (req.user.role !== 'dono') delete body.driver_id;
-    // Serviço da fila: o motorista só pode pegar (abaixo, em /pegar).
-    if (req.user.role !== 'dono' && service.status === 'pendente' && !service.driver_id) throw new HttpError(403, 'Pegue o serviço antes de mexer nele.');
+    // Fila: só o dono põe e tira serviço dela (é ele quem escolhe o motorista).
+    if (req.user.role !== 'dono' && (body.status === 'pendente' || service.status === 'pendente')) throw new HttpError(403, 'Só o dono escolhe o motorista do serviço.');
     if (service.status === 'pendente' && body.status === 'aberto' && !body.driver_id) body.driver_id = req.user.id;
     // Volta para a fila: sem motorista. Só o dono ou o motorista do serviço.
     if (body.status === 'pendente') body.driver_id = null;
@@ -705,8 +675,9 @@ function routes(api, ctx) {
       const text = `❌ ${req.user.name} cancelou o serviço #${service.id}${service.contact_name ? ` (${service.contact_name})` : ''}.${motivo ? `\nMotivo: ${motivo}` : ''}`;
       for (const o of db.prepare("SELECT phone FROM users WHERE active = 1 AND role = 'dono'").all()) ctx.send(o.phone, text).catch(() => {});
     }
-    if (service.status === 'pendente' && updated.status === 'aberto' && updated.driver_id && !data.services.active({ id: updated.driver_id })) {
-      data.services.setActive(updated.driver_id, service.id);
+    if (service.status === 'pendente' && updated.status === 'aberto' && updated.driver_id) {
+      if (!data.services.active({ id: updated.driver_id })) data.services.setActive(updated.driver_id, service.id);
+      notifyAssigned(ctx, updated, req.user);
     }
     if (body.status && body.status !== 'aberto') {
       db.prepare('UPDATE users SET active_service_id = NULL WHERE active_service_id = ?').run(service.id);
@@ -714,20 +685,17 @@ function routes(api, ctx) {
     res.json(updated);
   });
 
-  // Pegar um serviço da fila (motorista pega para si; o dono pode passar para alguém).
-  api.post('/services/:id/pegar', (req, res) => {
+  // Passar um serviço da fila para um motorista. Só o dono escolhe.
+  api.post('/services/:id/passar', (req, res) => {
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono escolhe o motorista do serviço.');
     const service = data.services.get(Number(req.params.id));
-    if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
+    if (!service) throw new HttpError(404, 'Serviço não encontrado.');
     if (service.status !== 'pendente') throw new HttpError(409, service.driver_name ? `Esse serviço já está com ${service.driver_name}.` : 'Esse serviço não está mais na fila.');
-    const blocked = servicesBlocked(ctx, req.user);
-    if (blocked) throw new HttpError(423, blocked.replace(/\*/g, ''));
-    let driverId = req.user.id;
-    if (req.user.role === 'dono' && req.body?.driver_id) {
-      const driver = data.users.get(Number(req.body.driver_id));
-      if (!driver || !driver.active) throw new HttpError(400, 'Motorista não encontrado.');
-      driverId = driver.id;
-    }
-    res.json(takeService(ctx, service, driverId));
+    const driver = data.users.get(Number(req.body?.driver_id) || req.user.id);
+    if (!driver || !driver.active) throw new HttpError(400, 'Motorista não encontrado.');
+    const updated = takeService(ctx, service, driver.id);
+    notifyAssigned(ctx, updated, req.user);
+    res.json(updated);
   });
 
   api.get('/summary', (req, res) => {

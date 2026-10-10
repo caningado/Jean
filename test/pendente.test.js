@@ -19,7 +19,7 @@ async function start(t) {
   return { ctx, call, owner, drv, driver };
 }
 
-test('serviço na fila: entra pendente, sem motorista, e o motorista é avisado', async (t) => {
+test('serviço na fila: só o dono põe na fila e escolhe o motorista', async (t) => {
   const { ctx, call, drv, driver } = await start(t);
   const sent = [];
   ctx.send = async (phone, text) => sent.push({ phone, text });
@@ -28,55 +28,55 @@ test('serviço na fila: entra pendente, sem motorista, e o motorista é avisado'
   assert.equal(r.status, 201);
   assert.equal(r.body.status, 'pendente');
   assert.equal(r.body.driver_id, null);
-  // Não vira o serviço "em mãos" de ninguém.
+  // Não vira o serviço "em mãos" de ninguém, e ninguém é avisado ainda.
   assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM users WHERE active_service_id IS NOT NULL').get().n, 0);
   await new Promise((r) => setImmediate(r));
-  const aviso = sent.find((m) => m.phone === DRIVER_PHONE);
-  assert.match(aviso.text, new RegExp(`Serviço #${r.body.id} na fila`));
-  assert.match(aviso.text, new RegExp(`pegar ${r.body.id}`));
+  assert.equal(sent.length, 0);
+  assert.deepEqual((await call('GET', '/services?status=pendente')).body.map((s) => s.id), [r.body.id]);
 
-  // O motorista vê a fila (mas não os serviços dos outros).
-  await call('POST', '/services', { pickup: '200 Oak Ave, Orlando FL' }); // do dono, em andamento
-  const fila = await call('GET', '/services?status=pendente', null, drv);
-  assert.deepEqual(fila.body.map((s) => s.id), [r.body.id]);
-  assert.equal((await call('GET', '/services?status=aberto', null, drv)).body.length, 0);
-  assert.equal((await call('GET', `/services/${r.body.id}`, null, drv)).status, 200);
-  // Na fila ele não mexe: precisa pegar antes.
-  assert.equal((await call('PATCH', `/services/${r.body.id}`, { status: 'concluido' }, drv)).status, 403);
+  // O motorista não vê a fila nem pega serviço.
+  assert.equal((await call('GET', '/services?status=pendente', null, drv)).body.length, 0);
+  assert.equal((await call('GET', `/services/${r.body.id}`, null, drv)).status, 404);
+  assert.equal((await call('POST', `/services/${r.body.id}/passar`, { driver_id: driver.id }, drv)).status, 403);
+  // Motorista que tenta criar "na fila" cria para si mesmo.
+  const dele = await call('POST', '/services', { pickup: '200 Oak Ave, Orlando FL', driver_id: 'fila' }, drv);
+  assert.equal(dele.body.status, 'aberto');
+  assert.equal(dele.body.driver_id, driver.id);
 
-  // Pegou: passa a ser dele, em andamento e "em mãos".
-  const peguei = await call('POST', `/services/${r.body.id}/pegar`, null, drv);
-  assert.equal(peguei.status, 200);
-  assert.equal(peguei.body.status, 'aberto');
-  assert.equal(peguei.body.driver_id, driver.id);
+  // O dono passa para o motorista: em andamento, "em mãos" se ele está livre, e avisado.
+  ctx.db.prepare('UPDATE users SET active_service_id = NULL').run();
+  const passou = await call('POST', `/services/${r.body.id}/passar`, { driver_id: driver.id });
+  assert.equal(passou.status, 200);
+  assert.equal(passou.body.status, 'aberto');
+  assert.equal(passou.body.driver_id, driver.id);
   assert.equal(ctx.db.prepare('SELECT active_service_id FROM users WHERE id = ?').get(driver.id).active_service_id, r.body.id);
-  // Ninguém pega de novo.
-  assert.equal((await call('POST', `/services/${r.body.id}/pegar`)).status, 409);
+  await new Promise((r) => setImmediate(r));
+  assert.match(sent.find((m) => m.phone === DRIVER_PHONE).text, /passou um serviço para você/);
+  assert.equal((await call('POST', `/services/${r.body.id}/passar`, { driver_id: driver.id })).status, 409);
 
-  // Voltar para a fila: sem motorista e sai das mãos dele.
-  const volta = await call('PATCH', `/services/${r.body.id}`, { status: 'pendente' }, drv);
+  // Voltar para a fila: só o dono.
+  assert.equal((await call('PATCH', `/services/${r.body.id}`, { status: 'pendente' }, drv)).status, 403);
+  const volta = await call('PATCH', `/services/${r.body.id}`, { status: 'pendente' });
   assert.equal(volta.body.status, 'pendente');
   assert.equal(volta.body.driver_id, null);
   assert.equal(ctx.db.prepare('SELECT active_service_id FROM users WHERE id = ?').get(driver.id).active_service_id, null);
-
-  // O dono passa para o motorista.
-  const passou = await call('POST', `/services/${r.body.id}/pegar`, { driver_id: driver.id });
-  assert.equal(passou.body.driver_id, driver.id);
-  assert.equal(passou.body.status, 'aberto');
+  // Escolher pelo Editar também tira da fila.
+  const edit = await call('PATCH', `/services/${r.body.id}`, { driver_id: driver.id });
+  assert.equal(edit.body.status, 'aberto');
 });
 
-test('pelo WhatsApp: fila e pegar', async (t) => {
+test('pelo WhatsApp: só o dono vê a fila', async (t) => {
   const { ctx, call } = await start(t);
-  const [vazia] = await chat(ctx, DRIVER_PHONE, 'fila');
+  const [vazia] = await chat(ctx, OWNER_PHONE, 'fila');
   assert.match(vazia, /Nenhum serviço na fila/);
   const { body: s } = await call('POST', '/services', { pickup: '100 Main St, Oviedo FL', contact_name: 'Ana', fila: true });
-  const [lista] = await chat(ctx, DRIVER_PHONE, 'fila');
+  const [lista] = await chat(ctx, OWNER_PHONE, 'fila');
   assert.match(lista, new RegExp(`#${s.id}\\* Ana`));
-  const [ok] = await chat(ctx, DRIVER_PHONE, `pegar ${s.id}`);
-  assert.match(ok, /é seu agora/);
-  assert.equal(ctx.data.services.get(s.id).status, 'aberto');
-  const [denovo] = await chat(ctx, OWNER_PHONE, `pegar ${s.id}`);
-  assert.match(denovo, /não está mais na fila \(está com Jorge\)/);
+  const [motorista] = await chat(ctx, DRIVER_PHONE, 'fila');
+  assert.match(motorista, /Só o dono/);
+  const [abrir] = await chat(ctx, DRIVER_PHONE, `abrir ${s.id}`);
+  assert.match(abrir, /Não achei/);
+  assert.equal(ctx.data.services.get(s.id).status, 'pendente');
 });
 
 test('cancelar serviço: guarda o motivo, avisa o dono se foi o motorista, e dá para reabrir', async (t) => {
@@ -95,8 +95,8 @@ test('cancelar serviço: guarda o motivo, avisa o dono se foi o motorista, e dá
   // Reabrir.
   assert.equal((await call('PATCH', `/services/${s.id}`, { status: 'aberto' })).body.status, 'aberto');
 
-  // Pendente: só o dono cancela.
+  // Pendente: o motorista nem vê; o dono cancela.
   const { body: p } = await call('POST', '/services', { pickup: '100 Main St, Oviedo FL', fila: true });
-  assert.equal((await call('PATCH', `/services/${p.id}`, { status: 'cancelado' }, drv)).status, 403);
+  assert.equal((await call('PATCH', `/services/${p.id}`, { status: 'cancelado' }, drv)).status, 404);
   assert.equal((await call('PATCH', `/services/${p.id}`, { status: 'cancelado' })).body.status, 'cancelado');
 });
