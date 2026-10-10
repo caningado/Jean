@@ -572,6 +572,37 @@ function routes(api, ctx) {
     if (phone && data.contacts.byPhone(phone)) throw new HttpError(409, 'Já existe um contato com esse telefone.');
     res.status(201).json(data.contacts.create({ name, phone, email: blank(email) ? null : email, notes: blank(notes) ? null : notes }));
   });
+  // Sugestões enquanto digita o nome (ou telefone) do cliente no Novo serviço:
+  // ignora acentos e maiúsculas, e já traz o veículo do último serviço.
+  api.get('/contacts/suggest', (req, res) => {
+    const q = simplify(req.query.q || '');
+    const digits = String(req.query.q || '').replace(/\D/g, '');
+    if (q.length < 2 && digits.length < 3) return res.json([]);
+    const words = q.split(/\s+/).filter((w) => !/^\d+$/.test(w));
+    const all = ctx.db.prepare('SELECT * FROM contacts ORDER BY name COLLATE NOCASE').all();
+    const found = all
+      .filter((c) => {
+        if (digits.length >= 3 && !words.length) return (c.phone || '').includes(digits);
+        const name = simplify(c.name);
+        return words.length > 0 && words.every((w) => name.includes(w));
+      })
+      // Quem começa com o que foi digitado vem primeiro; depois em ordem alfabética.
+      .sort((a, b) => Number(!simplify(a.name).startsWith(q)) - Number(!simplify(b.name).startsWith(q)) || a.name.localeCompare(b.name, 'pt-BR'))
+      .slice(0, 8);
+    const company = ctx.has('empresas') ? ctx.db.prepare('SELECT name FROM companies WHERE id = ?') : null;
+    res.json(
+      found.map((c) => {
+        const last = data.services.list({ contactId: c.id, limit: 20 }).find((s) => canSee(req.user, s)) || null;
+        return {
+          id: c.id,
+          name: c.name,
+          phone: c.phone,
+          company_name: company && c.company_id ? company.get(c.company_id)?.name || null : null,
+          last: last && { id: last.id, vehicle: last.vehicle, plate: last.plate, pickup: last.pickup, dropoff: last.dropoff, created_at: last.created_at },
+        };
+      })
+    );
+  });
   api.get('/contacts/:id', (req, res) => {
     const contact = data.contacts.get(Number(req.params.id));
     if (!contact) throw new HttpError(404, 'Contato não encontrado.');
@@ -630,9 +661,23 @@ function routes(api, ctx) {
     const contactName = optional(body.contact_name, (v) => checkName(v, 'O nome do cliente'));
     const contactPhone = optional(body.contact_phone, checkPhone);
     let contactId = Number(body.contact_id) || null;
-    if (contactId && !data.contacts.get(contactId)) throw new HttpError(400, 'Cliente não encontrado.');
-    if (!contactId && contactPhone) contactId = data.contacts.findOrCreate({ phone: contactPhone, name: contactName }).id;
-    else if (!contactId && contactName) contactId = data.contacts.create({ name: contactName }).id;
+    const chosen = contactId && data.contacts.get(contactId);
+    if (contactId && !chosen) throw new HttpError(400, 'Cliente não encontrado.');
+    // Cliente escolhido da agenda sem telefone: guarda o telefone digitado.
+    if (chosen && !chosen.phone && contactPhone && !data.contacts.byPhone(contactPhone)) data.contacts.update(chosen.id, { phone: contactPhone });
+    // Mesmo nome de um contato que já existe: usa ele em vez de duplicar.
+    const sameName = () => {
+      if (!contactName) return null;
+      const same = ctx.db.prepare('SELECT * FROM contacts').all().filter((c) => simplify(c.name) === simplify(contactName));
+      return same.length === 1 ? same[0] : null;
+    };
+    if (!contactId && contactPhone) {
+      const twin = !data.contacts.byPhone(contactPhone) && sameName();
+      if (twin && !twin.phone) {
+        data.contacts.update(twin.id, { phone: contactPhone });
+        contactId = twin.id;
+      } else contactId = data.contacts.findOrCreate({ phone: contactPhone, name: contactName }).id;
+    } else if (!contactId && contactName) contactId = (sameName() || data.contacts.create({ name: contactName })).id;
     // "fila": entra como pendente, sem motorista, até o dono escolher quem vai. Só o dono.
     if (req.user.role === 'dono' && (body.fila === true || body.fila === '1' || body.driver_id === 'fila' || body.status === 'pendente')) {
       const service = data.services.create({ ...fields, driver_id: null, contact_id: contactId, status: 'pendente' });
