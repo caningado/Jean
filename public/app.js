@@ -10,7 +10,7 @@ const has = (name) => state.modules.some((m) => m.name === name);
 
 const METHODS = { zelle: 'Zelle', dinheiro: 'Dinheiro', cartao: 'Cartão', cheque: 'Cheque', seguradora: 'Seguradora / motor club' };
 const CATEGORIES = { combustivel: 'Combustível', pedagio: 'Pedágio', manutencao: 'Manutenção', alimentacao: 'Alimentação', outros: 'Outros' };
-const STATUS = { aberto: 'Em andamento', concluido: 'Entregue', cancelado: 'Cancelado' };
+const STATUS = { pendente: 'Pendente', aberto: 'Em andamento', concluido: 'Entregue', cancelado: 'Cancelado' };
 const PHOTO_KINDS = { antes: 'Antes', depois: 'Depois', vin: 'VIN', outro: 'Outra' };
 
 // ---------- utilidades ----------
@@ -210,9 +210,12 @@ screens.servicos = async (params) => {
   // O dono pode ver só os serviços de um motorista (inclusive os dele mesmo).
   const drivers = state.me.role === 'dono' ? await api('/users') : [];
   const query = (s, d) => `#/servicos?status=${s}${d ? `&driver=${d}` : ''}`;
+  // Fila: serviços pendentes, que ainda não têm motorista trabalhando.
+  // Só o dono vê a fila: é ele quem escolhe o motorista.
+  const fila = state.me.role === 'dono' ? await api('/services?status=pendente').catch(() => []) : [];
   view.innerHTML = `
     <div class="segmented">
-      <button data-s="aberto">Em andamento</button><button data-s="concluido">Entregues</button><button data-s="">Todos</button>
+      ${state.me.role === 'dono' ? `<button data-s="pendente">Pendentes${fila.length ? ` <span class="badge pendente">${fila.length}</span>` : ''}</button>` : ''}<button data-s="aberto">Andamento</button><button data-s="concluido">Entregues</button><button data-s="">Todos</button>
     </div>
     ${drivers.length > 1 ? `<select id="driver" aria-label="Motorista"><option value="">Todos os motoristas</option>${drivers.map((d) => `<option value="${d.id}" ${String(d.id) === driver ? 'selected' : ''}>${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select>` : ''}
     <div class="card"><ul class="list" id="list"><li class="empty">Carregando…</li></ul></div>`;
@@ -231,6 +234,10 @@ screens.servicos = async (params) => {
     view.innerHTML = `<div class="card"><h2>🚫 Lista suspensa</h2><p>${esc(err.message)}</p><a class="btn block" href="#/caminhoes">📏 Mandar a milhagem</a></div>`;
     return;
   }
+  const empty = status === 'pendente' ? 'Nenhum serviço na fila. 👍' : 'Nenhum serviço aqui.';
+  if (status === 'aberto' && fila.length) {
+    view.querySelector('.segmented').insertAdjacentHTML('afterend', `<a class="card linkcard" href="${query('pendente', driver)}"><span>⏳ <strong>${fila.length}</strong> serviço(s) na fila, sem motorista</span><span>›</span></a>`);
+  }
   view.querySelector('#list').innerHTML = list.length
     ? list
         .map(
@@ -242,7 +249,7 @@ screens.servicos = async (params) => {
           </a></li>`
         )
         .join('')
-    : '<li class="empty">Nenhum serviço aqui.</li>';
+    : `<li class="empty">${empty}</li>`;
 };
 
 screens.novo = async () => {
@@ -269,7 +276,7 @@ screens.novo = async () => {
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal"></div>
       </div>
       ${priced ? `<p class="sub">Tabela: ${money(pricing.baseCents)} + ${money(pricing.perMileCents)} por milha.</p>` : ''}
-      ${drivers.length ? `<label>Motorista</label><select name="driver_id">${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}" ${d.id === state.me.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>` : ''}
+      ${drivers.length ? `<label>Motorista</label><select name="driver_id">${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}" ${d.id === state.me.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}<option value="fila">⏳ Ninguém ainda (Pendente)</option></select>` : ''}
       <label>Observações</label><textarea name="notes" rows="2"></textarea>
       <button class="block">Criar serviço</button>
     </form>`;
@@ -355,9 +362,9 @@ screens.novo = async () => {
     e.preventDefault();
     try {
       const body = formData(form);
-      if (body.driver_id) body.driver_id = Number(body.driver_id);
+      if (body.driver_id && body.driver_id !== 'fila') body.driver_id = Number(body.driver_id);
       const service = await sendCheckingAddress((b) => api('/services', { method: 'POST', body: b }), body);
-      toast(`Serviço #${service.id} criado`);
+      toast(service.status === 'pendente' ? `Serviço #${service.id} na fila` : `Serviço #${service.id} criado`);
       location.hash = `#/servico/${service.id}`;
     } catch (err) {
       toast(err.message);
@@ -368,6 +375,8 @@ screens.novo = async () => {
 screens.servico = async (params, id) => {
   setScreen(`Serviço #${id}`, { tab: 'servicos', back: '#/servicos' });
   const s = await api(`/services/${id}`);
+  const owner = state.me.role === 'dono';
+  const drivers = owner && s.status === 'pendente' ? await api('/users') : [];
   const vehicleInfo = s.vin_info ? [s.vin_info.year, s.vin_info.make, s.vin_info.model, s.vin_info.body].filter(Boolean).join(' · ') : '';
   const b = s.balance;
 
@@ -385,9 +394,12 @@ screens.servico = async (params, id) => {
       <p class="sub">${when(s.created_at)}${s.driver_name ? ' · ' + esc(s.driver_name) : ''}</p>
       ${s.notes ? `<p>${esc(s.notes)}</p>` : ''}
       <div class="actions">
-        ${s.status === 'aberto' ? '<button id="done">✅ Entregue</button>' : '<button class="secondary" id="reopen">Reabrir</button>'}
-        <button class="secondary" id="edit">Editar</button>
+        ${s.status === 'pendente' ? '' : s.status === 'aberto' ? '<button id="done">✅ Entregue</button>' : '<button class="secondary" id="reopen">Reabrir</button>'}
+        ${s.status !== 'pendente' || state.me.role === 'dono' ? '<button class="secondary" id="edit">Editar</button>' : ''}
       </div>
+      ${s.status === 'pendente' ? `<p class="sub">⏳ Na fila: ainda sem motorista.</p>${owner ? `<label>Escolher o motorista</label><div class="actions"><select id="assign" aria-label="Escolher o motorista"><option value="">Quem vai fazer?</option>${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}">${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select></div>` : ''}` : ''}
+      ${s.status === 'aberto' && owner ? '<div class="actions"><button class="secondary" id="queue">⏳ Voltar para a fila</button></div>' : ''}
+      ${(s.status === 'aberto' && (owner || s.driver_id === state.me.id)) || (s.status === 'pendente' && owner) ? '<div class="actions"><button class="danger" id="cancel">✖ Cancelar serviço</button></div>' : ''}
     </div>
 
     ${has('vin') ? `
@@ -441,8 +453,39 @@ screens.servico = async (params, id) => {
     toast('Serviço entregue');
     reload();
   });
+  const assign = view.querySelector('#assign');
+  if (assign) {
+    assign.onchange = async () => {
+      if (!assign.value) return;
+      try {
+        const done = await api(`/services/${id}/passar`, { method: 'POST', body: { driver_id: Number(assign.value) } });
+        toast(`Passado para ${done.driver_name}`);
+        reload();
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+  }
+  on('#queue', async () => {
+    if (!confirm('Voltar este serviço para a fila, sem motorista?')) return;
+    await api(`/services/${id}`, { method: 'PATCH', body: { status: 'pendente' } });
+    toast('Serviço voltou para a fila');
+    reload();
+  });
+  on('#cancel', async () => {
+    const motivo = prompt('Cancelar o serviço? Escreva o motivo (opcional):');
+    if (motivo === null) return;
+    try {
+      await api(`/services/${id}`, { method: 'PATCH', body: { status: 'cancelado', motivo } });
+      toast('Serviço cancelado');
+      reload();
+    } catch (err) {
+      toast(err.message);
+    }
+  });
   on('#reopen', async () => {
-    await api(`/services/${id}`, { method: 'PATCH', body: { status: 'aberto' } });
+    // Cancelado que não tinha motorista volta para a fila.
+    await api(`/services/${id}`, { method: 'PATCH', body: { status: s.driver_id ? 'aberto' : 'pendente' } });
     reload();
   });
   on('#edit', () => (location.hash = `#/editar/${id}`));
@@ -551,7 +594,7 @@ screens.editar = async (params, id) => {
         <div><label>Milhas</label><input name="miles" type="number" step="0.1" value="${s.miles ?? ''}"></div>
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal" value="${s.price_cents != null ? (s.price_cents / 100).toFixed(2) : ''}"></div>
       </div>
-      ${drivers.length ? `<label>Motorista</label><select name="driver_id">${drivers.map((d) => `<option value="${d.id}" ${d.id === s.driver_id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>` : ''}
+      ${drivers.length ? `<label>Motorista</label><select name="driver_id">${s.driver_id ? '' : '<option value="" selected>Ninguém ainda (fila)</option>'}${drivers.map((d) => `<option value="${d.id}" ${d.id === s.driver_id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>` : ''}
       <label>Situação</label><select name="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === s.status ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <label>Observações</label><textarea name="notes" rows="3">${esc(s.notes)}</textarea>
       <button class="block">Salvar</button>

@@ -14,7 +14,9 @@ export function migrate(db, moduleName, migrations = []) {
     const id = `${moduleName}:${index + 1}`;
     if (db.prepare('SELECT 1 FROM _migrations WHERE id = ?').get(id)) return;
     transaction(db, () => {
-      db.exec(sql);
+      // Migração pode ser SQL ou uma função (para mudanças que o SQL sozinho não faz).
+      if (typeof sql === 'function') sql(db);
+      else db.exec(sql);
       db.prepare('INSERT INTO _migrations (id, applied_at) VALUES (?, ?)').run(id, new Date().toISOString());
     });
   });

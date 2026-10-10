@@ -106,7 +106,7 @@ export function createCoreData(db) {
       const info = db
         .prepare(
           `INSERT INTO services (driver_id, contact_id, pickup, dropoff, vehicle, plate, miles, price_cents, notes, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'aberto', ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           fields.driver_id ?? null,
@@ -118,6 +118,7 @@ export function createCoreData(db) {
           fields.miles ?? null,
           fields.price_cents ?? null,
           fields.notes ?? null,
+          fields.status || 'aberto',
           nowIso()
         );
       return services.get(Number(info.lastInsertRowid));
@@ -156,7 +157,7 @@ export function createCoreData(db) {
       if (s.vin) lines.push(`VIN: ${s.vin}`);
       if (s.miles != null) lines.push(`Milhas: ${s.miles}`);
       if (s.price_cents != null) lines.push(`Valor: ${formatMoney(s.price_cents)}`);
-      lines.push(`Situação: ${s.status === 'aberto' ? 'em andamento' : s.status === 'concluido' ? 'entregue' : s.status}`);
+      lines.push(`Situação: ${s.status === 'aberto' ? 'em andamento' : s.status === 'concluido' ? 'entregue' : s.status === 'pendente' ? 'pendente (na fila, sem motorista)' : s.status}`);
       return lines.join('\n');
     },
   };

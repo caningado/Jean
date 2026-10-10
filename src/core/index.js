@@ -54,6 +54,25 @@ const migrations = [
    );`,
   // Valores soltos do sistema (ex.: dia do último aviso da manhã).
   `CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);`,
+  // Status "pendente": serviço na fila, sem motorista trabalhando nele ainda.
+  // O SQLite não muda um CHECK com ALTER TABLE; só acrescentar um valor permitido
+  // não mexe nos dados gravados, então dá para trocar o texto da tabela direto.
+  (db) => {
+    const row = db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'services'").get();
+    if (row.sql.includes("'pendente'")) return;
+    const OLD = "CHECK (status IN ('aberto', 'concluido', 'cancelado'))";
+    if (!row.sql.includes(OLD)) throw new Error('Tabela de serviços diferente do esperado.');
+    const version = db.prepare('PRAGMA schema_version').get().schema_version;
+    db.exec('PRAGMA writable_schema = ON');
+    try {
+      db.prepare("UPDATE sqlite_schema SET sql = ? WHERE type = 'table' AND name = 'services'").run(
+        row.sql.replace(OLD, "CHECK (status IN ('pendente', 'aberto', 'concluido', 'cancelado'))")
+      );
+      db.exec(`PRAGMA schema_version = ${version + 1}`);
+    } finally {
+      db.exec('PRAGMA writable_schema = OFF');
+    }
+  },
 ];
 
 function publicUser(u) {
@@ -65,9 +84,30 @@ function requireOwner(req) {
   if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode fazer isso.');
 }
 
-// O motorista só vê os próprios serviços; o dono vê todos.
+// O motorista só vê os próprios serviços; o dono vê todos (inclusive a fila).
 function canSee(user, service) {
   return service && (user.role === 'dono' || service.driver_id === user.id);
+}
+
+// Tira um serviço da fila: o dono passa para um motorista e fica "em andamento".
+function takeService(ctx, service, driverId) {
+  const updated = ctx.data.services.update(service.id, { status: 'aberto', driver_id: driverId });
+  // Vira o serviço "em mãos" do motorista, se ele não está com outro.
+  const current = ctx.data.services.active({ id: driverId });
+  if (!current) ctx.data.services.setActive(driverId, service.id);
+  return updated;
+}
+
+// Avisa o motorista que o dono passou um serviço da fila para ele (se o WhatsApp estiver ligado).
+async function notifyAssigned(ctx, service, byUser) {
+  if (!ctx.send || service.driver_id === byUser.id) return;
+  const driver = ctx.data.users.get(service.driver_id);
+  if (!driver) return;
+  try {
+    await ctx.send(driver.phone, [`🚚 ${byUser.name} passou um serviço para você.`, ctx.data.services.describe(service)].join('\n\n'));
+  } catch (err) {
+    ctx.log(`Não consegui avisar ${driver.name} do serviço #${service.id}`, err);
+  }
 }
 
 function periodStart(ctx, period) {
@@ -385,6 +425,17 @@ const commands = [
     },
   },
   {
+    names: ['fila'],
+    help: '*fila* – serviços pendentes, sem motorista (só o dono)',
+    run({ ctx, user }) {
+      if (user.role !== 'dono') return 'Só o dono vê a fila e escolhe o motorista de cada serviço.';
+      const list = ctx.data.services.list({ status: 'pendente', limit: 20 });
+      if (!list.length) return 'Nenhum serviço na fila. 👍';
+      const lines = list.map((s) => `• *#${s.id}* ${s.contact_name || 'Sem cliente'} – ${String(s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa')}${s.vehicle ? ` (${s.vehicle})` : ''}`);
+      return [`⏳ *Fila* (${list.length})`, ...lines, '', 'Para escolher o motorista, abra o serviço no painel.'].join('\n');
+    },
+  },
+  {
     names: ['abrir', 'voltar'],
     blockable: true, // fica suspenso se o motorista está devendo a milhagem
     help: '*abrir 12* – voltar a mexer no serviço #12',
@@ -392,7 +443,8 @@ const commands = [
       const id = Number(String(args[0] || '').replace('#', ''));
       const service = id && ctx.data.services.get(id);
       if (!canSee(user, service)) return 'Não achei esse serviço.';
-      if (service.status !== 'aberto') ctx.data.services.update(service.id, { status: 'aberto' });
+      if (service.status === 'pendente') takeService(ctx, service, user.id);
+      else if (service.status !== 'aberto') ctx.data.services.update(service.id, { status: 'aberto' });
       ctx.data.services.setActive(user.id, service.id);
       return `Ok, agora estou no serviço #${service.id}.`;
     },
@@ -454,7 +506,7 @@ function serviceFields(body, { partial = false } = {}) {
   if (has('price')) out.price_cents = optional(body.price, (v) => checkMoney(parseMoney(v), { what: 'O valor do serviço' }));
   if (has('notes')) out.notes = blank(body.notes) ? null : String(body.notes).trim().slice(0, 1000);
   if (partial && body.status !== undefined) {
-    if (!['aberto', 'concluido', 'cancelado'].includes(body.status)) throw new HttpError(400, 'Situação inválida.');
+    if (!['pendente', 'aberto', 'concluido', 'cancelado'].includes(body.status)) throw new HttpError(400, 'Situação inválida.');
     out.status = body.status;
   }
   if (body.driver_id !== undefined) out.driver_id = Number(body.driver_id) || null;
@@ -582,8 +634,9 @@ function routes(api, ctx) {
   api.get('/services', (req, res) => {
     const blocked = servicesBlocked(ctx, req.user);
     if (blocked) throw new HttpError(423, blocked.replace(/\*/g, ''));
+    const status = req.query.status || null;
     const driverId = req.user.role === 'dono' ? Number(req.query.driver) || null : req.user.id;
-    res.json(data.services.list({ status: req.query.status || null, driverId, limit: Number(req.query.limit) || 100 }));
+    res.json(data.services.list({ status, driverId, limit: Number(req.query.limit) || 100 }));
   });
   // Sugestões de endereço enquanto digita no painel.
   api.get('/places', async (req, res) => {
@@ -625,8 +678,13 @@ function routes(api, ctx) {
         contactId = twin.id;
       } else contactId = data.contacts.findOrCreate({ phone: contactPhone, name: contactName }).id;
     } else if (!contactId && contactName) contactId = (sameName() || data.contacts.create({ name: contactName })).id;
+    // "fila": entra como pendente, sem motorista, até o dono escolher quem vai. Só o dono.
+    if (req.user.role === 'dono' && (body.fila === true || body.fila === '1' || body.driver_id === 'fila' || body.status === 'pendente')) {
+      const service = data.services.create({ ...fields, driver_id: null, contact_id: contactId, status: 'pendente' });
+      return res.status(201).json(service);
+    }
     const driverId = req.user.role === 'dono' ? fields.driver_id || req.user.id : req.user.id;
-    const service = data.services.create({ ...fields, contact_id: contactId, driver_id: driverId });
+    const service = data.services.create({ ...fields, status: 'aberto', contact_id: contactId, driver_id: driverId });
     data.services.setActive(driverId, service.id);
     res.status(201).json(service);
   });
@@ -646,10 +704,42 @@ function routes(api, ctx) {
     await checkPlaces(ctx, body, req.body || {}, service);
     if (body.pickup === null) delete body.pickup; // retirada não pode ficar vazia
     if (req.user.role !== 'dono') delete body.driver_id;
+    // Fila: só o dono põe e tira serviço dela (é ele quem escolhe o motorista).
+    if (req.user.role !== 'dono' && (body.status === 'pendente' || service.status === 'pendente')) throw new HttpError(403, 'Só o dono escolhe o motorista do serviço.');
+    if (service.status === 'pendente' && body.status === 'aberto' && !body.driver_id) body.driver_id = req.user.id;
+    // Volta para a fila: sem motorista. Só o dono ou o motorista do serviço.
+    if (body.status === 'pendente') body.driver_id = null;
+    // Pendente com motorista escolhido pelo dono: passa a estar em andamento.
+    else if (service.status === 'pendente' && body.driver_id && !body.status) body.status = 'aberto';
+    // Cancelar: guarda o motivo nas observações e, se foi o motorista, avisa o dono.
+    const cancelling = body.status === 'cancelado' && service.status !== 'cancelado';
+    const motivo = cancelling ? String(req.body?.motivo || '').trim().slice(0, 300) : '';
+    if (motivo) body.notes = [body.notes ?? service.notes, `Cancelado: ${motivo}`].filter(Boolean).join('\n');
     const updated = data.services.update(service.id, body);
+    if (cancelling && req.user.role !== 'dono' && ctx.send) {
+      const text = `❌ ${req.user.name} cancelou o serviço #${service.id}${service.contact_name ? ` (${service.contact_name})` : ''}.${motivo ? `\nMotivo: ${motivo}` : ''}`;
+      for (const o of db.prepare("SELECT phone FROM users WHERE active = 1 AND role = 'dono'").all()) ctx.send(o.phone, text).catch(() => {});
+    }
+    if (service.status === 'pendente' && updated.status === 'aberto' && updated.driver_id) {
+      if (!data.services.active({ id: updated.driver_id })) data.services.setActive(updated.driver_id, service.id);
+      notifyAssigned(ctx, updated, req.user);
+    }
     if (body.status && body.status !== 'aberto') {
       db.prepare('UPDATE users SET active_service_id = NULL WHERE active_service_id = ?').run(service.id);
     }
+    res.json(updated);
+  });
+
+  // Passar um serviço da fila para um motorista. Só o dono escolhe.
+  api.post('/services/:id/passar', (req, res) => {
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono escolhe o motorista do serviço.');
+    const service = data.services.get(Number(req.params.id));
+    if (!service) throw new HttpError(404, 'Serviço não encontrado.');
+    if (service.status !== 'pendente') throw new HttpError(409, service.driver_name ? `Esse serviço já está com ${service.driver_name}.` : 'Esse serviço não está mais na fila.');
+    const driver = data.users.get(Number(req.body?.driver_id) || req.user.id);
+    if (!driver || !driver.active) throw new HttpError(400, 'Motorista não encontrado.');
+    const updated = takeService(ctx, service, driver.id);
+    notifyAssigned(ctx, updated, req.user);
     res.json(updated);
   });
 
@@ -701,7 +791,7 @@ function publicRoutes(app, ctx) {
 }
 
 // Aba "Serviços" da planilha. Os outros módulos acrescentam colunas (exportColumns).
-const STATUS_LABEL = { aberto: 'Em andamento', concluido: 'Concluído', cancelado: 'Cancelado' };
+const STATUS_LABEL = { pendente: 'Pendente', aberto: 'Em andamento', concluido: 'Concluído', cancelado: 'Cancelado' };
 
 function exportSheets({ ctx, from, to, userId }) {
   const where = ['s.created_at >= ?', 's.created_at < ?'];
