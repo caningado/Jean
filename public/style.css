@@ -87,6 +87,7 @@ main { max-width: 720px; margin: 0 auto; padding: 16px; }
 .big { font-size: 26px; font-weight: 700; }
 
 .badge { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--chip); color: var(--muted); }
+.badge.pendente { color: #fff; background: #2563eb; }
 .badge.aberto { color: var(--warn); }
 .badge.concluido { color: var(--ok); }
 .badge.cancelado { color: var(--bad); }
@@ -114,6 +115,8 @@ button:disabled { opacity: .6; }
 
 .segmented { display: flex; background: var(--chip); border-radius: 12px; padding: 4px; margin-bottom: 12px; }
 .segmented button { flex: 1; background: transparent; color: var(--muted); padding: 8px; }
+.segmented button { min-width: 0; flex-basis: 0; padding: 8px 2px; font-size: 13px; line-height: 1.2; flex-wrap: wrap; gap: 2px 4px; }
+.segmented button .badge { font-size: 11px; padding: 0 6px; }
 .segmented button.active { background: var(--card); color: var(--text); }
 
 .photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
