@@ -846,6 +846,7 @@ screens.mais = async () => {
       ${has('comissao') ? `<li><a href="${state.me.role === 'dono' ? '#/comissao' : `#/motorista/${state.me.id}`}"><span>💰 ${state.me.role === 'dono' ? 'Pagamento dos motoristas' : 'Meus ganhos'}</span><span>›</span></a></li>` : ''}
       ${state.me.role === 'dono' ? '<li><a href="#/equipe"><span>👥 Equipe</span><span>›</span></a></li>' : ''}
       ${has('invoice') && state.me.role === 'dono' ? '<li><a href="#/empresa"><span>🏢 Dados da empresa (invoice)</span><span>›</span></a></li>' : ''}
+      ${has('backup') && state.me.role === 'dono' ? '<li><a href="#/backup"><span>💾 Backup</span><span>›</span></a></li>' : ''}
       <li><a href="#/robo"><span>💬 Testar o robô do WhatsApp</span><span>›</span></a></li>
       <li><a href="#/sair"><span>🚪 Sair</span><span>›</span></a></li>
     </ul></div>
@@ -1320,6 +1321,25 @@ screens.cliente = async (params, id) => {
     await api(`/companies/${id}`, { method: 'DELETE' });
     location.hash = '#/empresas';
   };
+};
+
+// Backup: baixar o banco e as fotos num arquivo só, para guardar no Google Drive.
+screens.backup = async () => {
+  setScreen('Backup', { tab: 'mais', back: '#/mais' });
+  const info = await api('/backup');
+  const mb = Math.max(1, Math.round(info.bytes / 1048576));
+  view.innerHTML = `<div class="card"><h2>💾 Backup</h2>
+      <p>Um arquivo com tudo: serviços, clientes, pagamentos, despesas, caminhões e as ${info.files} foto(s)/arquivo(s). Cerca de ${mb} MB.</p>
+      <p class="sub">Dentro dele vem a <strong>planilha-completa.xlsx</strong>, que abre no Excel ou no Google Planilhas.</p>
+      <p class="sub">${info.last_download ? `Último backup baixado: ${when(info.last_download)}.` : 'Nenhum backup baixado ainda.'}</p>
+      <a class="btn block" href="/api/backup.zip">⬇️ Baixar backup agora</a>
+    </div>
+    <div class="card"><h2>Como guardar no Google Drive</h2>
+      <ol class="steps"><li>Toque em <strong>Baixar backup agora</strong>.</li>
+      <li>No celular, abra o arquivo baixado e escolha <strong>Compartilhar › Drive</strong> (ou "Salvar no Drive").</li>
+      <li>Pronto. Guarde os últimos 4 ou 5 e apague os mais antigos.</li></ol>
+      <p class="sub">Todo domingo chega no seu WhatsApp um link para fazer isso. O servidor também guarda uma cópia diária do disco (Render).</p>
+    </div>`;
 };
 
 // Pagamento dos motoristas: % do faturamento do mês, pago por semana e acertado no fim do mês.
