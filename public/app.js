@@ -31,10 +31,10 @@ function mapLink(location) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
 }
 // Mostra o local sem o link comprido, com um botão para abrir no mapa.
-function placeHtml(icon, location) {
+function placeHtml(icon, location, nickname) {
   if (!location) return '';
   const label = location.replace(/https?:\/\/[^\s]+/gi, '').trim() || 'Local pelo link do mapa';
-  return `<div class="place">${icon} ${esc(label)} <a href="${esc(mapLink(location))}" target="_blank" rel="noopener">Abrir no mapa</a></div>`;
+  return `<div class="place">${icon} ${nickname ? `<strong>${esc(nickname)}</strong> · ` : ''}${esc(label)} <a href="${esc(mapLink(location))}" target="_blank" rel="noopener">Abrir no mapa</a></div>`;
 }
 
 function toast(message) {
@@ -92,12 +92,16 @@ function placeSuggestions(input) {
   input.addEventListener('input', () => {
     clearTimeout(timer);
     const q = input.value.trim();
-    if (q.length < 6 || /https?:\/\//i.test(q)) return;
+    if (q.length < 2 || /https?:\/\//i.test(q)) return;
     timer = setTimeout(async () => {
-      const { matches } = await api(`/places?q=${encodeURIComponent(q)}`).catch(() => ({ matches: [] }));
+      // Endereços com apelido (ex.: "ribas") aparecem primeiro, depois os do mapa.
+      const { matches = [], saved = [] } = await api(`/places?q=${encodeURIComponent(q)}`).catch(() => ({}));
       if (input.value.trim() !== q) return;
-      list.innerHTML = matches.map((m) => `<option value="${esc(m)}">`).join('');
-    }, 600);
+      list.innerHTML = [
+        ...saved.map((p) => `<option value="${esc(p.address)}" label="⭐ ${esc(p.nickname)}">`),
+        ...matches.filter((m) => !saved.some((p) => p.address === m)).map((m) => `<option value="${esc(m)}">`),
+      ].join('');
+    }, q.length < 6 ? 250 : 600);
   });
 }
 
@@ -387,7 +391,7 @@ screens.servico = async (params, id) => {
         <span class="badge ${s.status}">${STATUS[s.status]}</span>
       </div>
       ${s.contact_phone ? `<p><a href="tel:+${s.contact_phone}">📞 ${phoneFmt(s.contact_phone)}</a> · <a href="https://wa.me/${s.contact_phone}" target="_blank" rel="noopener">WhatsApp</a></p>` : ''}
-      ${placeHtml('📍', s.pickup)}${placeHtml('🏁', s.dropoff)}
+      ${placeHtml('📍', s.pickup, s.pickup_name)}${placeHtml('🏁', s.dropoff, s.dropoff_name)}
       <p>🚗 ${esc([s.vehicle, s.plate].filter(Boolean).join(' · ') || 'Veículo não informado')}</p>
       ${s.miles != null ? `<p class="sub">${s.miles} milhas</p>` : ''}
       <p class="big">${s.price_cents != null ? money(s.price_cents) : 'Sem valor'}</p>
@@ -889,11 +893,58 @@ screens.mais = async () => {
       ${has('comissao') ? `<li><a href="${state.me.role === 'dono' ? '#/comissao' : `#/motorista/${state.me.id}`}"><span>💰 ${state.me.role === 'dono' ? 'Pagamento dos motoristas' : 'Meus ganhos'}</span><span>›</span></a></li>` : ''}
       ${state.me.role === 'dono' ? '<li><a href="#/equipe"><span>👥 Equipe</span><span>›</span></a></li>' : ''}
       ${has('invoice') && state.me.role === 'dono' ? '<li><a href="#/empresa"><span>🏢 Dados da empresa (invoice)</span><span>›</span></a></li>' : ''}
+      <li><a href="#/enderecos"><span>📍 Endereços com apelido</span><span>›</span></a></li>
       ${has('backup') && state.me.role === 'dono' ? '<li><a href="#/backup"><span>💾 Backup</span><span>›</span></a></li>' : ''}
       <li><a href="#/robo"><span>💬 Testar o robô do WhatsApp</span><span>›</span></a></li>
       <li><a href="#/sair"><span>🚪 Sair</span><span>›</span></a></li>
     </ul></div>
     <p class="sub">Dica: no navegador do celular, use "Adicionar à tela inicial" para abrir como aplicativo.</p>`;
+};
+
+// Endereços com apelido: oficinas, lojas... Ao digitar o apelido na retirada ou no destino, vira o endereço.
+screens.enderecos = async () => {
+  setScreen('Endereços com apelido', { tab: 'mais', back: '#/mais' });
+  const owner = state.me.role === 'dono';
+  const list = await api('/saved-places');
+  view.innerHTML = `
+    ${owner ? `<div class="card">
+      <h2>Novo endereço</h2>
+      <form id="f">
+        <label>Apelido</label><input name="nickname" placeholder="Ex.: Ribas" required maxlength="60">
+        <label>Endereço</label><input name="address" placeholder="Ex.: 643 Barry St, Orlando FL" required>
+        <button class="block">Salvar</button>
+      </form>
+    </div>` : ''}
+    <div class="card">
+      <p class="sub">Na retirada ou no destino de um serviço, digite só o apelido (ex.: <strong>${esc(list[0]?.nickname || 'ribas')}</strong>) que o sistema troca pelo endereço. Vale no painel e no WhatsApp.</p>
+      <ul class="list">${
+        list.length
+          ? list.map((p) => `<li><div class="row"><div><strong>⭐ ${esc(p.nickname)}</strong><div class="sub">${esc(p.address)}</div></div>${owner ? `<button class="danger" data-del="${p.id}" aria-label="Apagar">✕</button>` : ''}</div></li>`).join('')
+          : '<li class="empty">Nenhum endereço ainda.</li>'
+      }</ul>
+    </div>`;
+  const form = view.querySelector('#f');
+  if (form) {
+    placeSuggestions(form.address);
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        const saved = await sendCheckingAddress((b) => api('/saved-places', { method: 'POST', body: b }), formData(form));
+        toast(`"${saved.nickname}" salvo`);
+        screens.enderecos();
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+  }
+  view.querySelectorAll('[data-del]').forEach((b) => {
+    b.onclick = async () => {
+      const p = list.find((x) => String(x.id) === b.dataset.del);
+      if (!confirm(`Apagar o apelido "${p.nickname}"?`)) return;
+      await api(`/saved-places/${p.id}`, { method: 'DELETE' });
+      screens.enderecos();
+    };
+  });
 };
 
 // Caminhões: milhas e manutenção (óleo, pneus, freios, inspeção...).
