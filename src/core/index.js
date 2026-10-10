@@ -696,7 +696,15 @@ function routes(api, ctx) {
     if (body.status === 'pendente') body.driver_id = null;
     // Pendente com motorista escolhido pelo dono: passa a estar em andamento.
     else if (service.status === 'pendente' && body.driver_id && !body.status) body.status = 'aberto';
+    // Cancelar: guarda o motivo nas observações e, se foi o motorista, avisa o dono.
+    const cancelling = body.status === 'cancelado' && service.status !== 'cancelado';
+    const motivo = cancelling ? String(req.body?.motivo || '').trim().slice(0, 300) : '';
+    if (motivo) body.notes = [body.notes ?? service.notes, `Cancelado: ${motivo}`].filter(Boolean).join('\n');
     const updated = data.services.update(service.id, body);
+    if (cancelling && req.user.role !== 'dono' && ctx.send) {
+      const text = `❌ ${req.user.name} cancelou o serviço #${service.id}${service.contact_name ? ` (${service.contact_name})` : ''}.${motivo ? `\nMotivo: ${motivo}` : ''}`;
+      for (const o of db.prepare("SELECT phone FROM users WHERE active = 1 AND role = 'dono'").all()) ctx.send(o.phone, text).catch(() => {});
+    }
     if (service.status === 'pendente' && updated.status === 'aberto' && updated.driver_id && !data.services.active({ id: updated.driver_id })) {
       data.services.setActive(updated.driver_id, service.id);
     }

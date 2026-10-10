@@ -353,6 +353,7 @@ screens.servico = async (params, id) => {
       </div>
       ${s.status === 'pendente' ? `<p class="sub">⏳ Na fila: ainda nenhum motorista está neste serviço.</p>${owner ? `<div class="actions"><select id="assign" aria-label="Passar para"><option value="">Passar para…</option>${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}">${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select></div>` : ''}` : ''}
       ${s.status === 'aberto' && (owner || s.driver_id === state.me.id) ? '<div class="actions"><button class="secondary" id="queue">⏳ Voltar para a fila</button></div>' : ''}
+      ${(s.status === 'aberto' && (owner || s.driver_id === state.me.id)) || (s.status === 'pendente' && owner) ? '<div class="actions"><button class="danger" id="cancel">✖ Cancelar serviço</button></div>' : ''}
     </div>
 
     ${has('vin') ? `
@@ -434,8 +435,20 @@ screens.servico = async (params, id) => {
     toast('Serviço voltou para a fila');
     reload();
   });
+  on('#cancel', async () => {
+    const motivo = prompt('Cancelar o serviço? Escreva o motivo (opcional):');
+    if (motivo === null) return;
+    try {
+      await api(`/services/${id}`, { method: 'PATCH', body: { status: 'cancelado', motivo } });
+      toast('Serviço cancelado');
+      reload();
+    } catch (err) {
+      toast(err.message);
+    }
+  });
   on('#reopen', async () => {
-    await api(`/services/${id}`, { method: 'PATCH', body: { status: 'aberto' } });
+    // Cancelado que não tinha motorista volta para a fila.
+    await api(`/services/${id}`, { method: 'PATCH', body: { status: s.driver_id ? 'aberto' : 'pendente' } });
     reload();
   });
   on('#edit', () => (location.hash = `#/editar/${id}`));

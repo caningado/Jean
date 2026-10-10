@@ -78,3 +78,25 @@ test('pelo WhatsApp: fila e pegar', async (t) => {
   const [denovo] = await chat(ctx, OWNER_PHONE, `pegar ${s.id}`);
   assert.match(denovo, /não está mais na fila \(está com Jorge\)/);
 });
+
+test('cancelar serviço: guarda o motivo, avisa o dono se foi o motorista, e dá para reabrir', async (t) => {
+  const { ctx, call, drv, driver } = await start(t);
+  const sent = [];
+  ctx.send = async (phone, text) => sent.push({ phone, text });
+  const { body: s } = await call('POST', '/services', { pickup: '100 Main St, Oviedo FL', contact_name: 'Ana', driver_id: driver.id });
+  const r = await call('PATCH', `/services/${s.id}`, { status: 'cancelado', motivo: 'Cliente desistiu' }, drv);
+  assert.equal(r.body.status, 'cancelado');
+  assert.match(r.body.notes, /Cancelado: Cliente desistiu/);
+  assert.equal(ctx.db.prepare('SELECT active_service_id FROM users WHERE id = ?').get(driver.id).active_service_id, null);
+  await new Promise((r) => setImmediate(r));
+  assert.match(sent.find((m) => m.phone === OWNER_PHONE).text, /Jorge cancelou o serviço #\d+ \(Ana\)\.\nMotivo: Cliente desistiu/);
+  // Cancelado não entra no resumo.
+  assert.equal((await call('GET', '/summary')).body.services, 0);
+  // Reabrir.
+  assert.equal((await call('PATCH', `/services/${s.id}`, { status: 'aberto' })).body.status, 'aberto');
+
+  // Pendente: só o dono cancela.
+  const { body: p } = await call('POST', '/services', { pickup: '100 Main St, Oviedo FL', fila: true });
+  assert.equal((await call('PATCH', `/services/${p.id}`, { status: 'cancelado' }, drv)).status, 403);
+  assert.equal((await call('PATCH', `/services/${p.id}`, { status: 'cancelado' })).body.status, 'cancelado');
+});
