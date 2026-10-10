@@ -73,6 +73,14 @@ const migrations = [
       db.exec('PRAGMA writable_schema = OFF');
     }
   },
+  // Endereços com apelido (oficinas, lojas...): "ribas" vira o endereço completo.
+  `CREATE TABLE saved_places (
+     id INTEGER PRIMARY KEY,
+     nickname TEXT NOT NULL,
+     key TEXT NOT NULL UNIQUE,
+     address TEXT NOT NULL,
+     created_at TEXT NOT NULL
+   );`,
 ];
 
 function publicUser(u) {
@@ -153,7 +161,16 @@ function rejectCommand(ctx, text) {
 
 // Procura o endereço digitado no mapa. Link de mapa e localização 📍 já são exatos.
 // Se o serviço de mapa estiver fora do ar, aceita como foi digitado.
+// Apelido de endereço salvo ("ribas" → "643 Barry St..."). Sem acento e sem diferença de maiúscula.
+export function savedPlace(ctx, text) {
+  const key = simplify(text).replace(/\s+/g, ' ').trim();
+  if (!key) return null;
+  return ctx.db.prepare('SELECT * FROM saved_places WHERE key = ? OR address = ?').get(key, String(text).trim()) || null;
+}
+
 async function resolvePlace(ctx, location) {
+  const saved = savedPlace(ctx, location);
+  if (saved) return { value: saved.address, notice: saved.address === String(location).trim() ? undefined : `📍 ${saved.nickname}: *${saved.address}*` };
   if (!ctx.geo || isMapReference(location)) return { value: location };
   const found = await ctx.geo.lookup(location);
   if (found.status === 'erro') return { value: location };
@@ -425,6 +442,15 @@ const commands = [
     },
   },
   {
+    names: ['enderecos', 'endereços', 'apelidos'],
+    help: '*endereços* – endereços com apelido (oficinas, lojas...)',
+    run({ ctx }) {
+      const list = ctx.db.prepare('SELECT * FROM saved_places ORDER BY nickname COLLATE NOCASE').all();
+      if (!list.length) return 'Nenhum endereço com apelido ainda. O dono cadastra no painel, em Mais › 📍 Endereços com apelido.';
+      return ['📍 *Endereços com apelido*', ...list.map((p) => `• *${p.nickname}* – ${p.address}`), '', 'Na retirada ou no destino, é só mandar o apelido.'].join('\n');
+    },
+  },
+  {
     names: ['fila'],
     help: '*fila* – serviços pendentes, sem motorista (só o dono)',
     run({ ctx, user }) {
@@ -475,6 +501,12 @@ const checkPin = (pin) => {
 async function checkPlaces(ctx, fields, body, current = {}) {
   for (const [key, what] of [['pickup', 'a retirada'], ['dropoff', 'o destino']]) {
     const value = fields[key];
+    // Apelido salvo ("ribas"): troca pelo endereço completo.
+    const saved = value && savedPlace(ctx, value);
+    if (saved) {
+      fields[key] = saved.address;
+      continue;
+    }
     if (!value || value === current[key] || body.address_ok || ctx.suggestedPlaces?.has(value)) continue;
     const place = await resolvePlace(ctx, value);
     if (place.value) {
@@ -641,14 +673,41 @@ function routes(api, ctx) {
   // Sugestões de endereço enquanto digita no painel.
   api.get('/places', async (req, res) => {
     const q = String(req.query.q || '').trim();
-    if (!ctx.geo || q.length < 4 || q.length > 200 || isMapReference(q)) return res.json({ matches: [] });
+    // Endereços com apelido vêm primeiro (a partir de 2 letras).
+    const key = simplify(q);
+    const saved = key.length >= 2 ? db.prepare('SELECT nickname, address FROM saved_places ORDER BY nickname COLLATE NOCASE').all().filter((p) => simplify(p.nickname).includes(key) || simplify(p.address).includes(key)).slice(0, 5) : [];
+    if (!ctx.geo || q.length < 4 || q.length > 200 || isMapReference(q)) return res.json({ matches: [], saved });
     const found = await ctx.geo.lookup(q);
     const labels = found.matches.map((m) => m.label);
     // Endereço escolhido da lista já veio do mapa: não precisa conferir de novo ao salvar.
     ctx.suggestedPlaces ??= new Set();
     for (const label of labels) ctx.suggestedPlaces.add(label);
     if (ctx.suggestedPlaces.size > 1000) ctx.suggestedPlaces.clear();
-    res.json({ matches: labels });
+    res.json({ matches: labels, saved });
+  });
+
+  // Endereços com apelido. Todos veem; só o dono cadastra e apaga.
+  api.get('/saved-places', (req, res) => {
+    res.json(db.prepare('SELECT * FROM saved_places ORDER BY nickname COLLATE NOCASE').all());
+  });
+  api.post('/saved-places', async (req, res) => {
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono cadastra endereços.');
+    const nickname = checkName(req.body?.nickname, 'O apelido');
+    const key = simplify(nickname).replace(/\s+/g, ' ').trim();
+    let address = checkLocation(req.body?.address, 'O endereço');
+    if (db.prepare('SELECT 1 FROM saved_places WHERE key = ?').get(key)) throw new HttpError(409, `Já existe um endereço com o apelido "${nickname}".`);
+    // Se o mapa achar um endereço só, usa o nome completo dele.
+    if (!req.body?.address_ok && !savedPlace(ctx, address)) {
+      const place = await resolvePlace(ctx, address);
+      if (place.value) address = place.value;
+    }
+    const info = db.prepare('INSERT INTO saved_places (nickname, key, address, created_at) VALUES (?, ?, ?, ?)').run(nickname, key, address, new Date().toISOString());
+    res.status(201).json(db.prepare('SELECT * FROM saved_places WHERE id = ?').get(Number(info.lastInsertRowid)));
+  });
+  api.delete('/saved-places/:id', (req, res) => {
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono apaga endereços.');
+    db.prepare('DELETE FROM saved_places WHERE id = ?').run(Number(req.params.id));
+    res.json({ ok: true });
   });
 
   api.post('/services', async (req, res) => {
@@ -695,7 +754,9 @@ function routes(api, ctx) {
     for (const mod of ctx.loaded) {
       if (mod.serviceDetail) Object.assign(extras, mod.serviceDetail({ ctx, service }));
     }
-    res.json({ ...service, vin_info: service.vin_info ? JSON.parse(service.vin_info) : null, ...extras });
+    // Apelido do endereço, se for um dos salvos (ex.: "Ribas").
+    const nick = (v) => (v ? db.prepare('SELECT nickname FROM saved_places WHERE address = ?').get(v)?.nickname || null : null);
+    res.json({ ...service, vin_info: service.vin_info ? JSON.parse(service.vin_info) : null, pickup_name: nick(service.pickup), dropoff_name: nick(service.dropoff), ...extras });
   });
   api.patch('/services/:id', async (req, res) => {
     const service = data.services.get(Number(req.params.id));
