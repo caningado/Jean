@@ -223,3 +223,6 @@ input[type=date] { min-width: 0; width: 100%; box-sizing: border-box; }
 .suggest button + .sub, .suggest .sub { display: block; }
 .suggest li + li { border-top: 1px solid var(--line, #eee); }
 .picked { margin-top: 6px; }
+label.check { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 15px; margin: 12px 0 4px; }
+label.check input { width: 22px; height: 22px; margin: 0; flex: none; }
+p.warn { color: var(--warn); font-weight: 600; }

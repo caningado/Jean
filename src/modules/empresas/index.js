@@ -19,6 +19,10 @@ const migrations = [
    );
    ALTER TABLE contacts ADD COLUMN company_id INTEGER REFERENCES companies(id);
    CREATE INDEX contacts_company ON contacts(company_id);`,
+  // Apelido (ex.: "SS" = Super Speed) e regras da empresa: exige VIN para fechar; sempre faz invoice.
+  `ALTER TABLE companies ADD COLUMN nickname TEXT;
+   ALTER TABLE companies ADD COLUMN requires_vin INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE companies ADD COLUMN always_invoice INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 const getCompany = (ctx, id) => ctx.db.prepare('SELECT * FROM companies WHERE id = ?').get(Number(id));
@@ -126,10 +130,12 @@ function findCompanies(ctx, text) {
   const q = simplify(text);
   if (!q) return [];
   const all = ctx.db.prepare('SELECT * FROM companies ORDER BY name COLLATE NOCASE').all();
-  const exact = all.filter((c) => simplify(c.name) === q);
+  const exact = all.filter((c) => simplify(c.name) === q || (c.nickname && simplify(c.nickname) === q));
   if (exact.length) return exact;
   return all.filter((c) => simplify(c.name).includes(q));
 }
+
+const flag = (v) => v === true || v === 1 || v === '1' || v === 'on' || v === 'true';
 
 function cleanText(v, max = 300) {
   const s = String(v ?? '').trim().slice(0, max);
@@ -147,14 +153,23 @@ function saveCompany(ctx, body, existing = null) {
     email: body.email !== undefined ? cleanText(body.email, 120) : existing?.email ?? null,
     phone: body.phone !== undefined ? cleanText(body.phone, 40) : existing?.phone ?? null,
     notes: body.notes !== undefined ? cleanText(body.notes, 1000) : existing?.notes ?? null,
+    nickname: body.nickname !== undefined ? cleanText(body.nickname, 30) : existing?.nickname ?? null,
+    requires_vin: body.requires_vin !== undefined ? (flag(body.requires_vin) ? 1 : 0) : existing?.requires_vin ?? 0,
+    always_invoice: body.always_invoice !== undefined ? (flag(body.always_invoice) ? 1 : 0) : existing?.always_invoice ?? 0,
   };
+  if (f.nickname) {
+    const same = ctx.db.prepare('SELECT id, name, nickname FROM companies').all().find((c) => c.id !== existing?.id && c.nickname && simplify(c.nickname) === simplify(f.nickname));
+    if (same) throw new HttpError(409, `O apelido "${f.nickname}" já é da ${same.name}.`);
+  }
   if (existing) {
-    ctx.db.prepare('UPDATE companies SET name = ?, bill_to = ?, email = ?, phone = ?, notes = ? WHERE id = ?').run(f.name, f.bill_to, f.email, f.phone, f.notes, existing.id);
+    ctx.db
+      .prepare('UPDATE companies SET name = ?, bill_to = ?, email = ?, phone = ?, notes = ?, nickname = ?, requires_vin = ?, always_invoice = ? WHERE id = ?')
+      .run(f.name, f.bill_to, f.email, f.phone, f.notes, f.nickname, f.requires_vin, f.always_invoice, existing.id);
     return getCompany(ctx, existing.id);
   }
   const info = ctx.db
-    .prepare('INSERT INTO companies (name, bill_to, email, phone, notes, token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(f.name, f.bill_to, f.email, f.phone, f.notes, crypto.randomBytes(16).toString('base64url'), nowIso());
+    .prepare('INSERT INTO companies (name, bill_to, email, phone, notes, nickname, requires_vin, always_invoice, token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(f.name, f.bill_to, f.email, f.phone, f.notes, f.nickname, f.requires_vin, f.always_invoice, crypto.randomBytes(16).toString('base64url'), nowIso());
   return getCompany(ctx, Number(info.lastInsertRowid));
 }
 
@@ -285,7 +300,27 @@ function setup(ctx) {
 
 function serviceDetail({ ctx, service }) {
   const c = service.contact_id ? ctx.api.empresas.forContact(service.contact_id) : null;
-  return { company_id: c?.id ?? null, company_name: c?.name ?? null };
+  return { company_id: c?.id ?? null, company_name: c?.name ?? null, company_requires_vin: Boolean(c?.requires_vin) };
+}
+
+// Empresa que exige o VIN: não deixa fechar o serviço sem ele.
+function blockDone({ ctx, service }) {
+  const c = service.contact_id ? ctx.api.empresas.forContact(service.contact_id) : null;
+  if (c?.requires_vin && !service.vin) return `🚫 A *${c.name}* exige o VIN. Coloque o VIN antes de fechar o serviço #${service.id}.`;
+  return null;
+}
+
+// Empresa que sempre pede invoice: cria o invoice ao fechar o serviço.
+function afterDone({ ctx, service, user }) {
+  const c = service.contact_id ? ctx.api.empresas.forContact(service.contact_id) : null;
+  if (!c?.always_invoice || !ctx.api.invoice?.create || ctx.api.invoice.numbersFor(service.id).length) return [];
+  try {
+    const inv = ctx.api.invoice.create(service, user.id);
+    return [`🧾 Invoice nº ${inv.number} criado para a ${c.name}.`];
+  } catch (err) {
+    ctx.log(`Não consegui criar o invoice do serviço #${service.id}`, err);
+    return [`⚠️ Não consegui criar o invoice da ${c.name}: ${err.message}`];
+  }
 }
 
 // Planilha: coluna Empresa na aba Serviços.
@@ -302,5 +337,7 @@ export default {
   routes,
   publicRoutes,
   serviceDetail,
+  blockDone,
+  afterDone,
   exportColumns,
 };
