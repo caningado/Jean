@@ -260,6 +260,7 @@ screens.novo = async () => {
   view.innerHTML = `
     <form class="card" id="f">
       <input type="hidden" name="contact_id">
+      <input type="hidden" name="company_id">
       <label>Nome do cliente</label>
       <div class="suggest-wrap"><input name="contact_name" autocomplete="off" placeholder="Digite o nome para buscar na agenda"><ul class="suggest" hidden></ul></div>
       <p class="sub picked" hidden></p>
@@ -310,7 +311,8 @@ screens.novo = async () => {
   let found = [];
   let timer;
   const choose = (c) => {
-    form.contact_id.value = c.id;
+    form.contact_id.value = c.id || '';
+    form.company_id.value = c.company_id || '';
     form.contact_name.value = c.name;
     if (c.phone) form.contact_phone.value = phoneFmt(c.phone);
     const filled = [];
@@ -329,7 +331,7 @@ screens.novo = async () => {
     timer = setTimeout(async () => {
       found = q.trim().length >= 2 ? await api(`/contacts/suggest?q=${encodeURIComponent(q.trim())}`).catch(() => []) : [];
       box.innerHTML = found
-        .map((c, i) => `<li><button type="button" data-i="${i}"><strong>${esc(c.name)}</strong><span class="sub">${c.phone ? phoneFmt(c.phone) : 'sem telefone'}${c.company_name ? ' · ' + esc(c.company_name) : ''}${c.last?.vehicle ? ' · ' + esc(c.last.vehicle) : ''}</span></button></li>`)
+        .map((c, i) => `<li><button type="button" data-i="${i}"><strong>${c.id ? '' : '🏢 '}${esc(c.name)}</strong><span class="sub">${!c.id ? 'empresa (ninguém cadastrado ainda)' : c.phone ? phoneFmt(c.phone) : 'sem telefone'}${c.company_name ? ' · ' + esc(c.company_name) : ''}${c.last?.vehicle ? ' · ' + esc(c.last.vehicle) : ''}</span></button></li>`)
         .join('');
       box.hidden = !found.length;
       box.querySelectorAll('button').forEach((b) => (b.onclick = () => choose(found[Number(b.dataset.i)])));
@@ -338,6 +340,7 @@ screens.novo = async () => {
   form.contact_name.oninput = () => {
     // Mudou o nome à mão: deixa de ser o contato escolhido.
     form.contact_id.value = '';
+    form.company_id.value = '';
     picked.hidden = true;
     search(form.contact_name.value);
   };
@@ -405,6 +408,7 @@ screens.servico = async (params, id) => {
     ${has('vin') ? `
     <div class="card">
       <h2>VIN (chassi)</h2>
+      ${!s.vin && s.company_requires_vin ? `<p class="warn">⚠️ A ${esc(s.company_name)} exige o VIN para fechar o serviço.</p>` : ''}
       ${s.vin ? `<p><strong>${esc(s.vin)}</strong>${vehicleInfo ? `<br><span class="sub">${esc(vehicleInfo)}</span>` : ''}</p>` : '<p class="sub">Ainda sem VIN.</p>'}
       <form id="vinForm" class="actions">
         <input name="vin" maxlength="17" autocapitalize="characters" placeholder="17 caracteres" value="${esc(s.vin || '')}">
@@ -449,9 +453,13 @@ screens.servico = async (params, id) => {
   const on = (sel, fn) => view.querySelector(sel) && (view.querySelector(sel).onclick = fn);
 
   on('#done', async () => {
-    await api(`/services/${id}`, { method: 'PATCH', body: { status: 'concluido' } });
-    toast('Serviço entregue');
-    reload();
+    try {
+      const done = await api(`/services/${id}`, { method: 'PATCH', body: { status: 'concluido' } });
+      toast(['Serviço entregue', ...(done.notices || [])].join(' · '));
+      reload();
+    } catch (err) {
+      toast(err.message);
+    }
   });
   const assign = view.querySelector('#assign');
   if (assign) {
@@ -1246,13 +1254,20 @@ screens.empresa = async () => {
 };
 
 // Empresas clientes (oficinas, dealers) com vários solicitantes, e o extrato para cobrar tudo junto.
+// Apelido e regras da empresa (no cadastro e na edição).
+const companyRules = (c = {}) => `
+  <label>Apelido (para achar rápido no Novo serviço)</label><input name="nickname" maxlength="30" placeholder="Ex.: SS" value="${esc(c.nickname || '')}">
+  <label class="check"><input type="checkbox" name="requires_vin" ${c.requires_vin ? 'checked' : ''}> Exige o VIN para fechar o serviço</label>
+  <label class="check"><input type="checkbox" name="always_invoice" ${c.always_invoice ? 'checked' : ''}> Sempre fazer invoice ao fechar o serviço</label>`;
+const companyBody = (form) => ({ ...formData(form), requires_vin: form.requires_vin.checked, always_invoice: form.always_invoice.checked });
+
 screens.empresas = async () => {
   setScreen('Empresas', { tab: 'contatos', back: '#/contatos' });
   const list = await api('/companies');
   view.innerHTML = `
     <div class="card"><ul class="list">${
       list.length
-        ? list.map((c) => `<li><a href="#/cliente/${c.id}"><div><strong>${esc(c.name)}</strong><div class="sub">${c.requesters_count} solicitante(s)</div></div><div class="right">${c.due_cents ? `<strong>${money(c.due_cents)}</strong><div class="sub">em aberto</div>` : '<span class="sub">em dia ✅</span>'}</div></a></li>`).join('')
+        ? list.map((c) => `<li><a href="#/cliente/${c.id}"><div><strong>${esc(c.name)}</strong>${c.nickname ? ` <span class="badge">${esc(c.nickname)}</span>` : ''}<div class="sub">${c.requesters_count} solicitante(s)${c.requires_vin ? ' · exige VIN' : ''}${c.always_invoice ? ' · sempre invoice' : ''}</div></div><div class="right">${c.due_cents ? `<strong>${money(c.due_cents)}</strong><div class="sub">em aberto</div>` : '<span class="sub">em dia ✅</span>'}</div></a></li>`).join('')
         : '<li class="empty">Nenhuma empresa ainda.</li>'
     }</ul></div>
     <form class="card" id="f">
@@ -1260,12 +1275,13 @@ screens.empresas = async () => {
       <label>Nome</label><input name="name" required placeholder="Ex.: USAVE Motors">
       <label>Para quem sai a cobrança (Bill to): nome e endereço</label><textarea name="bill_to" rows="3" placeholder="Nome, rua, cidade, estado e CEP"></textarea>
       <div class="row2"><div><label>Telefone</label><input name="phone" type="tel"></div><div><label>E-mail</label><input name="email" type="email"></div></div>
+      ${companyRules()}
       <button class="block">Cadastrar</button>
     </form>`;
   view.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
     try {
-      const c = await api('/companies', { method: 'POST', body: formData(e.target) });
+      const c = await api('/companies', { method: 'POST', body: companyBody(e.target) });
       toast('Empresa cadastrada');
       location.hash = `#/cliente/${c.id}`;
     } catch (err) {
@@ -1317,6 +1333,7 @@ screens.cliente = async (params, id) => {
         <label>Nome</label><input name="name" value="${esc(c.name)}" required>
         <label>Para quem sai a cobrança (Bill to)</label><textarea name="bill_to" rows="3">${esc(c.bill_to || '')}</textarea>
         <div class="row2"><div><label>Telefone</label><input name="phone" type="tel" value="${esc(c.phone || '')}"></div><div><label>E-mail</label><input name="email" type="email" value="${esc(c.email || '')}"></div></div>
+        ${companyRules(c)}
         <label>Observações</label><textarea name="notes" rows="2">${esc(c.notes || '')}</textarea>
         <button class="block">Salvar</button>
       </form>
@@ -1352,7 +1369,7 @@ screens.cliente = async (params, id) => {
   view.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
     try {
-      await api(`/companies/${id}`, { method: 'PATCH', body: formData(e.target) });
+      await api(`/companies/${id}`, { method: 'PATCH', body: companyBody(e.target) });
       toast('Salvo');
       reload();
     } catch (err) {

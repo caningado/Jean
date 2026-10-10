@@ -89,6 +89,15 @@ function canSee(user, service) {
   return service && (user.role === 'dono' || service.driver_id === user.id);
 }
 
+// Algum módulo impede fechar o serviço? (ex.: empresa que exige o VIN)
+function blockDone(ctx, service) {
+  for (const mod of ctx.loaded) {
+    const msg = mod.blockDone?.({ ctx, service });
+    if (msg) return msg;
+  }
+  return null;
+}
+
 // Tira um serviço da fila: o dono passa para um motorista e fica "em andamento".
 function takeService(ctx, service, driverId) {
   const updated = ctx.data.services.update(service.id, { status: 'aberto', driver_id: driverId });
@@ -252,6 +261,16 @@ const flows = {
             return { phone, name: rest ? checkName(rest, 'O nome do cliente') : null };
           }
           const name = checkName(text, 'O nome do cliente');
+          // Apelido de empresa (ex.: "ss" = Super Speed): quem pede por ela.
+          const co = ctx.has('empresas') && ctx.db.prepare('SELECT * FROM companies').all().find((c) => c.nickname && simplify(c.nickname) === simplify(name));
+          if (co) {
+            const people = ctx.db.prepare('SELECT id FROM contacts WHERE company_id = ? ORDER BY name COLLATE NOCASE').all(co.id);
+            if (people.length === 1) return { id: people[0].id };
+            if (people.length > 1) return { name: co.name, candidates: people.map((c) => c.id).slice(0, 9) };
+            const contact = contacts.create({ name: co.name });
+            ctx.db.prepare('UPDATE contacts SET company_id = ? WHERE id = ?').run(co.id, contact.id);
+            return { id: contact.id };
+          }
           const found = contacts.search(name, 9);
           const exact = found.filter((c) => simplify(c.name) === simplify(name));
           if (exact.length === 1) return { id: exact[0].id };
@@ -418,9 +437,12 @@ const commands = [
     run({ ctx, user }) {
       const service = ctx.data.services.active(user);
       if (!service) return 'Nenhum serviço em andamento.';
+      const blocked = blockDone(ctx, service);
+      if (blocked) return blocked;
       ctx.data.services.update(service.id, { status: 'concluido' });
       ctx.data.services.setActive(user.id, null);
-      const pending = ctx.loaded.flatMap((m) => m.onServiceDone?.({ ctx, service }) || []);
+      const done = ctx.data.services.get(service.id);
+      const pending = ctx.loaded.flatMap((m) => [...(m.afterDone?.({ ctx, service: done, user }) || []), ...(m.onServiceDone?.({ ctx, service }) || [])]);
       return [`🏁 Serviço #${service.id} entregue.`, ...pending].join('\n');
     },
   },
@@ -589,9 +611,22 @@ function routes(api, ctx) {
       // Quem começa com o que foi digitado vem primeiro; depois em ordem alfabética.
       .sort((a, b) => Number(!simplify(a.name).startsWith(q)) - Number(!simplify(b.name).startsWith(q)) || a.name.localeCompare(b.name, 'pt-BR'))
       .slice(0, 8);
+    // Apelido ou nome da empresa (ex.: "ss" = Super Speed): as pessoas que pedem por ela vêm primeiro.
+    const companies = ctx.has('empresas')
+      ? ctx.db.prepare('SELECT id, name, nickname FROM companies').all().filter((co) => (co.nickname && simplify(co.nickname) === q) || (q.length >= 3 && simplify(co.name).includes(q)))
+      : [];
+    const extra = [];
+    for (const co of companies) {
+      const people = all.filter((c) => c.company_id === co.id);
+      // Empresa sem ninguém cadastrado: oferece a própria empresa como cliente.
+      if (!people.length) extra.push({ id: null, name: co.name, phone: null, company_id: co.id, company_name: co.name, last: null });
+      for (const c of people) if (!extra.some((e) => e.id === c.id)) extra.push(c);
+    }
+    const merged = [...extra, ...found.filter((c) => !extra.some((e) => e.id === c.id))].slice(0, 10);
     const company = ctx.has('empresas') ? ctx.db.prepare('SELECT name FROM companies WHERE id = ?') : null;
     res.json(
-      found.map((c) => {
+      merged.map((c) => {
+        if (!c.id) return c;
         const last = data.services.list({ contactId: c.id, limit: 20 }).find((s) => canSee(req.user, s)) || null;
         return {
           id: c.id,
@@ -658,9 +693,18 @@ function routes(api, ctx) {
     // Confere tudo antes de criar qualquer coisa.
     const fields = serviceFields(body);
     await checkPlaces(ctx, fields, body);
-    const contactName = optional(body.contact_name, (v) => checkName(v, 'O nome do cliente'));
+    let contactName = optional(body.contact_name, (v) => checkName(v, 'O nome do cliente'));
     const contactPhone = optional(body.contact_phone, checkPhone);
     let contactId = Number(body.contact_id) || null;
+    // Apelido de empresa no nome do cliente (ex.: "SS"): vira a empresa.
+    let companyId = Number(body.company_id) || null;
+    if (!contactId && contactName && ctx.has('empresas')) {
+      const co = ctx.db.prepare('SELECT * FROM companies').all().find((c) => c.nickname && simplify(c.nickname) === simplify(contactName));
+      if (co) {
+        contactName = co.name;
+        companyId = co.id;
+      }
+    }
     const chosen = contactId && data.contacts.get(contactId);
     if (contactId && !chosen) throw new HttpError(400, 'Cliente não encontrado.');
     // Cliente escolhido da agenda sem telefone: guarda o telefone digitado.
@@ -678,6 +722,10 @@ function routes(api, ctx) {
         contactId = twin.id;
       } else contactId = data.contacts.findOrCreate({ phone: contactPhone, name: contactName }).id;
     } else if (!contactId && contactName) contactId = (sameName() || data.contacts.create({ name: contactName })).id;
+    // Cliente novo de uma empresa: já fica ligado a ela.
+    if (companyId && contactId && ctx.has('empresas') && ctx.db.prepare('SELECT 1 FROM companies WHERE id = ?').get(companyId)) {
+      ctx.db.prepare('UPDATE contacts SET company_id = ? WHERE id = ? AND company_id IS NULL').run(companyId, contactId);
+    }
     // "fila": entra como pendente, sem motorista, até o dono escolher quem vai. Só o dono.
     if (req.user.role === 'dono' && (body.fila === true || body.fila === '1' || body.driver_id === 'fila' || body.status === 'pendente')) {
       const service = data.services.create({ ...fields, driver_id: null, contact_id: contactId, status: 'pendente' });
@@ -711,11 +759,22 @@ function routes(api, ctx) {
     if (body.status === 'pendente') body.driver_id = null;
     // Pendente com motorista escolhido pelo dono: passa a estar em andamento.
     else if (service.status === 'pendente' && body.driver_id && !body.status) body.status = 'aberto';
+    // Fechar: confere as regras da empresa (ex.: VIN obrigatório).
+    const finishing = body.status === 'concluido' && service.status !== 'concluido';
+    if (finishing) {
+      const blocked = blockDone(ctx, { ...service, ...body });
+      if (blocked) throw new HttpError(400, blocked.replace(/\*/g, ''));
+    }
     // Cancelar: guarda o motivo nas observações e, se foi o motorista, avisa o dono.
     const cancelling = body.status === 'cancelado' && service.status !== 'cancelado';
     const motivo = cancelling ? String(req.body?.motivo || '').trim().slice(0, 300) : '';
     if (motivo) body.notes = [body.notes ?? service.notes, `Cancelado: ${motivo}`].filter(Boolean).join('\n');
-    const updated = data.services.update(service.id, body);
+    let updated = data.services.update(service.id, body);
+    let notices = [];
+    if (finishing) {
+      notices = ctx.loaded.flatMap((mod) => mod.afterDone?.({ ctx, service: updated, user: req.user }) || []);
+      updated = data.services.get(service.id);
+    }
     if (cancelling && req.user.role !== 'dono' && ctx.send) {
       const text = `❌ ${req.user.name} cancelou o serviço #${service.id}${service.contact_name ? ` (${service.contact_name})` : ''}.${motivo ? `\nMotivo: ${motivo}` : ''}`;
       for (const o of db.prepare("SELECT phone FROM users WHERE active = 1 AND role = 'dono'").all()) ctx.send(o.phone, text).catch(() => {});
@@ -727,7 +786,7 @@ function routes(api, ctx) {
     if (body.status && body.status !== 'aberto') {
       db.prepare('UPDATE users SET active_service_id = NULL WHERE active_service_id = ?').run(service.id);
     }
-    res.json(updated);
+    res.json(notices.length ? { ...updated, notices } : updated);
   });
 
   // Passar um serviço da fila para um motorista. Só o dono escolhe.

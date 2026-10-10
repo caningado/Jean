@@ -360,6 +360,7 @@ function setup(ctx) {
     getCompany: () => getCompany(ctx),
     logo: () => fs.readFileSync(logoFile(ctx)),
     publicBase: () => publicBase(ctx),
+    create: (service, userId) => saveInvoice(ctx, { service, body: {}, userId }),
     numbersFor: (serviceId) => ctx.db.prepare('SELECT number FROM invoices WHERE service_id = ? ORDER BY number').all(serviceId).map((r) => r.number),
   };
 }
