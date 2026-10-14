@@ -921,14 +921,17 @@ screens.contatos = async (params) => {
       input.click();
     };
   }
-  const list = await api(`/contacts?q=${encodeURIComponent(q)}`);
+  const [list, companies] = await Promise.all([api(`/contacts?q=${encodeURIComponent(q)}`), has('empresas') ? api('/companies').catch(() => []) : []]);
+  // Nome da empresa (oficina, dealer) de cada cliente, quando ele pede serviço por uma.
+  const companyOf = Object.fromEntries(companies.map((co) => [co.id, co.name]));
+  const company = (c) => (c.company_id && companyOf[c.company_id]) || '';
   if (isDesk()) {
     view.querySelector('#list').closest('.card').outerHTML = list.length
       ? `<div class="card table-card"><table class="table">
-          <thead><tr><th>Nome</th><th>Telefone</th><th>E-mail</th><th class="num">Serviços</th></tr></thead>
+          <thead><tr><th>Nome</th>${companies.length ? '<th>Empresa</th>' : ''}<th>Telefone</th><th>E-mail</th><th class="num">Serviços</th></tr></thead>
           <tbody>${list
             .map(
-              (c) => `<tr data-href="#/contato/${c.id}" tabindex="0"><td><strong>${esc(c.name)}</strong></td><td class="nowrap">${phoneFmt(c.phone)}</td><td>${esc(c.email || '')}</td><td class="num">${c.services_count || ''}</td></tr>`
+              (c) => `<tr data-href="#/contato/${c.id}" tabindex="0"><td><strong>${esc(c.name)}</strong></td>${companies.length ? `<td>${esc(company(c)) || '<span class="sub">Particular</span>'}</td>` : ''}<td class="nowrap">${phoneFmt(c.phone)}</td><td>${esc(c.email || '')}</td><td class="num">${c.services_count || ''}</td></tr>`
             )
             .join('')}</tbody></table></div>`
       : '<div class="card"><p class="empty">Nenhum cliente. Traga a agenda do celular ou adicione um.</p></div>';
@@ -938,7 +941,7 @@ screens.contatos = async (params) => {
   view.querySelector('#list').innerHTML = list.length
     ? list
         .map(
-          (c) => `<li><a href="#/contato/${c.id}"><div><strong>${esc(c.name)}</strong><div class="sub">${phoneFmt(c.phone)}</div></div>
+          (c) => `<li><a href="#/contato/${c.id}"><div><strong>${esc(c.name)}</strong><div class="sub">${[phoneFmt(c.phone), esc(company(c))].filter(Boolean).join(' · ')}</div></div>
           <div class="right sub">${c.services_count ? c.services_count + ' serviço' + (c.services_count > 1 ? 's' : '') : ''}</div></a></li>`
         )
         .join('')
