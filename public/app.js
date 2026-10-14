@@ -1598,6 +1598,8 @@ screens.empresa = async () => {
 // Apelido e regras da empresa (no cadastro e na edição).
 const companyRules = (c = {}) => `
   <label>Apelido (para achar rápido no Novo serviço)</label><input name="nickname" maxlength="30" placeholder="Ex.: SS" value="${esc(c.nickname || '')}">
+  <label>Endereço da oficina (onde pegar ou deixar carros)</label><input name="address" maxlength="300" placeholder="Vazio: usa o endereço do Bill to" value="${esc(c.address || '')}">
+  <p class="sub">O endereço vira sozinho um apelido: digite ${c.nickname || c.name ? `<strong>${esc(c.nickname || c.name)}</strong>` : 'o apelido (ou o nome)'} na retirada ou no destino.</p>
   <label class="check"><input type="checkbox" name="requires_vin" ${c.requires_vin ? 'checked' : ''}> Exige o VIN para fechar o serviço</label>
   <label class="check"><input type="checkbox" name="always_invoice" ${c.always_invoice ? 'checked' : ''}> Sempre fazer invoice ao fechar o serviço</label>`;
 const companyBody = (form) => ({ ...formData(form), requires_vin: form.requires_vin.checked, always_invoice: form.always_invoice.checked });
