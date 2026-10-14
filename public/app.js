@@ -110,11 +110,49 @@ function placeSuggestions(input) {
 }
 
 // Salva; se o endereço não foi achado no mapa, pergunta se quer salvar assim mesmo.
+// Janela do próprio app (no lugar do confirm/prompt do navegador, que mostra "site says").
+// Devolve true/false (pergunta), o texto digitado ou null (com campo), ou o índice escolhido (choices).
+function dialog({ title = '', text = '', input = null, choices = null, ok = 'OK', cancel = 'Voltar', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const back = document.createElement('div');
+    back.className = 'dialog-back';
+    back.innerHTML = `<div class="dialog" role="dialog" aria-modal="true">
+      ${title ? `<h2>${esc(title)}</h2>` : ''}
+      ${text ? `<p>${esc(text).replace(/\n/g, '<br>')}</p>` : ''}
+      ${input ? (input.multiline ? `<textarea rows="3" placeholder="${esc(input.placeholder || '')}">${esc(input.value ?? '')}</textarea>` : `<input inputmode="${input.numeric ? 'decimal' : 'text'}" placeholder="${esc(input.placeholder || '')}" value="${esc(input.value ?? '')}">`) : ''}
+      ${choices ? `<div class="dialog-choices">${choices.map((c, i) => `<button type="button" class="secondary" data-i="${i}">${esc(c)}</button>`).join('')}</div>` : ''}
+      <div class="dialog-actions"><button type="button" class="secondary" data-act="no">${esc(cancel)}</button>${choices ? '' : `<button type="button" class="${danger ? 'danger' : ''}" data-act="yes">${esc(ok)}</button>`}</div>
+    </div>`;
+    const field = back.querySelector('input, textarea');
+    const done = (value) => {
+      back.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(value);
+    };
+    const yes = () => done(input ? field.value : true);
+    const no = () => done(input ? null : choices ? null : false);
+    const onKey = (e) => {
+      if (e.key === 'Escape') no();
+      if (e.key === 'Enter' && !(field && field.tagName === 'TEXTAREA') && !choices) yes();
+    };
+    back.querySelector('[data-act="no"]').onclick = no;
+    back.querySelector('[data-act="yes"]')?.addEventListener('click', yes);
+    back.querySelectorAll('[data-i]').forEach((b) => (b.onclick = () => done(Number(b.dataset.i))));
+    back.onclick = (e) => e.target === back && no();
+    document.addEventListener('keydown', onKey);
+    document.body.append(back);
+    (field || back.querySelector('[data-act="yes"]') || back.querySelector('[data-i]'))?.focus();
+    if (field) field.select?.();
+  });
+}
+const ask = (text, opts = {}) => dialog({ text, ok: 'Sim', cancel: 'Não', ...opts });
+const askText = (text, value = '', opts = {}) => dialog({ ...opts, text, input: { value, ...(opts.input || {}) } });
+
 async function sendCheckingAddress(send, body) {
   try {
     return await send(body);
   } catch (err) {
-    if (err.code === 'endereco' && confirm(`${err.message}\n\nSalvar assim mesmo?`)) return send({ ...body, address_ok: true });
+    if (err.code === 'endereco' && (await ask(`${err.message}\n\nSalvar assim mesmo?`))) return send({ ...body, address_ok: true });
     throw err;
   }
 }
@@ -302,9 +340,9 @@ screens.novo = async () => {
         if (!contact) return;
         let phone = contact.phones[0] || '';
         if (contact.phones.length > 1) {
-          const choice = prompt(`Qual número de ${contact.name}?\n${contact.phones.map((p, i) => `${i + 1}) ${p}`).join('\n')}`, '1');
+          const choice = await dialog({ title: `Qual número de ${contact.name}?`, choices: contact.phones });
           if (choice == null) return;
-          phone = contact.phones[Number(choice) - 1] || phone;
+          phone = contact.phones[choice] || phone;
         }
         // Já é cliente no app: preenche tudo (nome, veículo e placa do último serviço).
         const digits = phone.replace(/\D/g, '').slice(-10);
@@ -526,13 +564,20 @@ screens.servico = async (params, id) => {
     };
   }
   on('#queue', async () => {
-    if (!confirm('Voltar este serviço para a fila, sem motorista?')) return;
+    if (!(await ask('Voltar este serviço para a fila, sem motorista?', { ok: 'Voltar para a fila', cancel: 'Não' }))) return;
     await api(`/services/${id}`, { method: 'PATCH', body: { status: 'pendente' } });
     toast('Serviço voltou para a fila');
     reload();
   });
   on('#cancel', async () => {
-    const motivo = prompt('Cancelar o serviço? Escreva o motivo (opcional):');
+    const motivo = await dialog({
+      title: `Cancelar o serviço #${id}?`,
+      text: 'Escreva o motivo, se quiser (ex.: cliente desistiu).',
+      input: { multiline: true, placeholder: 'Motivo (opcional)' },
+      ok: 'Cancelar serviço',
+      cancel: 'Não, voltar',
+      danger: true,
+    });
     if (motivo === null) return;
     try {
       await api(`/services/${id}`, { method: 'PATCH', body: { status: 'cancelado', motivo } });
@@ -557,7 +602,7 @@ screens.servico = async (params, id) => {
         toast('VIN salvo');
         reload();
       } catch (err) {
-        if (confirm(`${err.message}\n\nSalvar assim mesmo?`)) saveVin(vin, true);
+        if (await ask(`${err.message}\n\nSalvar assim mesmo?`)) saveVin(vin, true);
       }
     };
     vinForm.onsubmit = (e) => {
@@ -568,7 +613,7 @@ screens.servico = async (params, id) => {
       const vin = await scanBarcode();
       if (vin) {
         vinForm.vin.value = vin;
-        if (confirm(`VIN lido: ${vin}\nSalvar?`)) saveVin(vin);
+        if (await ask(`VIN lido: ${vin}\nSalvar?`)) saveVin(vin);
       }
     });
     on('#photoVin', async () => {
@@ -580,7 +625,7 @@ screens.servico = async (params, id) => {
       try {
         const result = await api('/vin/read', { method: 'POST', raw: image, type: 'image/jpeg' });
         vinForm.vin.value = result.vin;
-        if (confirm(`VIN lido: ${result.vin}${result.valid ? '' : '\n(o dígito verificador não bateu, confira)'}\nSalvar?`)) saveVin(result.vin, !result.valid);
+        if (await ask(`VIN lido: ${result.vin}${result.valid ? '' : '\n(o dígito verificador não bateu, confira)'}\nSalvar?`)) saveVin(result.vin, !result.valid);
       } catch (err) {
         toast(err.message);
       }
@@ -884,9 +929,9 @@ screens.planilha = async () => {
     screens.planilha();
   };
   view.querySelector('#criar')?.addEventListener('click', make);
-  view.querySelector('#trocar')?.addEventListener('click', () => confirm('O link atual vai parar de funcionar. Trocar?') && make());
+  view.querySelector('#trocar')?.addEventListener('click', async () => (await ask('O link atual vai parar de funcionar. Trocar?')) && make());
   view.querySelector('#desligar')?.addEventListener('click', async () => {
-    if (!confirm('Desligar o link? As planilhas ligadas a ele param de atualizar.')) return;
+    if (!(await ask('Desligar o link? As planilhas ligadas a ele param de atualizar.'))) return;
     await api('/planilha/link', { method: 'DELETE' });
     screens.planilha();
   });
@@ -912,7 +957,7 @@ async function cashCard(box) {
   box.querySelectorAll('[data-collect]').forEach((b) => {
     b.onclick = async () => {
       const d = list.find((x) => String(x.driver_id) === b.dataset.collect);
-      const value = prompt(`Quanto você pegou de ${d.name}?\n(Deixe o valor todo para zerar)`, (d.in_hand_cents / 100).toFixed(2));
+      const value = await askText(`Quanto você pegou de ${d.name}?\n(Deixe o valor todo para zerar)`, (d.in_hand_cents / 100).toFixed(2), { input: { numeric: true } });
       if (value == null) return;
       try {
         const after = await api(`/caixa/${d.driver_id}/recolher`, { method: 'POST', body: { amount: value } });
@@ -1011,7 +1056,7 @@ screens.enderecos = async () => {
   view.querySelectorAll('[data-del]').forEach((b) => {
     b.onclick = async () => {
       const p = list.find((x) => String(x.id) === b.dataset.del);
-      if (!confirm(`Apagar o apelido "${p.nickname}"?`)) return;
+      if (!(await ask(`Apagar o apelido "${p.nickname}"?`, { danger: true }))) return;
       await api(`/saved-places/${p.id}`, { method: 'DELETE' });
       screens.enderecos();
     };
@@ -1124,14 +1169,14 @@ screens.caminhoes = async () => {
       run(() => api(`/trucks/${id}`, { method: 'PATCH', body: formData(e.target) }), 'Salvo');
     });
     card.querySelectorAll('[data-edit]').forEach((b) => {
-      b.onclick = () => {
+      b.onclick = async () => {
         const item = truck.items.find((i) => String(i.id) === b.dataset.edit);
-        const m = prompt(`${item.name}: a cada quantas milhas? (vazio = não conta milhas)`, item.every_miles || '');
+        const m = await askText(`${item.name}: a cada quantas milhas? (vazio = não conta milhas)`, item.every_miles || '');
         if (m == null) return;
-        const d = prompt(`${item.name}: a cada quantos dias? (vazio = não conta dias)\nPara apagar o item, deixe os dois vazios.`, item.every_days || '');
+        const d = await askText(`${item.name}: a cada quantos dias? (vazio = não conta dias)\nPara apagar o item, deixe os dois vazios.`, item.every_days || '');
         if (d == null) return;
         if (!m && !d) {
-          if (confirm(`Apagar "${item.name}"?`)) run(() => api(`/maintenance/${item.id}`, { method: 'DELETE' }), 'Item apagado');
+          if (await ask(`Apagar "${item.name}"?`, { danger: true })) run(() => api(`/maintenance/${item.id}`, { method: 'DELETE' }), 'Item apagado');
           return;
         }
         run(() => api(`/maintenance/${item.id}`, { method: 'PATCH', body: { every_miles: m, every_days: d } }), 'Salvo');
@@ -1139,7 +1184,7 @@ screens.caminhoes = async () => {
     });
   });
   view.querySelectorAll('[data-deltruck]').forEach((b) => {
-    b.onclick = () => confirm('Apagar este caminhão e a manutenção dele?') && run(() => api(`/trucks/${b.dataset.deltruck}`, { method: 'DELETE' }), 'Caminhão apagado');
+    b.onclick = async () => (await ask('Apagar este caminhão e a manutenção dele?', { danger: true })) && run(() => api(`/trucks/${b.dataset.deltruck}`, { method: 'DELETE' }), 'Caminhão apagado');
   });
 };
 
@@ -1208,7 +1253,7 @@ screens.manutencao = async (params, id) => {
   };
   view.querySelectorAll('[data-del]').forEach((b) => {
     b.onclick = async () => {
-      if (!confirm('Apagar este serviço do histórico?')) return;
+      if (!(await ask('Apagar este serviço do histórico?', { danger: true }))) return;
       try {
         await api(`/maintenance-log/${b.dataset.del}`, { method: 'DELETE' });
         toast('Apagado');
@@ -1475,7 +1520,7 @@ screens.cliente = async (params, id) => {
   };
   view.querySelectorAll('[data-unlink]').forEach((b) => {
     b.onclick = async () => {
-      if (!confirm('Tirar esta pessoa da empresa? Os serviços dela saem do extrato.')) return;
+      if (!(await ask('Tirar esta pessoa da empresa? Os serviços dela saem do extrato.'))) return;
       await api(`/contacts/${b.dataset.unlink}/company`, { method: 'PUT', body: { company_id: null } });
       reload();
     };
@@ -1491,7 +1536,7 @@ screens.cliente = async (params, id) => {
     }
   };
   view.querySelector('#del').onclick = async () => {
-    if (!confirm(`Apagar ${c.name}? Os solicitantes continuam nos contatos.`)) return;
+    if (!(await ask(`Apagar ${c.name}? Os solicitantes continuam nos contatos.`, { danger: true }))) return;
     await api(`/companies/${id}`, { method: 'DELETE' });
     location.hash = '#/empresas';
   };
@@ -1620,7 +1665,7 @@ screens.motorista = async (params, id) => {
     b.onclick = () => sharePdf(pdf(b.dataset.share), `${b.dataset.share ? `Semana ${b.dataset.share}` : `Fechamento ${m.mes}`} ${m.driver.name}.pdf`);
   });
   const pay = async (body, suggested) => {
-    const value = prompt(`Quanto você pagou para ${m.driver.name}?`, (suggested / 100).toFixed(2));
+    const value = await askText(`Quanto você pagou para ${m.driver.name}?`, (suggested / 100).toFixed(2), { input: { numeric: true } });
     if (value == null) return;
     try {
       await api(`/comissao/${id}/pagamentos`, { method: 'POST', body: { mes: m.mes, amount: value, ...body } });
@@ -1637,7 +1682,7 @@ screens.motorista = async (params, id) => {
   view.querySelector('#acerto')?.addEventListener('click', () => pay({ kind: 'acerto' }, due));
   view.querySelectorAll('[data-delpay]').forEach((b) => {
     b.onclick = async () => {
-      if (!confirm('Apagar este pagamento?')) return;
+      if (!(await ask('Apagar este pagamento?', { danger: true }))) return;
       await api(`/comissao/pagamentos/${b.dataset.delpay}`, { method: 'DELETE' });
       reload();
     };
@@ -1678,7 +1723,7 @@ screens.despesas = async () => {
   };
   view.querySelectorAll('[data-del]').forEach((b) => {
     b.onclick = async () => {
-      if (!confirm('Apagar esta despesa?')) return;
+      if (!(await ask('Apagar esta despesa?', { danger: true }))) return;
       await api(`/expenses/${b.dataset.del}`, { method: 'DELETE' });
       screens.despesas();
     };
