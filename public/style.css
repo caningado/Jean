@@ -225,3 +225,5 @@ p.warn { color: var(--warn); font-weight: 600; }
 h1, h2, h3, strong, b, label { font-weight: 600; }
 .copyrow .suggest-wrap { flex: 1; min-width: 0; }
 .copyrow .suggest-wrap input { width: 100%; font-size: 16px; }
+.suggest li.none { padding: 10px 12px; color: var(--muted); font-size: 14px; }
+.suggest li.none button { display: block; width: 100%; margin-top: 8px; }
