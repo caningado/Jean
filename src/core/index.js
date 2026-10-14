@@ -4,7 +4,7 @@ import { FlowError } from './bot.js';
 import { hashPin, verifyPin, signToken } from '../lib/auth.js';
 import { collectAlerts, servicesBlocked } from '../lib/daily.js';
 import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkMoney, isMapReference } from '../lib/validate.js';
-import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfMonthIso, formatPhone } from '../lib/util.js';
+import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfMonthIso, startOfYearIso, formatPhone } from '../lib/util.js';
 
 const migrations = [
   `CREATE TABLE users (
@@ -627,7 +627,30 @@ function routes(api, ctx) {
   });
 
   // Contatos
-  api.get('/contacts', (req, res) => res.json(data.contacts.search(req.query.q || '', 500)));
+  api.get('/contacts', (req, res) => {
+    const list = data.contacts.search(req.query.q || '', 500);
+    if (req.user.role !== 'dono') return res.json(list.map(({ services_count, ...c }) => c));
+    // Só o dono vê quantos serviços e quanto cada cliente deu no mês e no ano (sem os cancelados).
+    const month = startOfMonthIso(ctx.config.timeZone);
+    const year = startOfYearIso(ctx.config.timeZone);
+    const stats = new Map(
+      ctx.db
+        .prepare(
+          `SELECT contact_id,
+             SUM(created_at >= ?) AS month_count, SUM(CASE WHEN created_at >= ? THEN COALESCE(price_cents, 0) ELSE 0 END) AS month_cents,
+             COUNT(*) AS year_count, SUM(COALESCE(price_cents, 0)) AS year_cents
+           FROM services WHERE status <> 'cancelado' AND created_at >= ? AND contact_id IS NOT NULL GROUP BY contact_id`
+        )
+        .all(month, month, year)
+        .map((r) => [r.contact_id, r])
+    );
+    res.json(
+      list.map((c) => {
+        const r = stats.get(c.id) || {};
+        return { ...c, month_count: r.month_count || 0, month_cents: r.month_cents || 0, year_count: r.year_count || 0, year_cents: r.year_cents || 0 };
+      })
+    );
+  });
   api.post('/contacts', (req, res) => {
     const { email, notes } = req.body || {};
     const name = checkName(req.body?.name);
