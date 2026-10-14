@@ -168,6 +168,14 @@ function routes(api, ctx) {
     res.json({ ...saved.service, vin_info: saved.info });
   });
 
+  // Novo serviço: confere o VIN digitado e devolve ano/marca/modelo para preencher o veículo.
+  api.get('/vin/decode/:vin', async (req, res) => {
+    const check = validateVin(req.params.vin);
+    if (!/^[A-Z0-9]{17}$/.test(check.vin)) return res.json({ ...check, info: null, vehicle: null });
+    const info = await ctx.api.vin.decode(check.vin);
+    res.json({ ...check, info, vehicle: describeVehicle(info) });
+  });
+
   // Recebe a foto (corpo da requisição é a imagem) e devolve o VIN lido.
   api.post('/vin/read', express.raw({ type: 'image/*', limit: '15mb' }), async (req, res) => {
     if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(400, 'Mande uma foto.');

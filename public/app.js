@@ -524,12 +524,13 @@ screens.novo = async () => {
       ${has('fotos') ? `<label>Gate pass (leilão)</label>
       <div class="docs-zone" id="docs-zone"><button type="button" class="secondary" id="docs-add">📎 Anexar PDF ou foto</button><span class="sub">${isDesk() ? 'ou cole (Ctrl+V) ou arraste o arquivo aqui' : ''}</span></div>
       <ul class="docs-list" id="docs-list"></ul>` : ''}
+      ${has('vin') ? `<label>VIN (chassi) — opcional</label>
+      <div class="copyrow"><input name="vin" maxlength="17" autocapitalize="characters" autocomplete="off" placeholder="17 caracteres"><button type="button" class="secondary" id="novo-scan">📷 Escanear</button></div>
+      <p class="sub" id="vin-info" hidden></p>` : ''}
       <div class="row2">
         <div><label>Veículo</label><input name="vehicle" placeholder="Honda Civic"></div>
         <div><label>Placa</label><input name="plate" autocapitalize="characters"></div>
       </div>
-      ${has('vin') ? `<label>VIN (chassi) — opcional</label>
-      <div class="copyrow"><input name="vin" maxlength="17" autocapitalize="characters" autocomplete="off" placeholder="17 caracteres"><button type="button" class="secondary" id="novo-scan">📷 Escanear</button></div>` : ''}
       <div class="row2">
         <div><label>Milhas</label><input name="miles" type="number" step="0.1" inputmode="decimal"></div>
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal"></div>
@@ -654,9 +655,50 @@ screens.novo = async () => {
   // Trava o botão enquanto salva: dois toques (internet lenta) não criam dois serviços.
   const novoScan = form.querySelector('#novo-scan');
   if (novoScan) {
+    // VIN completo: busca ano/marca/modelo e preenche o Veículo (sem apagar o que a pessoa digitou).
+    const vinInfo = form.querySelector('#vin-info');
+    let asked = '';
+    const lookupVin = async () => {
+      const vin = form.vin.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (vin.length !== 17) {
+        asked = '';
+        vinInfo.hidden = true;
+        return;
+      }
+      if (vin === asked) return;
+      asked = vin;
+      vinInfo.hidden = false;
+      vinInfo.textContent = 'Buscando o carro pelo VIN…';
+      let r;
+      try {
+        r = await api(`/vin/decode/${vin}`);
+      } catch {
+        r = null;
+      }
+      if (asked !== vin) return;
+      if (!r?.valid) {
+        vinInfo.textContent = `⚠️ ${r?.reason || 'Não consegui conferir o VIN.'}`;
+        return;
+      }
+      if (!r.vehicle) {
+        vinInfo.textContent = 'VIN certo, mas não achei as informações do carro. Digite o veículo.';
+        return;
+      }
+      const extra = [r.info.trim, r.info.body].filter(Boolean).join(' · ');
+      vinInfo.textContent = `🚗 ${r.vehicle}${extra ? ` · ${extra}` : ''}`;
+      const veh = form.vehicle;
+      if (!veh.value.trim() || veh.value === veh.dataset.auto) {
+        veh.value = r.vehicle.slice(0, 60);
+        veh.dataset.auto = veh.value;
+      }
+    };
+    form.vin.addEventListener('input', lookupVin);
     novoScan.onclick = async () => {
       const vin = await scanBarcode();
-      if (vin) form.vin.value = vin;
+      if (vin) {
+        form.vin.value = vin;
+        lookupVin();
+      }
     };
   }
   // Gate pass escolhido antes de criar o serviço: sobe logo depois que o serviço existe.
