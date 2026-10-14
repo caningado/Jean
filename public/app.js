@@ -151,6 +151,7 @@ function setScreen(title, { tab = null, back = null } = {}) {
   tabs.classList.toggle('hidden', !state.me);
   tabs.querySelectorAll('a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
   backBtn.classList.toggle('hidden', !back);
+  document.getElementById('logo').classList.toggle('hidden', Boolean(back));
   backBtn.onclick = back ? () => (location.hash = back) : null;
   window.scrollTo(0, 0);
 }
