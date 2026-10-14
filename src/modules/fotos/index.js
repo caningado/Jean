@@ -39,7 +39,28 @@ const migrations = [
    );`,
   // Ângulo da foto de antes/depois: frente, laterais, traseira ou detalhe.
   `ALTER TABLE photos ADD COLUMN angle TEXT;`,
+  // Documentos do serviço (PDF ou foto), como o gate pass do leilão para retirar o carro.
+  `CREATE TABLE service_docs (
+     id INTEGER PRIMARY KEY,
+     service_id INTEGER NOT NULL REFERENCES services(id),
+     kind TEXT NOT NULL DEFAULT 'gatepass',
+     name TEXT,
+     file TEXT NOT NULL,
+     mime TEXT NOT NULL,
+     uploaded_by INTEGER REFERENCES users(id),
+     created_at TEXT NOT NULL
+   );
+   CREATE INDEX service_docs_service ON service_docs(service_id);`,
 ];
+
+const DOC_TYPES = { 'application/pdf': '.pdf', 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/heic': '.heic', 'image/heif': '.heic', 'image/gif': '.gif' };
+
+function listDocs(ctx, serviceId) {
+  return ctx.db
+    .prepare('SELECT id, kind, name, mime, uploaded_by, created_at FROM service_docs WHERE service_id = ? ORDER BY id')
+    .all(serviceId)
+    .map((d) => ({ ...d, url: `/api/docs/${d.id}/file` }));
+}
 
 // Entende o ângulo escrito na legenda: "antes frente", "traseira", "lado direito"...
 export function angleFromText(text) {
@@ -211,6 +232,42 @@ function routes(api, ctx) {
     res.status(201).json({ id, kind, angle, url: `/api/photos/${id}/file` });
   });
 
+  // Gate pass e outros documentos: PDF ou foto, até 20 MB.
+  api.post('/services/:id/docs', express.raw({ type: ['application/pdf', 'image/*'], limit: '20mb' }), (req, res) => {
+    const service = findServiceFor(ctx, req.user, req.params.id);
+    const mime = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+    if (!DOC_TYPES[mime]) throw new HttpError(400, 'Mande um PDF ou uma foto.');
+    if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(400, 'O arquivo está vazio.');
+    const name = String(req.query.name || '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').trim().slice(0, 120) || `gate pass${DOC_TYPES[mime]}`;
+    const dir = path.join(ctx.config.uploadsDir, `servico-${service.id}`);
+    fs.mkdirSync(dir, { recursive: true });
+    const file = `${Date.now()}-gatepass-${crypto.randomBytes(3).toString('hex')}${DOC_TYPES[mime]}`;
+    fs.writeFileSync(path.join(dir, file), req.body);
+    const info = ctx.db
+      .prepare('INSERT INTO service_docs (service_id, kind, name, file, mime, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(service.id, 'gatepass', name, path.join(`servico-${service.id}`, file), mime, req.user.id, nowIso());
+    res.status(201).json(listDocs(ctx, service.id).find((d) => d.id === Number(info.lastInsertRowid)));
+  });
+
+  api.get('/docs/:id/file', (req, res) => {
+    const doc = ctx.db.prepare('SELECT * FROM service_docs WHERE id = ?').get(Number(req.params.id));
+    if (!doc) throw new HttpError(404, 'Documento não encontrado.');
+    findServiceFor(ctx, req.user, doc.service_id);
+    res.type(doc.mime);
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(doc.name || 'gatepass')}`);
+    res.sendFile(path.join(ctx.config.uploadsDir, doc.file));
+  });
+
+  api.delete('/docs/:id', (req, res) => {
+    const doc = ctx.db.prepare('SELECT * FROM service_docs WHERE id = ?').get(Number(req.params.id));
+    if (!doc) throw new HttpError(404, 'Documento não encontrado.');
+    findServiceFor(ctx, req.user, doc.service_id);
+    if (req.user.role !== 'dono' && doc.uploaded_by !== req.user.id) throw new HttpError(403, 'Só o dono pode apagar este documento.');
+    ctx.db.prepare('DELETE FROM service_docs WHERE id = ?').run(doc.id);
+    fs.rmSync(path.join(ctx.config.uploadsDir, doc.file), { force: true });
+    res.json({ ok: true });
+  });
+
   api.get('/photos/:id/file', (req, res) => {
     const photo = ctx.db.prepare('SELECT * FROM photos WHERE id = ?').get(Number(req.params.id));
     if (!photo) throw new HttpError(404, 'Foto não encontrada.');
@@ -251,7 +308,21 @@ export default {
       .all(from, to, ...(userId ? [userId] : []));
     const clean = (text) => String(text).replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim();
     const used = new Set();
-    return rows.map((p) => {
+    const docs = ctx.db
+      .prepare(
+        `SELECT d.*, c.name AS contact_name FROM service_docs d JOIN services s ON s.id = d.service_id LEFT JOIN contacts c ON c.id = s.contact_id
+         WHERE s.created_at >= ? AND s.created_at < ? ${userId ? 'AND s.driver_id = ?' : ''} ORDER BY d.service_id, d.id`
+      )
+      .all(from, to, ...(userId ? [userId] : []));
+    const docFiles = docs.map((d) => {
+      const folder = clean(`Serviço ${d.service_id}${d.contact_name ? ' - ' + d.contact_name : ''}`);
+      const ext = path.extname(d.file);
+      let name = `fotos/${folder}/gate pass${ext}`;
+      for (let n = 2; used.has(name); n++) name = `fotos/${folder}/gate pass ${n}${ext}`;
+      used.add(name);
+      return { name, path: path.join(ctx.config.uploadsDir, d.file) };
+    });
+    return [...docFiles, ...rows.map((p) => {
       const folder = clean(`Serviço ${p.service_id}${p.contact_name ? ' - ' + p.contact_name : ''}`);
       const label = clean([KIND_FILE[p.kind] || p.kind, p.angle ? ANGLE_LABEL[p.angle] || p.angle : ''].filter(Boolean).join(' - '));
       const ext = path.extname(p.file) || '.jpg';
@@ -259,7 +330,7 @@ export default {
       for (let n = 2; used.has(name); n++) name = `fotos/${folder}/${label} ${n}${ext}`;
       used.add(name);
       return { name, path: path.join(ctx.config.uploadsDir, p.file) };
-    });
+    })];
   },
   exportColumns: (ctx) => {
     const count = ctx.db.prepare('SELECT COUNT(*) AS n FROM photos WHERE service_id = ?');
@@ -272,5 +343,5 @@ export default {
   routes,
   onMedia,
   serviceHint: '📷 Fotos: mande *antes* ou *depois* e em seguida as fotos da volta no carro (frente, lateral esquerda, traseira, lateral direita).',
-  serviceDetail: ({ ctx, service }) => ({ photos: listPhotos(ctx, service.id) }),
+  serviceDetail: ({ ctx, service }) => ({ photos: listPhotos(ctx, service.id), docs: listDocs(ctx, service.id) }),
 };
