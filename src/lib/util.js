@@ -73,6 +73,12 @@ export function startOfMonthIso(timeZone, date = new Date()) {
   return startOfDayIso(timeZone, first);
 }
 
+export function startOfYearIso(timeZone, date = new Date()) {
+  const year = Number(new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric' }).format(date));
+  // Meio-dia UTC de 1º de janeiro ainda é 1º de janeiro no fuso dos EUA.
+  return startOfDayIso(timeZone, new Date(Date.UTC(year, 0, 1, 12)));
+}
+
 export class HttpError extends Error {
   constructor(status, message) {
     super(message);

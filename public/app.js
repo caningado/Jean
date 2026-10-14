@@ -921,16 +921,22 @@ screens.contatos = async (params) => {
       input.click();
     };
   }
-  const list = await api(`/contacts?q=${encodeURIComponent(q)}`);
+  const [list, companies] = await Promise.all([api(`/contacts?q=${encodeURIComponent(q)}`), has('empresas') ? api('/companies').catch(() => []) : []]);
+  // Nome da empresa (oficina, dealer) de cada cliente, quando ele pede serviço por uma.
+  const companyOf = Object.fromEntries(companies.map((co) => [co.id, co.name]));
+  const company = (c) => (c.company_id && companyOf[c.company_id]) || '';
+  // Números de serviços e valores: só o dono recebe do servidor.
+  const owner = state.me.role === 'dono';
+  const sum = (k) => list.reduce((t, c) => t + (c[k] || 0), 0);
   if (isDesk()) {
     view.querySelector('#list').closest('.card').outerHTML = list.length
       ? `<div class="card table-card"><table class="table">
-          <thead><tr><th>Nome</th><th>Telefone</th><th>E-mail</th><th class="num">Serviços</th></tr></thead>
+          <thead><tr><th>Nome</th><th>Telefone</th>${has('empresas') ? '<th>Empresa</th>' : ''}<th>E-mail</th>${owner ? '<th class="num">Serviços mês</th><th class="num">Serviços ano</th><th class="num">Valor mês</th><th class="num">Valor ano</th>' : ''}</tr></thead>
           <tbody>${list
             .map(
-              (c) => `<tr data-href="#/contato/${c.id}" tabindex="0"><td><strong>${esc(c.name)}</strong></td><td class="nowrap">${phoneFmt(c.phone)}</td><td>${esc(c.email || '')}</td><td class="num">${c.services_count || ''}</td></tr>`
+              (c) => `<tr data-href="#/contato/${c.id}" tabindex="0"><td><strong>${esc(c.name)}</strong></td><td class="nowrap">${phoneFmt(c.phone)}</td>${has('empresas') ? `<td>${esc(company(c)) || '<span class="sub">Particular</span>'}</td>` : ''}<td>${esc(c.email || '')}</td>${owner ? `<td class="num">${c.month_count || ''}</td><td class="num">${c.year_count || ''}</td><td class="num">${c.month_cents ? money(c.month_cents) : ''}</td><td class="num">${c.year_cents ? money(c.year_cents) : ''}</td>` : ''}</tr>`
             )
-            .join('')}</tbody></table></div>`
+            .join('')}</tbody>${owner ? `<tfoot><tr><td colspan="${has('empresas') ? 4 : 3}" class="sub">${list.length} cliente(s) · sem os cancelados</td>${['month_count', 'year_count'].map((k) => `<td class="num"><strong>${sum(k)}</strong></td>`).join('')}${['month_cents', 'year_cents'].map((k) => `<td class="num"><strong>${money(sum(k))}</strong></td>`).join('')}</tr></tfoot>` : ''}</table></div>`
       : '<div class="card"><p class="empty">Nenhum cliente. Traga a agenda do celular ou adicione um.</p></div>';
     linkRows(view);
     return;
@@ -938,8 +944,8 @@ screens.contatos = async (params) => {
   view.querySelector('#list').innerHTML = list.length
     ? list
         .map(
-          (c) => `<li><a href="#/contato/${c.id}"><div><strong>${esc(c.name)}</strong><div class="sub">${phoneFmt(c.phone)}</div></div>
-          <div class="right sub">${c.services_count ? c.services_count + ' serviço' + (c.services_count > 1 ? 's' : '') : ''}</div></a></li>`
+          (c) => `<li><a href="#/contato/${c.id}"><div><strong>${esc(c.name)}</strong><div class="sub">${[phoneFmt(c.phone), esc(company(c))].filter(Boolean).join(' · ')}</div></div>
+          <div class="right sub">${owner && c.year_count ? `${c.year_count} no ano<br>${money(c.year_cents)}` : ''}</div></a></li>`
         )
         .join('')
     : '<li class="empty">Nenhum cliente. Traga a agenda do celular ou adicione um.</li>';
