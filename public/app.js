@@ -901,6 +901,14 @@ screens.pendentes = async () => {
   }</ul></div>`;
 };
 
+const setTheme = (t) => {
+  document.documentElement.dataset.theme = t;
+  document.querySelector('meta[name="theme-color"]').content = t === 'dark' ? '#000000' : '#ffffff';
+  try {
+    localStorage.setItem('tema', t);
+  } catch {}
+};
+
 screens.mais = async () => {
   setScreen('Mais', { tab: 'mais' });
   view.innerHTML = `
@@ -916,7 +924,15 @@ screens.mais = async () => {
       <li><a href="#/robo"><span>💬 Testar o robô do WhatsApp</span><span>›</span></a></li>
       <li><a href="#/sair"><span>🚪 Sair</span><span>›</span></a></li>
     </ul></div>
+    <div class="card"><label>Aparência</label><div class="segmented" id="tema"><button data-t="light">☀️ Claro</button><button data-t="dark">🌙 Escuro</button></div></div>
     <p class="sub">Dica: no navegador do celular, use "Adicionar à tela inicial" para abrir como aplicativo.</p>`;
+  view.querySelectorAll('#tema button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.t === (document.documentElement.dataset.theme || 'light'));
+    b.onclick = () => {
+      setTheme(b.dataset.t);
+      screens.mais();
+    };
+  });
 };
 
 // Endereços com apelido: oficinas, lojas... Ao digitar o apelido na retirada ou no destino, vira o endereço.

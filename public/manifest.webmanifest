@@ -3,8 +3,8 @@
   "short_name": "Towing J&J",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#1c1917",
-  "theme_color": "#141414",
+  "background_color": "#f7f7f7",
+  "theme_color": "#ffffff",
   "lang": "pt-BR",
   "icons": [
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
