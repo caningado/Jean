@@ -219,7 +219,7 @@ function renderSide() {
   const owner = state.me.role === 'dono';
   const item = (key, href, label) => `<a href="${href}" data-side="${key}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[key] || ICONS.mais}</svg><span>${label}</span></a>`;
   const groups = [
-    ['', [item('servicos', '#/servicos', 'Serviços'), item('novo', '#/novo', 'Novo serviço'), item('contatos', '#/contatos', 'Contatos'), item('resumo', '#/resumo', 'Resumo')]],
+    ['', [item('servicos', '#/servicos', 'Serviços'), item('novo', '#/novo', 'Novo serviço'), item('contatos', '#/contatos', 'Clientes'), item('resumo', '#/resumo', 'Resumo')]],
     [
       'Financeiro',
       [
@@ -864,12 +864,12 @@ screens.editar = async (params, id) => {
 };
 
 screens.contatos = async (params) => {
-  setScreen('Contatos', { tab: 'contatos' });
+  setScreen('Clientes', { tab: 'contatos' });
   const q = params.get('q') || '';
   view.innerHTML = `
     <form id="search" class="actions" style="margin-top:0;margin-bottom:12px"><input name="q" type="search" placeholder="Buscar nome ou telefone" value="${esc(q)}"></form>
     <div class="actions" style="margin-bottom:12px">
-      <button class="secondary" id="add">➕ Novo contato</button>
+      <button class="secondary" id="add">➕ Novo cliente</button>
       ${state.me.role === 'dono' && canPickContacts ? '<button class="secondary" id="pick">📇 Da agenda do celular</button>' : ''}
       ${state.me.role === 'dono' ? '<button class="secondary" id="import">📥 Importar arquivo (.vcf)</button>' : ''}
     </div>
@@ -931,7 +931,7 @@ screens.contatos = async (params) => {
               (c) => `<tr data-href="#/contato/${c.id}" tabindex="0"><td><strong>${esc(c.name)}</strong></td><td class="nowrap">${phoneFmt(c.phone)}</td><td>${esc(c.email || '')}</td><td class="num">${c.services_count || ''}</td></tr>`
             )
             .join('')}</tbody></table></div>`
-      : '<div class="card"><p class="empty">Nenhum contato. Traga a agenda do celular ou adicione um.</p></div>';
+      : '<div class="card"><p class="empty">Nenhum cliente. Traga a agenda do celular ou adicione um.</p></div>';
     linkRows(view);
     return;
   }
@@ -942,12 +942,12 @@ screens.contatos = async (params) => {
           <div class="right sub">${c.services_count ? c.services_count + ' serviço' + (c.services_count > 1 ? 's' : '') : ''}</div></a></li>`
         )
         .join('')
-    : '<li class="empty">Nenhum contato. Traga a agenda do celular ou adicione um.</li>';
+    : '<li class="empty">Nenhum cliente. Traga a agenda do celular ou adicione um.</li>';
 };
 
 screens.contato = async (params, id) => {
   const isNew = id === 'novo';
-  setScreen(isNew ? 'Novo contato' : 'Contato', { tab: 'contatos', back: '#/contatos' });
+  setScreen(isNew ? 'Novo cliente' : 'Cliente', { tab: 'contatos', back: '#/contatos' });
   const c = isNew ? { services: [] } : await api(`/contacts/${id}`);
   const companies = has('empresas') ? await api('/companies') : [];
   view.innerHTML = `
@@ -974,7 +974,7 @@ screens.contato = async (params, id) => {
       if (company_id !== undefined && String(company_id || '') !== String(c.company_id || '')) {
         await api(`/contacts/${saved.id}/company`, { method: 'PUT', body: { company_id: company_id || null } });
       }
-      toast('Contato salvo');
+      toast('Cliente salvo');
       location.hash = `#/contato/${saved.id}`;
     } catch (err) {
       toast(err.message);
@@ -1640,7 +1640,7 @@ screens.cliente = async (params, id) => {
         : '<li class="empty">Ninguém ainda. Ligue abaixo as pessoas que pedem serviço por esta empresa.</li>'
     }</ul>
       <label>Adicionar solicitante</label>
-      <div class="copyrow"><select id="addReq"><option value="">Escolha um contato…</option>${free.map((p) => `<option value="${p.id}">${esc(p.name)}${p.phone ? ' · ' + phoneFmt(p.phone) : ''}</option>`).join('')}</select><button class="secondary" id="addBtn">Adicionar</button></div>
+      <div class="copyrow"><select id="addReq"><option value="">Escolha um cliente…</option>${free.map((p) => `<option value="${p.id}">${esc(p.name)}${p.phone ? ' · ' + phoneFmt(p.phone) : ''}</option>`).join('')}</select><button class="secondary" id="addBtn">Adicionar</button></div>
       <p class="sub">Pelo WhatsApp: abra o serviço e mande <strong>empresa ${esc(c.name.split(' ')[0].toLowerCase())}</strong>.</p>
     </div>
     <details class="card"><summary>Dados da empresa</summary>
@@ -1669,7 +1669,7 @@ screens.cliente = async (params, id) => {
   };
   view.querySelector('#addBtn').onclick = async () => {
     const pid = view.querySelector('#addReq').value;
-    if (!pid) return toast('Escolha um contato');
+    if (!pid) return toast('Escolha um cliente');
     await api(`/contacts/${pid}/company`, { method: 'PUT', body: { company_id: Number(id) } });
     toast('Solicitante adicionado');
     reload();
@@ -1692,7 +1692,7 @@ screens.cliente = async (params, id) => {
     }
   };
   view.querySelector('#del').onclick = async () => {
-    if (!(await ask(`Apagar ${c.name}? Os solicitantes continuam nos contatos.`, { danger: true }))) return;
+    if (!(await ask(`Apagar ${c.name}? Os solicitantes continuam na lista de clientes.`, { danger: true }))) return;
     await api(`/companies/${id}`, { method: 'DELETE' });
     location.hash = '#/empresas';
   };
