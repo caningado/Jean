@@ -23,7 +23,45 @@ const migrations = [
   `ALTER TABLE companies ADD COLUMN nickname TEXT;
    ALTER TABLE companies ADD COLUMN requires_vin INTEGER NOT NULL DEFAULT 0;
    ALTER TABLE companies ADD COLUMN always_invoice INTEGER NOT NULL DEFAULT 0;`,
+  // Endereço da oficina/dealer: vira sozinho um "endereço com apelido" (place_id).
+  `ALTER TABLE companies ADD COLUMN address TEXT;
+   ALTER TABLE companies ADD COLUMN place_id INTEGER;`,
 ];
+
+// Endereço da empresa: o digitado, ou as linhas do "Bill to" depois do nome.
+function companyAddress(c) {
+  if (c.address) return c.address;
+  const lines = String(c.bill_to || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines.length < 2) return null;
+  const rest = simplify(lines[0]) === simplify(c.name) || lines.length > 2 ? lines.slice(1) : lines;
+  return rest.join(', ') || null;
+}
+
+// Mantém o endereço da empresa nos "Endereços com apelido": o apelido é o da empresa
+// (ex.: "SS") ou o nome dela ("Moving"). Ao digitar isso na retirada ou no destino, vira o endereço.
+export function syncCompanyPlace(ctx, c) {
+  const address = companyAddress(c);
+  const linked = c.place_id ? ctx.db.prepare('SELECT * FROM saved_places WHERE id = ?').get(c.place_id) : null;
+  if (!address) {
+    if (linked) ctx.db.prepare('DELETE FROM saved_places WHERE id = ?').run(linked.id);
+    if (c.place_id) ctx.db.prepare('UPDATE companies SET place_id = NULL WHERE id = ?').run(c.id);
+    return;
+  }
+  const nickname = c.nickname || c.name;
+  const key = simplify(nickname).replace(/\s+/g, ' ').trim();
+  // Já existe um apelido igual (cadastrado à mão): passa a ser o da empresa.
+  const sameKey = ctx.db.prepare('SELECT * FROM saved_places WHERE key = ?').get(key);
+  const target = sameKey || linked;
+  if (linked && sameKey && linked.id !== sameKey.id) ctx.db.prepare('DELETE FROM saved_places WHERE id = ?').run(linked.id);
+  let placeId;
+  if (target) {
+    ctx.db.prepare('UPDATE saved_places SET nickname = ?, key = ?, address = ? WHERE id = ?').run(nickname, key, address, target.id);
+    placeId = target.id;
+  } else {
+    placeId = Number(ctx.db.prepare('INSERT INTO saved_places (nickname, key, address, created_at) VALUES (?, ?, ?, ?)').run(nickname, key, address, nowIso()).lastInsertRowid);
+  }
+  if (placeId !== c.place_id) ctx.db.prepare('UPDATE companies SET place_id = ? WHERE id = ?').run(placeId, c.id);
+}
 
 const getCompany = (ctx, id) => ctx.db.prepare('SELECT * FROM companies WHERE id = ?').get(Number(id));
 
@@ -154,6 +192,7 @@ function saveCompany(ctx, body, existing = null) {
     phone: body.phone !== undefined ? cleanText(body.phone, 40) : existing?.phone ?? null,
     notes: body.notes !== undefined ? cleanText(body.notes, 1000) : existing?.notes ?? null,
     nickname: body.nickname !== undefined ? cleanText(body.nickname, 30) : existing?.nickname ?? null,
+    address: body.address !== undefined ? cleanText(String(body.address ?? '').replace(/\s*\n\s*/g, ', '), 300) : existing?.address ?? null,
     requires_vin: body.requires_vin !== undefined ? (flag(body.requires_vin) ? 1 : 0) : existing?.requires_vin ?? 0,
     always_invoice: body.always_invoice !== undefined ? (flag(body.always_invoice) ? 1 : 0) : existing?.always_invoice ?? 0,
   };
@@ -163,13 +202,15 @@ function saveCompany(ctx, body, existing = null) {
   }
   if (existing) {
     ctx.db
-      .prepare('UPDATE companies SET name = ?, bill_to = ?, email = ?, phone = ?, notes = ?, nickname = ?, requires_vin = ?, always_invoice = ? WHERE id = ?')
-      .run(f.name, f.bill_to, f.email, f.phone, f.notes, f.nickname, f.requires_vin, f.always_invoice, existing.id);
+      .prepare('UPDATE companies SET name = ?, bill_to = ?, email = ?, phone = ?, notes = ?, nickname = ?, address = ?, requires_vin = ?, always_invoice = ? WHERE id = ?')
+      .run(f.name, f.bill_to, f.email, f.phone, f.notes, f.nickname, f.address, f.requires_vin, f.always_invoice, existing.id);
+    syncCompanyPlace(ctx, getCompany(ctx, existing.id));
     return getCompany(ctx, existing.id);
   }
   const info = ctx.db
-    .prepare('INSERT INTO companies (name, bill_to, email, phone, notes, nickname, requires_vin, always_invoice, token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(f.name, f.bill_to, f.email, f.phone, f.notes, f.nickname, f.requires_vin, f.always_invoice, crypto.randomBytes(16).toString('base64url'), nowIso());
+    .prepare('INSERT INTO companies (name, bill_to, email, phone, notes, nickname, address, requires_vin, always_invoice, token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(f.name, f.bill_to, f.email, f.phone, f.notes, f.nickname, f.address, f.requires_vin, f.always_invoice, crypto.randomBytes(16).toString('base64url'), nowIso());
+  syncCompanyPlace(ctx, getCompany(ctx, Number(info.lastInsertRowid)));
   return getCompany(ctx, Number(info.lastInsertRowid));
 }
 
@@ -253,6 +294,7 @@ function routes(api, ctx) {
     owner(req);
     const c = company(req);
     ctx.db.prepare('UPDATE contacts SET company_id = NULL WHERE company_id = ?').run(c.id);
+    if (c.place_id) ctx.db.prepare('DELETE FROM saved_places WHERE id = ?').run(c.place_id);
     ctx.db.prepare('DELETE FROM companies WHERE id = ?').run(c.id);
     res.json({ ok: true });
   });
@@ -290,6 +332,8 @@ function publicRoutes(app, ctx) {
 }
 
 function setup(ctx) {
+  // Empresas cadastradas antes: o endereço do "Bill to" também vira apelido.
+  for (const c of ctx.db.prepare('SELECT * FROM companies WHERE place_id IS NULL').all()) syncCompanyPlace(ctx, c);
   ctx.api.empresas = {
     // Empresa do contato (ou null).
     forContact(contactId) {

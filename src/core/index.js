@@ -193,7 +193,8 @@ function placeSteps(key, what, askText, { optional = false } = {}) {
   const checkKey = `${key}_check`;
   const resolve = async (ctx, data, text) => {
     rejectCommand(ctx, text);
-    const place = await resolvePlace(ctx, checkLocation(text, what));
+    // Apelido curto ("SS") não passa na conferência de endereço: troca antes.
+    const place = await resolvePlace(ctx, savedPlace(ctx, text) ? text : checkLocation(text, what));
     if (place.check) return place.check;
     data[key] = place.value;
     if (place.notice) data._notice = place.notice;
@@ -529,6 +530,15 @@ const checkPin = (pin) => {
 // Confere os campos de um serviço vindos do painel. Em edição (partial), só os que vieram.
 // Painel: confere no mapa a retirada e o destino que mudaram. Troca pelo endereço
 // completo quando acha um só; recusa quando não acha (a não ser com address_ok).
+// Apelido curto ("SS", "mv") não passa na conferência de endereço: troca pelo endereço antes.
+function expandNicknames(ctx, body) {
+  for (const key of ['pickup', 'dropoff']) {
+    const saved = typeof body[key] === 'string' && body[key].trim() && savedPlace(ctx, body[key]);
+    if (saved) body[key] = saved.address;
+  }
+  return body;
+}
+
 async function checkPlaces(ctx, fields, body, current = {}) {
   for (const [key, what] of [['pickup', 'a retirada'], ['dropoff', 'o destino']]) {
     const value = fields[key];
@@ -785,7 +795,7 @@ function routes(api, ctx) {
   api.post('/services', async (req, res) => {
     const blocked = servicesBlocked(ctx, req.user);
     if (blocked) throw new HttpError(423, blocked.replace(/\*/g, ''));
-    const body = req.body || {};
+    const body = expandNicknames(ctx, req.body || {});
     // Confere tudo antes de criar qualquer coisa.
     const fields = serviceFields(body);
     await checkPlaces(ctx, fields, body);
@@ -854,6 +864,7 @@ function routes(api, ctx) {
   api.patch('/services/:id', async (req, res) => {
     const service = data.services.get(Number(req.params.id));
     if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
+    expandNicknames(ctx, req.body || {});
     const body = serviceFields(req.body || {}, { partial: true });
     await checkPlaces(ctx, body, req.body || {}, service);
     if (body.pickup === null) delete body.pickup; // retirada não pode ficar vazia
