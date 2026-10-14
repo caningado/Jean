@@ -266,11 +266,11 @@ screens.novo = async () => {
     <form class="card" id="f">
       <input type="hidden" name="contact_id">
       <input type="hidden" name="company_id">
+      <label>Celular do cliente</label>
+      <div class="copyrow"><div class="suggest-wrap"><input name="contact_phone" type="tel" inputmode="numeric" autocomplete="off" placeholder="4 últimos números ou o celular todo"><ul class="suggest" id="phone-suggest" hidden></ul></div>${canPickContacts ? '<button type="button" class="secondary" id="agenda">📇 Agenda</button>' : ''}</div>
       <label>Nome do cliente</label>
       <div class="suggest-wrap"><input name="contact_name" autocomplete="off" placeholder="Digite o nome para buscar na agenda"><ul class="suggest" hidden></ul></div>
       <p class="sub picked" hidden></p>
-      <label>Telefone do cliente</label>
-      <div class="copyrow"><input name="contact_phone" type="tel" autocomplete="off" placeholder="(508) 555-0123">${canPickContacts ? '<button type="button" class="secondary" id="agenda">📇 Agenda</button>' : ''}</div>
       <label>Retirada (onde pegar)</label><input name="pickup" required placeholder="Endereço ou link do mapa">
       <label>Destino (para onde levar)</label><input name="dropoff" placeholder="Endereço ou link do mapa">
       <div class="row2">
@@ -312,6 +312,7 @@ screens.novo = async () => {
   }
   // Busca na agenda enquanto digita o nome (ou o telefone) e preenche o resto.
   const box = view.querySelector('.suggest');
+  const phoneBox = view.querySelector('#phone-suggest');
   const picked = view.querySelector('.picked');
   let found = [];
   let timer;
@@ -330,6 +331,7 @@ screens.novo = async () => {
       c.last ? `<br>Último serviço (#${c.last.id}, ${when(c.last.created_at).split(',')[0]}): ${esc([c.last.vehicle, c.last.plate].filter(Boolean).join(' · ') || 'sem veículo')}${filled.length ? ` <em>(${filled.join(' e ')} preenchido${filled.length > 1 ? 's' : ''})</em>` : ''}` : ''
     }`;
     box.hidden = true;
+    phoneBox.hidden = true;
   };
   const search = (q) => {
     clearTimeout(timer);
@@ -350,16 +352,23 @@ screens.novo = async () => {
     search(form.contact_name.value);
   };
   form.contact_name.onblur = () => setTimeout(() => (box.hidden = true), 200);
+  // Digitou os 4 últimos números (ou mais) do celular: procura na agenda e preenche o cliente.
   form.contact_phone.oninput = () => {
     if (form.contact_id.value) return;
     const digits = form.contact_phone.value.replace(/\D/g, '');
-    if (digits.length < 7) return;
     clearTimeout(timer);
+    if (digits.length < 4) return (phoneBox.hidden = true);
     timer = setTimeout(async () => {
-      const list = await api(`/contacts/suggest?q=${digits}`).catch(() => []);
-      if (list.length === 1 && !form.contact_name.value) choose(list[0]);
-    }, 400);
+      const list = (await api(`/contacts/suggest?q=${digits}`).catch(() => [])).filter((c) => c.id && (c.phone || '').endsWith(digits));
+      if (list.length === 1 && digits.length < 10) return choose(list[0]);
+      phoneBox.innerHTML = list
+        .map((c, i) => `<li><button type="button" data-i="${i}"><strong>${esc(c.name)}</strong><span class="sub">${phoneFmt(c.phone)}${c.company_name ? ' · ' + esc(c.company_name) : ''}${c.last?.vehicle ? ' · ' + esc(c.last.vehicle) : ''}</span></button></li>`)
+        .join('');
+      phoneBox.hidden = !list.length;
+      phoneBox.querySelectorAll('button').forEach((b) => (b.onclick = () => choose(list[Number(b.dataset.i)])));
+    }, 300);
   };
+  form.contact_phone.onblur = () => setTimeout(() => (phoneBox.hidden = true), 200);
   form.miles.oninput = () => {
     if (!priced || form.price.dataset.touched) return;
     const miles = Number(form.miles.value) || 0;

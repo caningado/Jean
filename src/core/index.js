@@ -264,11 +264,18 @@ const flows = {
     steps: [
       {
         key: 'client',
-        ask: () => 'Novo serviço 🚛\nQual o *telefone* ou o *nome* do cliente?\n(mande *cancelar* a qualquer momento)',
+        ask: () => 'Novo serviço 🚛\nQual o *telefone* ou o *nome* do cliente? (pode ser só os *4 últimos números* do celular)\n(mande *cancelar* a qualquer momento)',
         parse(text, { ctx }) {
           rejectCommand(ctx, text);
           const { contacts } = ctx.data;
           const digits = text.replace(/\D/g, '');
+          // Só os 4 últimos números do celular: procura na agenda.
+          if (/^\d{4}$/.test(text.trim())) {
+            const ends = ctx.db.prepare("SELECT id FROM contacts WHERE phone LIKE '%' || ? ORDER BY name COLLATE NOCASE").all(digits);
+            if (ends.length === 1) return { id: ends[0].id };
+            if (ends.length > 1) return { name: null, byDigits: digits, candidates: ends.map((c) => c.id).slice(0, 9) };
+            throw new FlowError(`Não achei ninguém na agenda com celular terminando em ${digits}. Mande o telefone completo ou o nome.`);
+          }
           // Tem número: precisa ser um telefone completo.
           if (digits.length >= 3) {
             const phone = checkPhone(text);
@@ -305,12 +312,14 @@ const flows = {
             const c = ctx.data.contacts.get(id);
             return `*${i + 1}* ${c.name}${c.phone ? ' ' + formatPhone(c.phone) : ''}`;
           });
+          if (data.client.byDigits) return `Achei mais de um cliente com celular terminando em ${data.client.byDigits}. Qual é?\n${lines.join('\n')}`;
           return `Achei mais de um cliente com esse nome. Qual é?\n${lines.join('\n')}\n*0* outro cliente (novo)`;
         },
         parse(text, { data }) {
           const n = Number(text.trim());
           const list = data.client.candidates;
-          if (!Number.isInteger(n) || n < 0 || n > list.length) throw new FlowError(`Responda com um número de 0 a ${list.length}.`);
+          const min = data.client.byDigits ? 1 : 0;
+          if (!Number.isInteger(n) || n < min || n > list.length) throw new FlowError(`Responda com um número de ${min} a ${list.length}.`);
           data.client = n === 0 ? { name: data.client.name } : { id: list[n - 1] };
           return n;
         },
@@ -640,8 +649,13 @@ function routes(api, ctx) {
         const name = simplify(c.name);
         return words.length > 0 && words.every((w) => name.includes(w));
       })
-      // Quem começa com o que foi digitado vem primeiro; depois em ordem alfabética.
-      .sort((a, b) => Number(!simplify(a.name).startsWith(q)) - Number(!simplify(b.name).startsWith(q)) || a.name.localeCompare(b.name, 'pt-BR'))
+      // Por número: quem termina com os dígitos (4 últimos do celular) vem primeiro.
+      // Por nome: quem começa com o que foi digitado vem primeiro; depois em ordem alfabética.
+      .sort((a, b) =>
+        words.length
+          ? Number(!simplify(a.name).startsWith(q)) - Number(!simplify(b.name).startsWith(q)) || a.name.localeCompare(b.name, 'pt-BR')
+          : Number(!(a.phone || '').endsWith(digits)) - Number(!(b.phone || '').endsWith(digits)) || a.name.localeCompare(b.name, 'pt-BR'),
+      )
       .slice(0, 8);
     // Apelido ou nome da empresa (ex.: "ss" = Super Speed): as pessoas que pedem por ela vêm primeiro.
     const companies = ctx.has('empresas')
