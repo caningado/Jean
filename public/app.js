@@ -73,11 +73,15 @@ const canPickContacts = 'contacts' in navigator && 'ContactsManager' in window;
 
 // Abre a agenda do celular e devolve [{ name, phones: [...] }].
 async function pickPhoneContacts(multiple = false) {
-  const picked = await navigator.contacts.select(['name', 'tel'], { multiple });
+  // Pede também o endereço quando o celular deixa (Android).
+  const can = (await navigator.contacts.getProperties?.().catch(() => [])) || [];
+  const picked = await navigator.contacts.select(['name', 'tel', ...(can.includes('address') ? ['address'] : [])], { multiple });
   return picked
-    .map((c) => ({ name: (c.name || []).find(Boolean) || '', phones: [...new Set((c.tel || []).map((t) => t.trim()).filter(Boolean))] }))
+    .map((c) => ({ name: String([].concat(c.name || []).find((n) => n && String(n).trim()) || '').trim(), phones: [...new Set((c.tel || []).map((t) => t.trim()).filter(Boolean))], address: addressText((c.address || [])[0]) }))
     .filter((c) => c.name || c.phones.length);
 }
+
+const addressText = (a) => (a ? [...(a.addressLine || []), a.city, [a.region, a.postalCode].filter(Boolean).join(' ')].filter((v) => v && String(v).trim()).join(', ') : '');
 
 const vcfEscape = (v) => String(v).replace(/[\\,;]/g, (m) => '\\' + m).replace(/\n/g, ' ');
 
@@ -302,9 +306,24 @@ screens.novo = async () => {
           if (choice == null) return;
           phone = contact.phones[Number(choice) - 1] || phone;
         }
+        // Já é cliente no app: preenche tudo (nome, veículo e placa do último serviço).
+        const digits = phone.replace(/\D/g, '').slice(-10);
+        const known = digits.length >= 7 ? (await api(`/contacts/suggest?q=${digits}`).catch(() => [])).find((c) => c.id && (c.phone || '').endsWith(digits)) : null;
+        if (known) {
+          choose({ ...known, name: known.name || contact.name });
+          if (contact.address && !form.pickup.value) form.pickup.value = contact.address;
+          return;
+        }
         form.contact_id.value = '';
-        form.contact_phone.value = phone;
+        form.company_id.value = '';
+        const d = phone.replace(/\D/g, '');
+        form.contact_phone.value = /^1?\d{10}$/.test(d) ? phoneFmt(d.length === 10 ? '1' + d : d) : phone;
         form.contact_name.value = contact.name;
+        if (contact.address && !form.pickup.value) form.pickup.value = contact.address;
+        view.querySelector('#phone-suggest').hidden = true;
+        picked.hidden = false;
+        picked.innerHTML = contact.name ? `📇 ${esc(contact.name)} <em>(cliente novo, da agenda do celular)</em>` : '📇 Contato sem nome na agenda: digite o nome.';
+        if (!contact.name) form.contact_name.focus();
       } catch (err) {
         toast('Não consegui abrir a agenda do celular.');
       }
