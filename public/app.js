@@ -298,6 +298,48 @@ function setScreen(title, { tab = null, back = null } = {}) {
   window.scrollTo(0, 0);
 }
 
+// ---------- gate pass (PDF ou foto do leilão) ----------
+const DOC_ACCEPT = 'application/pdf,image/*';
+const isDocFile = (f) => f && (f.type === 'application/pdf' || f.type.startsWith('image/'));
+const docName = (f, i = 0) => f.name && f.name !== 'image.png' ? f.name : `gate pass${i ? ' ' + (i + 1) : ''}.${(f.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg')}`;
+const uploadDoc = (serviceId, file, i = 0) => api(`/services/${serviceId}/docs?name=${encodeURIComponent(docName(file, i))}`, { method: 'POST', raw: file, type: file.type });
+
+// Escolher, colar (Ctrl+V) ou arrastar arquivos: chama onFiles com os PDFs e imagens.
+function docPicker(zone, button, onFiles) {
+  const take = (files) => {
+    const ok = [...files].filter(isDocFile);
+    if (files.length && !ok.length) toast('Mande um PDF ou uma foto.');
+    if (ok.length) onFiles(ok);
+  };
+  button.onclick = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = DOC_ACCEPT;
+    input.multiple = true;
+    input.onchange = () => take(input.files);
+    input.click();
+  };
+  const onPaste = (e) => {
+    if (!document.body.contains(zone)) return window.removeEventListener('paste', onPaste);
+    const files = e.clipboardData?.files;
+    if (files?.length) {
+      e.preventDefault();
+      take(files);
+    }
+  };
+  window.addEventListener('paste', onPaste);
+  zone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    zone.classList.add('drop');
+  });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drop'));
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.classList.remove('drop');
+    take(e.dataTransfer.files);
+  });
+}
+
 // Linhas de tabela que abrem uma tela ao clicar (ou Enter no teclado).
 function linkRows(root) {
   root.querySelectorAll('tr[data-href]').forEach((tr) => {
@@ -479,10 +521,15 @@ screens.novo = async () => {
       <p class="sub picked" hidden></p>
       <label>Retirada (onde pegar)</label><input name="pickup" required placeholder="Endereço ou link do mapa">
       <label>Destino (para onde levar)</label><input name="dropoff" placeholder="Endereço ou link do mapa">
+      ${has('fotos') ? `<label>Gate pass (leilão)</label>
+      <div class="docs-zone" id="docs-zone"><button type="button" class="secondary" id="docs-add">📎 Anexar PDF ou foto</button><span class="sub">${isDesk() ? 'ou cole (Ctrl+V) ou arraste o arquivo aqui' : ''}</span></div>
+      <ul class="docs-list" id="docs-list"></ul>` : ''}
       <div class="row2">
         <div><label>Veículo</label><input name="vehicle" placeholder="Honda Civic"></div>
         <div><label>Placa</label><input name="plate" autocapitalize="characters"></div>
       </div>
+      ${has('vin') ? `<label>VIN (chassi) — opcional</label>
+      <div class="copyrow"><input name="vin" maxlength="17" autocapitalize="characters" autocomplete="off" placeholder="17 caracteres"><button type="button" class="secondary" id="novo-scan">📷 Escanear</button></div>` : ''}
       <div class="row2">
         <div><label>Milhas</label><input name="miles" type="number" step="0.1" inputmode="decimal"></div>
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal"></div>
@@ -605,6 +652,28 @@ screens.novo = async () => {
   };
   form.price.oninput = () => (form.price.dataset.touched = '1');
   // Trava o botão enquanto salva: dois toques (internet lenta) não criam dois serviços.
+  const novoScan = form.querySelector('#novo-scan');
+  if (novoScan) {
+    novoScan.onclick = async () => {
+      const vin = await scanBarcode();
+      if (vin) form.vin.value = vin;
+    };
+  }
+  // Gate pass escolhido antes de criar o serviço: sobe logo depois que o serviço existe.
+  const pendingDocs = [];
+  const docsZone = form.querySelector('#docs-zone');
+  if (docsZone) {
+    const drawDocs = () => {
+      form.querySelector('#docs-list').innerHTML = pendingDocs
+        .map((f, i) => `<li>${f.type === 'application/pdf' ? '📄' : '🖼️'} ${esc(docName(f, i))} <button type="button" class="danger" data-rm="${i}" aria-label="Tirar">✕</button></li>`)
+        .join('');
+      form.querySelectorAll('[data-rm]').forEach((b) => (b.onclick = () => (pendingDocs.splice(Number(b.dataset.rm), 1), drawDocs())));
+    };
+    docPicker(docsZone, form.querySelector('#docs-add'), (files) => {
+      pendingDocs.push(...files);
+      drawDocs();
+    });
+  }
   let saving = false;
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -614,9 +683,23 @@ screens.novo = async () => {
     const label = btn?.textContent;
     if (btn) (btn.disabled = true), (btn.textContent = 'Salvando…');
     try {
-      const body = formData(form);
+      const { vin, ...body } = formData(form);
       if (body.driver_id && body.driver_id !== 'fila') body.driver_id = Number(body.driver_id);
       const service = await sendCheckingAddress((b) => api('/services', { method: 'POST', body: b }), body);
+      // VIN digitado ou escaneado já entra no serviço; se o dígito verificador não bater, pergunta.
+      if (vin?.trim()) {
+        await api(`/services/${service.id}/vin`, { method: 'POST', body: { vin } }).catch(async (err) => {
+          if (await ask(`${err.message}\n\nSalvar o VIN assim mesmo?`)) await api(`/services/${service.id}/vin`, { method: 'POST', body: { vin, force: true } }).catch(() => {});
+        });
+      }
+      if (pendingDocs.length && btn) btn.textContent = 'Enviando o gate pass…';
+      const failed = [];
+      for (const [i, file] of pendingDocs.entries()) await uploadDoc(service.id, file, i).catch(() => failed.push(file));
+      if (failed.length) {
+        toast(`Serviço #${service.id} criado, mas ${failed.length} arquivo(s) não foram. Anexe de novo na tela do serviço.`);
+        location.hash = `#/servico/${service.id}`;
+        return;
+      }
       toast(service.status === 'pendente' ? `Serviço #${service.id} na fila` : `Serviço #${service.id} criado`);
       location.hash = `#/servico/${service.id}`;
     } catch (err) {
@@ -657,6 +740,14 @@ screens.servico = async (params, id) => {
       ${s.status === 'aberto' && owner ? '<div class="actions"><button class="secondary" id="queue">⏳ Voltar para a fila</button></div>' : ''}
       ${(s.status === 'aberto' && (owner || s.driver_id === state.me.id)) || (s.status === 'pendente' && owner) ? '<div class="actions"><button class="danger" id="cancel">✖ Cancelar serviço</button></div>' : ''}
     </div>
+
+    ${has('fotos') ? `
+    <div class="card docs-card" id="docs-zone">
+      <h2>📄 Gate pass</h2>
+      ${s.docs?.length ? `<ul class="list">${s.docs.map((d) => `<li><div class="row"><a href="${d.url}" target="_blank" rel="noopener">${d.mime === 'application/pdf' ? '📄' : '🖼️'} ${esc(d.name || 'gate pass')}</a>${owner || d.uploaded_by === state.me.id ? `<button class="danger" data-deldoc="${d.id}" aria-label="Apagar">✕</button>` : ''}</div></li>`).join('')}</ul>` : '<p class="sub">Nenhum gate pass anexado.</p>'}
+      <div class="actions"><button class="secondary" id="docs-add">📎 Anexar PDF ou foto</button></div>
+      ${isDesk() ? '<p class="sub">Também dá para colar (Ctrl+V) ou arrastar o arquivo aqui.</p>' : ''}
+    </div>` : ''}
 
     ${has('vin') ? `
     <div class="card">
@@ -704,6 +795,31 @@ screens.servico = async (params, id) => {
 
   const reload = () => screens.servico(params, id);
   const on = (sel, fn) => view.querySelector(sel) && (view.querySelector(sel).onclick = fn);
+
+  const docsZone = view.querySelector('#docs-zone');
+  if (docsZone) {
+    docPicker(docsZone, view.querySelector('#docs-add'), async (files) => {
+      try {
+        toast('Enviando…');
+        for (const [i, file] of files.entries()) await uploadDoc(id, file, (s.docs?.length || 0) + i);
+        toast('Gate pass anexado');
+        reload();
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+    view.querySelectorAll('[data-deldoc]').forEach((b) => {
+      b.onclick = async () => {
+        if (!(await ask('Apagar este arquivo?', { danger: true }))) return;
+        try {
+          await api(`/docs/${b.dataset.deldoc}`, { method: 'DELETE' });
+          reload();
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+    });
+  }
 
   on('#done', async () => {
     try {

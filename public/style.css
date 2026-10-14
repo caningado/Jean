@@ -328,3 +328,11 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
   .toast { bottom: 24px; }
   .chat-input { bottom: 0; }
 }
+
+/* Gate pass: anexar, colar ou arrastar */
+.docs-zone { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px; border: 2px dashed var(--line); border-radius: 12px; }
+.docs-zone.drop, .docs-card.drop { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 6%, transparent); }
+.docs-card { border-style: solid; }
+.docs-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.docs-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 2px; font-size: 14.5px; word-break: break-word; }
+.docs-card .list a { overflow-wrap: anywhere; }
