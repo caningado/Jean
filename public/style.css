@@ -240,3 +240,91 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .dialog-choices { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
 @keyframes dlg-up { from { transform: translateY(24px); opacity: 0; } }
 @keyframes dlg-fade { from { opacity: 0; } }
+
+/* Tabelas (usadas no computador) */
+.table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+.table th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--card); position: sticky; top: 0; }
+.table td { padding: 11px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.table tbody tr:last-child td { border-bottom: 0; }
+.table tbody tr[data-href] { cursor: pointer; }
+.table tbody tr[data-href]:hover { background: var(--chip); }
+.table tbody tr[data-href]:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.table tfoot td { border-top: 1px solid var(--line); border-bottom: 0; }
+.table .num { text-align: right; white-space: nowrap; }
+.table .nowrap { white-space: nowrap; }
+.table .route { max-width: 340px; }
+.table .route div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card.table-card { padding: 0 0 2px; overflow: hidden; }
+.table th:first-child, .table td:first-child { padding-left: 18px; }
+.table th:last-child, .table td:last-child { padding-right: 18px; }
+.toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.toolbar .segmented { margin: 0; flex: none; }
+.toolbar .segmented button { flex: none; padding: 8px 16px; font-size: 14px; }
+.toolbar input { flex: 1; padding: 10px 12px; }
+.toolbar select, .toolbar #driver { width: 220px; flex: none; margin: 0; padding: 10px 12px; }
+
+.side, .top-new { display: none; }
+
+/* ---------- Computador: menu na lateral e conteúdo largo ---------- */
+@media (min-width: 1000px) {
+  body { padding-bottom: 0; }
+  body.logged { padding-left: 248px; }
+  .tabs { display: none !important; }
+
+  .side:not(.hidden) {
+    display: flex; flex-direction: column;
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 6; width: 248px;
+    background: var(--card); border-right: 1px solid var(--line);
+    padding: 14px 12px; overflow-y: auto;
+  }
+  .side-brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 14px; margin-bottom: 8px; border-bottom: 2px solid #e31430; font-weight: 600; font-size: 17px; }
+  .side-brand img { width: 36px; height: 36px; border-radius: 50%; }
+  .side-title { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 10px 6px; }
+  .side a { display: flex; align-items: center; gap: 11px; padding: 9px 10px; border-radius: 10px; color: var(--text); text-decoration: none; font-size: 14.5px; }
+  .side a:hover { background: var(--chip); }
+  .side a.active { background: color-mix(in srgb, var(--brand) 10%, transparent); color: var(--brand); font-weight: 600; }
+  .side svg { width: 19px; height: 19px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .side a[data-side="novo"] { color: var(--brand); }
+  .side-foot { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); }
+  .side-me { display: flex; flex-direction: column; padding: 10px 10px 6px; font-size: 14px; }
+  .side-me span { color: var(--muted); font-size: 13px; }
+
+  .topbar { padding: 14px 32px; border-bottom: 1px solid var(--line); box-shadow: none; }
+  body.logged .topbar .logo { display: none; }
+  .topbar h1 { font-size: 22px; }
+  body.logged .top-new { display: inline-flex; margin-left: auto; padding: 9px 16px; font-size: 14.5px; }
+  body.logged:has(main[data-screen="novo"]) .top-new { display: none; }
+
+  main { max-width: 760px; padding: 24px 32px 40px; }
+  main[data-screen="servicos"], main[data-screen="contatos"], main[data-screen="servico"],
+  main[data-screen="pendentes"], main[data-screen="comissao"], main[data-screen="motorista"],
+  main[data-screen="despesas"], main[data-screen="caminhoes"], main[data-screen="empresas"],
+  main[data-screen="cliente"], main[data-screen="resumo"], main[data-screen="planilha"] { max-width: 1280px; }
+  body:not(.logged) main { max-width: 440px; padding-top: 10vh; }
+
+  /* Detalhe do serviço e telas de cartões: duas colunas */
+  main[data-screen="servico"], main[data-screen="cliente"], main[data-screen="caminhoes"] { columns: 2; column-gap: 16px; }
+  main[data-screen="servico"] > *, main[data-screen="cliente"] > *, main[data-screen="caminhoes"] > * { break-inside: avoid; }
+  main[data-screen="servico"] > .card:first-child { margin-top: 0; }
+
+  /* Resumo: números lado a lado */
+  main[data-screen="resumo"] .stats { grid-template-columns: repeat(4, 1fr); }
+  main[data-screen="resumo"] .segmented { max-width: 360px; }
+  main[data-screen="resumo"] { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; align-content: start; }
+  main[data-screen="resumo"] > #alertas, main[data-screen="resumo"] > .segmented, main[data-screen="resumo"] > .stats { grid-column: 1 / -1; }
+
+  /* Contatos: busca e botões na mesma linha; o menu já leva às empresas */
+  main[data-screen="contatos"] { display: grid; grid-template-columns: 1fr auto; column-gap: 10px; align-content: start; }
+  main[data-screen="contatos"] > * { grid-column: 1 / -1; }
+  main[data-screen="contatos"] > #search { grid-column: 1; }
+  main[data-screen="contatos"] > .actions { grid-column: 2; flex-wrap: nowrap; }
+  main[data-screen="contatos"] > .actions button { flex: none; padding: 10px 14px; }
+  main[data-screen="contatos"] > details, main[data-screen="contatos"] > a.linkcard { display: none; }
+
+  .card { padding: 18px; }
+  .list a:hover { background: var(--chip); }
+  .list a { padding-left: 8px; padding-right: 8px; border-radius: 8px; }
+  button:hover, .btn:hover { filter: brightness(.95); }
+  .toast { bottom: 24px; }
+  .chat-input { bottom: 0; }
+}

@@ -15,10 +15,12 @@
   <script>try { document.documentElement.dataset.theme = localStorage.getItem('tema') || 'light'; } catch {}</script>
 </head>
 <body>
+  <aside class="side hidden" id="side" aria-label="Menu"></aside>
   <header class="topbar">
     <button class="back hidden" id="back" aria-label="Voltar">‹</button>
     <img class="logo" id="logo" src="/icon-192.png" alt="">
     <h1 id="title">Towing J&amp;J</h1>
+    <a class="btn top-new" id="top-new" href="#/novo">＋ Novo serviço</a>
   </header>
   <main id="view" aria-live="polite"></main>
   <nav class="tabs hidden" id="tabs">
