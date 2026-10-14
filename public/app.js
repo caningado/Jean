@@ -364,7 +364,15 @@ screens.novo = async () => {
       phoneBox.innerHTML = list
         .map((c, i) => `<li><button type="button" data-i="${i}"><strong>${esc(c.name)}</strong><span class="sub">${phoneFmt(c.phone)}${c.company_name ? ' · ' + esc(c.company_name) : ''}${c.last?.vehicle ? ' · ' + esc(c.last.vehicle) : ''}</span></button></li>`)
         .join('');
-      phoneBox.hidden = !list.length;
+      if (!list.length) {
+        // Ninguém com esse final: avisa e oferece abrir a agenda do celular.
+        phoneBox.innerHTML = `<li class="none">Não achei ninguém com celular terminando em ${esc(digits.slice(-4))}.${canPickContacts ? ' <button type="button" class="secondary" id="agenda2">📇 Procurar na agenda do celular</button>' : ''}</li>`;
+        phoneBox.hidden = false;
+        const ag = view.querySelector('#agenda2');
+        if (ag) ag.onclick = () => view.querySelector('#agenda').click();
+        return;
+      }
+      phoneBox.hidden = false;
       phoneBox.querySelectorAll('button').forEach((b) => (b.onclick = () => choose(list[Number(b.dataset.i)])));
     }, 300);
   };
