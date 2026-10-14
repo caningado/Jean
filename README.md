@@ -44,10 +44,10 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 | `abrir 12` | Volta a mexer no serviço #12 |
 | `atual`, `pendentes`, `resumo`, `resumo mes`, `ajuda`, `cancelar` | |
 
-Quem não é da equipe (clientes, amigos) e manda mensagem para o número do robô vira contato
-e recebe um "já vamos responder" no máximo uma vez por dia; o dono é avisado no WhatsApp.
-Para mudar, use `WHATSAPP_RESPOSTA_FORA=nunca` (robô fica calado) ou `WHATSAPP_RESPOSTA_FORA=sempre`
-(responde toda mensagem).
+Quem não é da equipe (clientes, amigos) e manda mensagem para o número do robô vira contato,
+mas o robô **não responde nada**: só o dono responde clientes, pelo app WhatsApp Business.
+Se um dia quiser um "já vamos responder" automático, use `WHATSAPP_RESPOSTA_FORA=diaria`
+(no máximo uma vez por dia, com aviso ao dono) ou `WHATSAPP_RESPOSTA_FORA=sempre`.
 
 ## Rodar no computador (para testar)
 

@@ -99,7 +99,7 @@ export async function processMessage(ctx, client, msg) {
 }
 
 // Alguém de fora da equipe (cliente, amigo) mandou mensagem: guarda o contato e,
-// conforme WHATSAPP_RESPOSTA_FORA, responde no máximo 1 vez por dia (padrão), nunca ou sempre.
+// conforme WHATSAPP_RESPOSTA_FORA, nunca responde (padrão), responde no máximo 1 vez por dia ou sempre.
 export async function handleOutsider(ctx, client, msg) {
   const contact = ctx.data.contacts.findOrCreate({ phone: msg.from, name: msg.name, source: 'whatsapp' });
   const mode = ctx.config.whatsapp.outsiderReply;
