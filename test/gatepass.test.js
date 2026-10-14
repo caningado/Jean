@@ -39,3 +39,16 @@ test('gate pass: PDF ou foto no serviço; motorista do serviço abre, outros tip
   assert.equal((await fetch(`${base}/api/docs/${doc.id}`, { method: 'DELETE', headers: { Cookie: owner } })).status, 200);
   assert.equal((await json('GET', `/services/${s.id}`)).docs.length, 0);
 });
+
+test('gate pass: leitor de PDF do app é servido pelo servidor', async (t) => {
+  const ctx = makeContext({ GEOCODER: 'off' });
+  const server = createApp(ctx).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  for (const file of ['/vendor/pdf.mjs', '/vendor/pdf.worker.mjs']) {
+    const res = await fetch(base + file);
+    assert.equal(res.status, 200, file);
+    assert.match(res.headers.get('content-type'), /javascript/);
+  }
+});
