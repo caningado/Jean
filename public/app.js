@@ -87,24 +87,45 @@ const vcfEscape = (v) => String(v).replace(/[\\,;]/g, (m) => '\\' + m).replace(/
 
 // Sugestões de endereço do mapa enquanto digita (retirada e destino).
 function placeSuggestions(input) {
-  const list = document.createElement('datalist');
-  list.id = `places-${input.name}`;
-  input.after(list);
-  input.setAttribute('list', list.id);
+  // Lista própria (não o <datalist> do navegador): o iPhone esconde a opção quando o
+  // texto digitado é o apelido ("ribas") e não aparece no endereço ("643 Barry St").
+  const wrap = document.createElement('div');
+  wrap.className = 'suggest-wrap';
+  input.before(wrap);
+  wrap.append(input);
+  const list = document.createElement('ul');
+  list.className = 'suggest';
+  list.hidden = true;
+  wrap.append(list);
   input.autocomplete = 'off';
   let timer;
+  const close = () => (list.hidden = true);
+  input.addEventListener('blur', () => setTimeout(close, 200));
   input.addEventListener('input', () => {
     clearTimeout(timer);
     const q = input.value.trim();
-    if (q.length < 2 || /https?:\/\//i.test(q)) return;
+    if (q.length < 2 || /https?:\/\//i.test(q)) return close();
     timer = setTimeout(async () => {
       // Endereços com apelido (ex.: "ribas") aparecem primeiro, depois os do mapa.
       const { matches = [], saved = [] } = await api(`/places?q=${encodeURIComponent(q)}`).catch(() => ({}));
       if (input.value.trim() !== q) return;
-      list.innerHTML = [
-        ...saved.map((p) => `<option value="${esc(p.address)}" label="⭐ ${esc(p.nickname)}">`),
-        ...matches.filter((m) => !saved.some((p) => p.address === m)).map((m) => `<option value="${esc(m)}">`),
-      ].join('');
+      const items = [
+        ...saved.map((p) => ({ value: p.address, html: `⭐ <strong>${esc(p.nickname)}</strong><span class="sub">${esc(p.address)}</span>` })),
+        ...matches.filter((m) => !saved.some((p) => p.address === m)).map((m) => ({ value: m, html: esc(m) })),
+      ];
+      list.innerHTML = items.map((it, i) => `<li><button type="button" data-i="${i}">${it.html}</button></li>`).join('');
+      list.hidden = !items.length;
+      list.querySelectorAll('button').forEach((b) => {
+        // pointerdown: escolhe antes do campo perder o foco (e a lista fechar).
+        const pick = (e) => {
+          e.preventDefault();
+          input.value = items[Number(b.dataset.i)].value;
+          close();
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        b.onpointerdown = pick;
+        b.onclick = pick;
+      });
     }, q.length < 6 ? 250 : 600);
   });
 }
