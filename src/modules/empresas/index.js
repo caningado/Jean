@@ -32,7 +32,11 @@ const migrations = [
 function companyAddress(c) {
   if (c.address) return c.address;
   const lines = String(c.bill_to || '').split('\n').map((l) => l.trim()).filter(Boolean);
-  if (lines.length < 2) return null;
+  // Tudo numa linha ("Moving, 100 Main St, Orlando FL"): tira o nome; sobra o endereço se tiver número.
+  if (lines.length === 1) {
+    const rest = simplify(lines[0]).startsWith(simplify(c.name)) ? lines[0].slice(c.name.length).replace(/^[\s,;:-]+/, '') : lines[0];
+    return /\d/.test(rest) ? rest : null;
+  }
   const rest = simplify(lines[0]) === simplify(c.name) || lines.length > 2 ? lines.slice(1) : lines;
   return rest.join(', ') || null;
 }
