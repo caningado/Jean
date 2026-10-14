@@ -174,7 +174,22 @@ function rejectCommand(ctx, text) {
 export function savedPlace(ctx, text) {
   const key = simplify(text).replace(/\s+/g, ' ').trim();
   if (!key) return null;
-  return ctx.db.prepare('SELECT * FROM saved_places WHERE key = ? OR address = ?').get(key, String(text).trim()) || null;
+  const found = ctx.db.prepare('SELECT * FROM saved_places WHERE key = ? OR address = ?').get(key, String(text).trim());
+  if (found) return found;
+  // Endereço de oficina/dealer: vale também o nome da empresa ("Moving"), não só o apelido dela.
+  return placesWithNames(ctx).find((p) => p.company_name && simplify(p.company_name).replace(/\s+/g, ' ').trim() === key) || null;
+}
+
+// Endereços com apelido + o nome da empresa dona do endereço (quando é de uma oficina/dealer).
+function placesWithNames(ctx) {
+  const withCompanies = ctx.has('empresas');
+  return ctx.db
+    .prepare(
+      withCompanies
+        ? 'SELECT p.*, c.name AS company_name FROM saved_places p LEFT JOIN companies c ON c.place_id = p.id ORDER BY p.nickname COLLATE NOCASE'
+        : 'SELECT p.*, NULL AS company_name FROM saved_places p ORDER BY p.nickname COLLATE NOCASE'
+    )
+    .all();
 }
 
 async function resolvePlace(ctx, location) {
@@ -757,7 +772,13 @@ function routes(api, ctx) {
     const q = String(req.query.q || '').trim();
     // Endereços com apelido vêm primeiro (a partir de 2 letras).
     const key = simplify(q);
-    const saved = key.length >= 2 ? db.prepare('SELECT nickname, address FROM saved_places ORDER BY nickname COLLATE NOCASE').all().filter((p) => simplify(p.nickname).includes(key) || simplify(p.address).includes(key)).slice(0, 5) : [];
+    const saved =
+      key.length >= 2
+        ? placesWithNames(ctx)
+            .filter((p) => [p.nickname, p.address, p.company_name].some((v) => v && simplify(v).includes(key)))
+            .slice(0, 5)
+            .map((p) => ({ nickname: p.company_name && simplify(p.company_name) !== simplify(p.nickname) ? `${p.nickname} · ${p.company_name}` : p.nickname, address: p.address }))
+        : [];
     if (!ctx.geo || q.length < 4 || q.length > 200 || isMapReference(q)) return res.json({ matches: [], saved });
     const found = await ctx.geo.lookup(q);
     const labels = found.matches.map((m) => m.label);
