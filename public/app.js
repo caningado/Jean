@@ -927,7 +927,6 @@ screens.contatos = async (params) => {
   const company = (c) => (c.company_id && companyOf[c.company_id]) || '';
   // Números de serviços e valores: só o dono recebe do servidor.
   const owner = state.me.role === 'dono';
-  const sum = (k) => list.reduce((t, c) => t + (c[k] || 0), 0);
   if (isDesk()) {
     view.querySelector('#list').closest('.card').outerHTML = list.length
       ? `<div class="card table-card"><table class="table">
@@ -936,7 +935,7 @@ screens.contatos = async (params) => {
             .map(
               (c) => `<tr data-href="#/contato/${c.id}" tabindex="0"><td><strong>${esc(c.name)}</strong></td><td class="nowrap">${phoneFmt(c.phone)}</td>${has('empresas') ? `<td>${esc(company(c)) || '<span class="sub">Particular</span>'}</td>` : ''}<td>${esc(c.email || '')}</td>${owner ? `<td class="num">${c.month_count || ''}</td><td class="num">${c.year_count || ''}</td><td class="num">${c.month_cents ? money(c.month_cents) : ''}</td><td class="num">${c.year_cents ? money(c.year_cents) : ''}</td>` : ''}</tr>`
             )
-            .join('')}</tbody>${owner ? `<tfoot><tr><td colspan="${has('empresas') ? 4 : 3}" class="sub">${list.length} cliente(s) · sem os cancelados</td>${['month_count', 'year_count'].map((k) => `<td class="num"><strong>${sum(k)}</strong></td>`).join('')}${['month_cents', 'year_cents'].map((k) => `<td class="num"><strong>${money(sum(k))}</strong></td>`).join('')}</tr></tfoot>` : ''}</table></div>`
+            .join('')}</tbody></table></div>`
       : '<div class="card"><p class="empty">Nenhum cliente. Traga a agenda do celular ou adicione um.</p></div>';
     linkRows(view);
     return;
