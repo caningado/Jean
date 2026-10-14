@@ -187,15 +187,105 @@ function pickPhoto() {
   });
 }
 
+// ---------- computador ----------
+// Tela grande: menu na lateral, tabelas no lugar das listas e cartões lado a lado.
+const deskQuery = window.matchMedia('(min-width: 1000px)');
+const isDesk = () => deskQuery.matches;
+const sideEl = document.getElementById('side');
+const ICONS = {
+  servicos: '<path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/>',
+  novo: '<circle cx="12" cy="12" r="9"/><path d="M12 8v8"/><path d="M8 12h8"/>',
+  contatos: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  resumo: '<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+  pendentes: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  planilha: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/>',
+  despesas: '<path d="M4 2v20l3-2 3 2 3-2 3 2 3-2 1 .7V2l-1 .7-3-2-3 2-3-2-3 2-3-2Z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/>',
+  caminhoes: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z"/>',
+  comissao: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01"/><path d="M18 12h.01"/>',
+  empresas: '<path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 9h1"/><path d="M14 9h1"/><path d="M9 13h1"/><path d="M14 13h1"/><path d="M10 21v-4h4v4"/>',
+  equipe: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
+  empresa: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/>',
+  enderecos: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+  backup: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
+  robo: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/>',
+  mais: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
+  sair: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
+};
+// Telas de dentro apontam para o item do menu de onde vieram.
+const SIDE_PARENT = { servico: 'servicos', editar: 'servicos', invoice: 'servicos', contato: 'contatos', cliente: 'empresas', manutencao: 'caminhoes', motorista: 'comissao' };
+
+function renderSide() {
+  if (!state.me) return;
+  const owner = state.me.role === 'dono';
+  const item = (key, href, label) => `<a href="${href}" data-side="${key}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[key] || ICONS.mais}</svg><span>${label}</span></a>`;
+  const groups = [
+    ['', [item('servicos', '#/servicos', 'Serviços'), item('novo', '#/novo', 'Novo serviço'), item('contatos', '#/contatos', 'Contatos'), item('resumo', '#/resumo', 'Resumo')]],
+    [
+      'Financeiro',
+      [
+        has('pagamentos') ? item('pendentes', '#/pendentes', 'Pendências') : '',
+        has('comissao') ? item('comissao', owner ? '#/comissao' : `#/motorista/${state.me.id}`, owner ? 'Pagar motoristas' : 'Meus ganhos') : '',
+        has('despesas') ? item('despesas', '#/despesas', 'Despesas') : '',
+        has('planilha') ? item('planilha', '#/planilha', 'Planilha do Excel') : '',
+      ],
+    ],
+    [
+      'Empresa',
+      [
+        has('manutencao') ? item('caminhoes', '#/caminhoes', 'Caminhões') : '',
+        has('empresas') && owner ? item('empresas', '#/empresas', 'Oficinas e dealers') : '',
+        owner ? item('equipe', '#/equipe', 'Equipe') : '',
+        has('invoice') && owner ? item('empresa', '#/empresa', 'Dados da empresa') : '',
+        item('enderecos', '#/enderecos', 'Endereços com apelido'),
+        has('backup') && owner ? item('backup', '#/backup', 'Backup') : '',
+        item('robo', '#/robo', 'Testar o robô'),
+      ],
+    ],
+  ];
+  sideEl.innerHTML = `
+    <div class="side-brand"><img src="/icon-192.png" alt=""><span>${esc(state.company)}</span></div>
+    <nav>${groups
+      .map(([title, items]) => (items.join('') ? `${title ? `<div class="side-title">${title}</div>` : ''}${items.join('')}` : ''))
+      .join('')}</nav>
+    <div class="side-foot">
+      ${item('mais', '#/mais', 'Configurações')}
+      <div class="side-me"><strong>${esc(state.me.name)}</strong><span>${owner ? 'Dono' : 'Motorista'}</span></div>
+      ${item('sair', '#/sair', 'Sair')}
+    </div>`;
+}
+
+function markSide(tab) {
+  let key = SIDE_PARENT[state.screen] || state.screen;
+  if (!sideEl.querySelector(`[data-side="${key}"]`)) key = tab === 'mais' ? 'mais' : tab;
+  sideEl.querySelectorAll('a').forEach((a) => a.classList.toggle('active', a.dataset.side === key));
+}
+
 function setScreen(title, { tab = null, back = null } = {}) {
   titleEl.textContent = title;
   document.title = `${title} · ${state.company}`;
   tabs.classList.toggle('hidden', !state.me);
+  sideEl.classList.toggle('hidden', !state.me);
+  document.body.classList.toggle('logged', Boolean(state.me));
+  if (state.me) markSide(tab);
+  view.dataset.screen = state.screen || '';
   tabs.querySelectorAll('a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
+  // No computador o menu lateral já leva a essas telas: o "voltar" só fica nas telas de dentro.
+  if (isDesk() && state.me && sideEl.querySelector(`[data-side="${state.screen}"]`)) back = null;
   backBtn.classList.toggle('hidden', !back);
   document.getElementById('logo').classList.toggle('hidden', Boolean(back));
   backBtn.onclick = back ? () => (location.hash = back) : null;
   window.scrollTo(0, 0);
+}
+
+// Linhas de tabela que abrem uma tela ao clicar (ou Enter no teclado).
+function linkRows(root) {
+  root.querySelectorAll('tr[data-href]').forEach((tr) => {
+    tr.onclick = (e) => {
+      if (e.target.closest('a, button, input, select')) return;
+      location.hash = tr.dataset.href;
+    };
+    tr.onkeydown = (e) => e.key === 'Enter' && tr.click();
+  });
 }
 
 // ---------- telas ----------
@@ -284,6 +374,59 @@ screens.servicos = async (params) => {
   const empty = status === 'pendente' ? 'Nenhum serviço na fila. 👍' : 'Nenhum serviço aqui.';
   if (status === 'aberto' && fila.length) {
     view.querySelector('.segmented').insertAdjacentHTML('afterend', `<a class="card linkcard" href="${query('pendente', driver)}"><span>⏳ <strong>${fila.length}</strong> serviço(s) na fila, sem motorista</span><span>›</span></a>`);
+  }
+  if (isDesk()) {
+    // Computador: tabela com tudo numa linha só, e busca rápida na lista.
+    const owner = state.me.role === 'dono';
+    const short = (t) => esc((t || '').replace(/https?:\/\/\S+/g, 'local no mapa'));
+    const tools = document.createElement('div');
+    tools.className = 'toolbar';
+    tools.innerHTML = '<input type="search" id="filtro" placeholder="Filtrar por cliente, veículo, endereço…" aria-label="Filtrar">';
+    const segmented = view.querySelector('.segmented');
+    tools.prepend(segmented);
+    if (select) tools.append(select);
+    view.prepend(tools);
+    const filaCard = tools.querySelector('.linkcard');
+    if (filaCard) tools.after(filaCard);
+    view.querySelector('.card:last-child').outerHTML = list.length
+      ? `<div class="card table-card"><table class="table">
+          <thead><tr><th>#</th><th>Cliente</th><th>Veículo</th><th>Retirada → Destino</th>${owner ? '<th>Motorista</th>' : ''}<th>Data</th><th class="num">Valor</th><th>Status</th></tr></thead>
+          <tbody>${list
+            .map(
+              (s) => `<tr data-href="#/servico/${s.id}" data-cents="${s.price_cents || 0}" tabindex="0">
+                <td class="sub">${s.id}</td>
+                <td><strong>${esc(s.contact_name || 'Sem cliente')}</strong>${s.contact_phone ? `<div class="sub">${phoneFmt(s.contact_phone)}</div>` : ''}</td>
+                <td>${esc([s.vehicle, s.plate].filter(Boolean).join(' · ')) || '<span class="sub">—</span>'}</td>
+                <td class="route"><div>${short(s.pickup_name || s.pickup) || '<span class="sub">—</span>'}</div>${s.dropoff || s.dropoff_name ? `<div class="sub">→ ${short(s.dropoff_name || s.dropoff)}</div>` : ''}</td>
+                ${owner ? `<td>${esc(s.driver_name || '') || '<span class="sub">—</span>'}</td>` : ''}
+                <td class="nowrap">${when(s.created_at)}</td>
+                <td class="num">${s.price_cents != null ? money(s.price_cents) : '<span class="sub">—</span>'}</td>
+                <td><span class="badge ${s.status}">${STATUS[s.status]}</span></td>
+              </tr>`
+            )
+            .join('')}</tbody>
+          <tfoot><tr><td colspan="${owner ? 6 : 5}" class="sub" id="conta">${list.length} serviço(s)</td><td class="num"><strong id="soma">${money(list.reduce((t, s) => t + (s.price_cents || 0), 0))}</strong></td><td></td></tr></tfoot>
+        </table></div>`
+      : `<div class="card"><p class="empty">${empty}</p></div>`;
+    linkRows(view);
+    const filtro = view.querySelector('#filtro');
+    filtro.oninput = () => {
+      const q = filtro.value.trim().toLowerCase();
+      let n = 0;
+      let cents = 0;
+      view.querySelectorAll('tbody tr').forEach((tr) => {
+        const show = !q || tr.textContent.toLowerCase().includes(q);
+        tr.classList.toggle('hidden', !show);
+        if (show) {
+          n += 1;
+          cents += Number(tr.dataset.cents);
+        }
+      });
+      if (!list.length) return;
+      view.querySelector('#conta').textContent = `${n} serviço(s)`;
+      view.querySelector('#soma').textContent = money(cents);
+    };
+    return;
   }
   view.querySelector('#list').innerHTML = list.length
     ? list
@@ -779,6 +922,19 @@ screens.contatos = async (params) => {
     };
   }
   const list = await api(`/contacts?q=${encodeURIComponent(q)}`);
+  if (isDesk()) {
+    view.querySelector('#list').closest('.card').outerHTML = list.length
+      ? `<div class="card table-card"><table class="table">
+          <thead><tr><th>Nome</th><th>Telefone</th><th>E-mail</th><th class="num">Serviços</th></tr></thead>
+          <tbody>${list
+            .map(
+              (c) => `<tr data-href="#/contato/${c.id}" tabindex="0"><td><strong>${esc(c.name)}</strong></td><td class="nowrap">${phoneFmt(c.phone)}</td><td>${esc(c.email || '')}</td><td class="num">${c.services_count || ''}</td></tr>`
+            )
+            .join('')}</tbody></table></div>`
+      : '<div class="card"><p class="empty">Nenhum contato. Traga a agenda do celular ou adicione um.</p></div>';
+    linkRows(view);
+    return;
+  }
   view.querySelector('#list').innerHTML = list.length
     ? list
         .map(
@@ -2151,6 +2307,7 @@ async function loadMe() {
     state.modules = me.modules;
     state.company = me.company;
     state.pricing = me.pricing;
+    renderSide();
   } catch {
     state.me = null;
   }
@@ -2164,15 +2321,20 @@ async function route() {
     location.hash = '#/login';
     return;
   }
+  const nav = (state.nav = (state.nav || 0) + 1);
   const screen = screens[name] || screens.servicos;
+  state.screen = screens[name] ? name : 'servicos';
   try {
     await screen(params, id);
   } catch (err) {
-    if (state.me) view.innerHTML = `<div class="card empty">${esc(err.message)}</div>`;
+    // Erro de uma tela que já foi trocada por outra (clique rápido) não aparece.
+    if (state.me && nav === state.nav) view.innerHTML = `<div class="card empty">${esc(err.message)}</div>`;
   }
 }
 
 window.addEventListener('hashchange', route);
+// Virou a tela (ou mudou o tamanho da janela): desenha de novo no formato certo.
+deskQuery.addEventListener('change', () => state.me && route());
 await loadMe();
 if (!location.hash) location.hash = state.me ? '#/servicos' : '#/login';
 else route();
