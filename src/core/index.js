@@ -799,6 +799,12 @@ function routes(api, ctx) {
     if (companyId && contactId && ctx.has('empresas') && ctx.db.prepare('SELECT 1 FROM companies WHERE id = ?').get(companyId)) {
       ctx.db.prepare('UPDATE contacts SET company_id = ? WHERE id = ? AND company_id IS NULL').run(companyId, contactId);
     }
+    // Toque duplo no "Criar serviço": o mesmo pedido em menos de 30 s devolve o serviço já criado.
+    const since = new Date(Date.now() - 30 * 1000).toISOString();
+    const twinService = ctx.db
+      .prepare("SELECT id FROM services WHERE created_at >= ? AND IFNULL(contact_id, 0) = ? AND IFNULL(pickup, '') = ? AND status IN ('aberto', 'pendente') ORDER BY id DESC")
+      .get(since, contactId || 0, fields.pickup || '');
+    if (twinService) return res.status(200).json(data.services.get(twinService.id));
     // "fila": entra como pendente, sem motorista, até o dono escolher quem vai. Só o dono.
     if (req.user.role === 'dono' && (body.fila === true || body.fila === '1' || body.driver_id === 'fila' || body.status === 'pendente')) {
       const service = data.services.create({ ...fields, driver_id: null, contact_id: contactId, status: 'pendente' });

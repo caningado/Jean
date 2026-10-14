@@ -402,8 +402,15 @@ screens.novo = async () => {
     form.price.value = ((pricing.baseCents + miles * pricing.perMileCents) / 100).toFixed(2);
   };
   form.price.oninput = () => (form.price.dataset.touched = '1');
+  // Trava o botão enquanto salva: dois toques (internet lenta) não criam dois serviços.
+  let saving = false;
   form.onsubmit = async (e) => {
     e.preventDefault();
+    if (saving) return;
+    saving = true;
+    const btn = form.querySelector('button[type=submit], button:not([type])');
+    const label = btn?.textContent;
+    if (btn) (btn.disabled = true), (btn.textContent = 'Salvando…');
     try {
       const body = formData(form);
       if (body.driver_id && body.driver_id !== 'fila') body.driver_id = Number(body.driver_id);
@@ -412,6 +419,9 @@ screens.novo = async () => {
       location.hash = `#/servico/${service.id}`;
     } catch (err) {
       toast(err.message);
+    } finally {
+      saving = false;
+      if (btn) (btn.disabled = false), (btn.textContent = label);
     }
   };
 };
