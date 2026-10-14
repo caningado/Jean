@@ -806,7 +806,9 @@ function routes(api, ctx) {
       .get(since, contactId || 0, fields.pickup || '');
     if (twinService) return res.status(200).json(data.services.get(twinService.id));
     // "fila": entra como pendente, sem motorista, até o dono escolher quem vai. Só o dono.
-    if (req.user.role === 'dono' && (body.fila === true || body.fila === '1' || body.driver_id === 'fila' || body.status === 'pendente')) {
+    // Sem motorista escolhido, o serviço do dono também começa Pendente.
+    const noDriver = body.driver_id == null || body.driver_id === '';
+    if (req.user.role === 'dono' && (noDriver || body.fila === true || body.fila === '1' || body.driver_id === 'fila' || body.status === 'pendente')) {
       const service = data.services.create({ ...fields, driver_id: null, contact_id: contactId, status: 'pendente' });
       return res.status(201).json(service);
     }
