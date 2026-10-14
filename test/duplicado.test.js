@@ -21,3 +21,20 @@ test('toque duplo em "Criar serviço" não cria dois serviços', async (t) => {
   const c = await post({ ...body, pickup: '2 Main St' });
   assert.notEqual(c.id, a.id);
 });
+
+test('serviço novo do dono começa Pendente; com motorista escolhido, em andamento', async (t) => {
+  const ctx = makeContext({ GEOCODER: 'off' });
+  const server = createApp(ctx).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const cookie = (await fetch(`${base}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: OWNER_PHONE, pin: '1234' }) }))
+    .headers.get('set-cookie').split(';')[0];
+  const post = (b) => fetch(`${base}/api/services`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.json());
+  const a = await post({ contact_name: 'Ana Lima', pickup: '1 Main St' });
+  assert.equal(a.status, 'pendente');
+  assert.equal(a.driver_id, null);
+  const ownerId = ctx.db.prepare("SELECT id FROM users WHERE role = 'dono'").get().id;
+  const b = await post({ contact_name: 'Bruno Alves', pickup: '2 Main St', driver_id: ownerId });
+  assert.equal(b.status, 'aberto');
+});

@@ -286,7 +286,7 @@ screens.novo = async () => {
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal"></div>
       </div>
       ${priced ? `<p class="sub">Tabela: ${money(pricing.baseCents)} + ${money(pricing.perMileCents)} por milha.</p>` : ''}
-      ${drivers.length ? `<label>Motorista</label><select name="driver_id">${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}" ${d.id === state.me.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}<option value="fila">⏳ Ninguém ainda (Pendente)</option></select>` : ''}
+      ${drivers.length ? `<label>Motorista</label><select name="driver_id"><option value="fila" selected>⏳ Ninguém ainda (Pendente)</option>${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select><p class="sub">O serviço entra como Pendente. Escolha o motorista agora ou depois, na tela do serviço.</p>` : ''}
       <label>Observações</label><textarea name="notes" rows="2"></textarea>
       <button class="block">Criar serviço</button>
     </form>`;
