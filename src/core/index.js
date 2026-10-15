@@ -82,11 +82,26 @@ const migrations = [
      address TEXT NOT NULL,
      created_at TEXT NOT NULL
    );`,
+  // Empresa do motorista: Towing J&J (jj) ou Towing VIP (vip). Os serviços dele contam para ela.
+  `ALTER TABLE users ADD COLUMN firm TEXT NOT NULL DEFAULT 'jj';`,
 ];
+
+// As duas empresas do dono. O nome da J&J vem dos dados da invoice.
+export const FIRM_IDS = ['jj', 'vip'];
+export function firmName(ctx, id) {
+  if (id === 'vip') return 'Towing VIP LLC';
+  return ctx.api.invoice?.getCompany()?.name || ctx.config.companyName;
+}
+
+function checkFirm(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (!FIRM_IDS.includes(value)) throw new HttpError(400, 'Empresa inválida.');
+  return value;
+}
 
 function publicUser(u) {
   if (!u) return null;
-  return { id: u.id, name: u.name, phone: u.phone, role: u.role, active: !!u.active };
+  return { id: u.id, name: u.name, phone: u.phone, role: u.role, active: !!u.active, firm: u.firm || 'jj' };
 }
 
 function requireOwner(req) {
@@ -644,6 +659,7 @@ function routes(api, ctx) {
     res.json({
       user: publicUser(req.user),
       company: ctx.config.companyName,
+      firms: FIRM_IDS.map((id) => ({ id, name: firmName(ctx, id) })),
       modules: ctx.loaded.map((m) => ({ name: m.name, label: m.label })),
       pricing: ctx.config.pricing,
     });
@@ -657,13 +673,14 @@ function routes(api, ctx) {
   api.post('/users', (req, res) => {
     requireOwner(req);
     const { role = 'motorista' } = req.body || {};
+    const firm = checkFirm(req.body?.firm);
     const name = checkName(req.body?.name);
     const p = checkPhone(req.body?.phone);
     const pin = blank(req.body?.pin) ? null : checkPin(req.body.pin);
     if (db.prepare('SELECT 1 FROM users WHERE phone = ?').get(p)) throw new HttpError(409, 'Esse telefone já está na equipe.');
     const info = db
-      .prepare('INSERT INTO users (name, phone, role, pin_hash, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(name, p, role === 'dono' ? 'dono' : 'motorista', pin ? hashPin(pin) : null, new Date().toISOString());
+      .prepare('INSERT INTO users (name, phone, role, pin_hash, firm, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(name, p, role === 'dono' ? 'dono' : 'motorista', pin ? hashPin(pin) : null, firm || 'jj', new Date().toISOString());
     res.status(201).json(publicUser(data.users.get(Number(info.lastInsertRowid))));
   });
   api.patch('/users/:id', (req, res) => {
@@ -679,6 +696,8 @@ function routes(api, ctx) {
       user.id
     );
     if (!blank(pin)) db.prepare('UPDATE users SET pin_hash = ? WHERE id = ?').run(hashPin(checkPin(pin)), user.id);
+    const firm = checkFirm(req.body?.firm);
+    if (firm) db.prepare('UPDATE users SET firm = ? WHERE id = ?').run(firm, user.id);
     res.json(publicUser(data.users.get(user.id)));
   });
 
@@ -1019,7 +1038,7 @@ function routes(api, ctx) {
     const end = startOfDayIso(tz, new Date(Date.UTC(y, m - 1, d + 1, 12)));
     const rows = db
       .prepare(
-        `SELECT s.*, c.name AS contact_name, c.phone AS contact_phone, u.name AS driver_name
+        `SELECT s.*, c.name AS contact_name, c.phone AS contact_phone, u.name AS driver_name, u.firm AS driver_firm
          FROM services s LEFT JOIN contacts c ON c.id = s.contact_id LEFT JOIN users u ON u.id = s.driver_id
          WHERE s.status <> 'cancelado'
            AND ((s.created_at >= ? AND s.created_at < ?) OR (s.completed_at >= ? AND s.completed_at < ?))
@@ -1034,30 +1053,36 @@ function routes(api, ctx) {
       return { ...s, ...b, methods: [...new Set(methods)] };
     });
     const sum = (list, key) => list.reduce((t, s) => t + (s[key] || 0), 0);
-    const byDriver = new Map();
-    for (const s of services) {
-      const name = s.driver_name || 'Sem motorista';
-      const g = byDriver.get(name) || { name, count: 0, price_cents: 0, received_cents: 0 };
-      g.count++;
-      g.price_cents += s.price_cents || 0;
-      g.received_cents += Math.min(s.received_cents, s.price_cents || 0);
-      byDriver.set(name, g);
-    }
-    const received = services.reduce((t, s) => t + Math.min(s.received_cents, s.price_cents || 0), 0);
-    res.json({
-      day,
-      today: todayLocal,
-      company: ctx.api.invoice?.getCompany()?.name || ctx.config.companyName,
-      services,
-      drivers: [...byDriver.values()],
-      totals: {
-        count: services.length,
-        delivered: services.filter((s) => s.status === 'concluido').length,
-        price_cents: sum(services, 'price_cents'),
-        received_cents: received,
-        open_cents: sum(services, 'price_cents') - received,
-      },
+    const paidPart = (s) => Math.min(s.received_cents, s.price_cents || 0);
+    // Uma folha por empresa: o serviço conta para a empresa do motorista.
+    // Sem motorista ainda: fica na folha da J&J.
+    const reports = FIRM_IDS.map((firm) => {
+      const list = services.filter((s) => (s.driver_firm || 'jj') === firm);
+      const byDriver = new Map();
+      for (const s of list) {
+        const name = s.driver_name || 'Sem motorista';
+        const g = byDriver.get(name) || { name, count: 0, price_cents: 0, received_cents: 0 };
+        g.count++;
+        g.price_cents += s.price_cents || 0;
+        g.received_cents += paidPart(s);
+        byDriver.set(name, g);
+      }
+      const received = sum(list.map((s) => ({ v: paidPart(s) })), 'v');
+      return {
+        firm,
+        name: firmName(ctx, firm),
+        services: list,
+        drivers: [...byDriver.values()],
+        totals: {
+          count: list.length,
+          delivered: list.filter((s) => s.status === 'concluido').length,
+          price_cents: sum(list, 'price_cents'),
+          received_cents: received,
+          open_cents: sum(list, 'price_cents') - received,
+        },
+      };
     });
+    res.json({ day, today: todayLocal, reports });
   });
 
   // Simulador: conversa com o robô pelo painel, sem precisar do WhatsApp.

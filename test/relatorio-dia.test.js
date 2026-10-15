@@ -24,15 +24,29 @@ test('Relatório do dia: serviços do dia, sem cancelados, com pago e a receber'
   ctx.db.prepare('UPDATE services SET created_at = ? WHERE id = ?').run(new Date(Date.now() - 3 * 86400000).toISOString(), ontem.id);
 
   const r = await json('GET', '/relatorio/dia');
-  assert.deepEqual(r.services.map((s) => s.id), [pago.id, falta.id]);
-  assert.deepEqual(r.services[0].methods, ['Zelle']);
-  assert.equal(r.totals.price_cents, 35000);
-  assert.equal(r.totals.received_cents, 15000);
-  assert.equal(r.totals.open_cents, 20000);
+  const jj = r.reports.find((x) => x.firm === 'jj');
+  assert.deepEqual(r.reports.map((x) => x.firm), ['jj', 'vip']);
+  assert.equal(r.reports[1].name, 'Towing VIP LLC');
+  assert.deepEqual(jj.services.map((s) => s.id), [pago.id, falta.id]);
+  assert.deepEqual(jj.services[0].methods, ['Zelle']);
+  assert.equal(jj.totals.price_cents, 35000);
+  assert.equal(jj.totals.received_cents, 15000);
+  assert.equal(jj.totals.open_cents, 20000);
 
   // Outro dia: o serviço de 3 dias atrás aparece lá.
   const dia = new Intl.DateTimeFormat('en-CA', { timeZone: ctx.config.timeZone }).format(new Date(Date.now() - 3 * 86400000));
-  assert.deepEqual((await json('GET', `/relatorio/dia?dia=${dia}`)).services.map((s) => s.id), [ontem.id]);
+  assert.deepEqual((await json('GET', `/relatorio/dia?dia=${dia}`)).reports[0].services.map((s) => s.id), [ontem.id]);
+
+  // Motorista da VIP: os serviços dele vão para a folha da VIP.
+  const jorge = (await json('GET', '/users')).find((u) => u.name === 'Jorge');
+  assert.equal(jorge.firm, 'jj');
+  assert.equal((await call('PATCH', `/users/${jorge.id}`, { firm: 'xx' })).status, 400);
+  assert.equal((await json('PATCH', `/users/${jorge.id}`, { firm: 'vip' })).firm, 'vip');
+  await call('PATCH', `/services/${falta.id}`, { driver_id: jorge.id });
+  const r2 = await json('GET', '/relatorio/dia');
+  assert.deepEqual(r2.reports[0].services.map((s) => s.id), [pago.id]);
+  assert.deepEqual(r2.reports[1].services.map((s) => s.id), [falta.id]);
+  assert.equal(r2.reports[1].totals.price_cents, 20000);
 
   // Motorista não vê o relatório.
   const driver = await login(DRIVER_PHONE, '5678');

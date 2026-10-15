@@ -383,6 +383,8 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .rel-table th, .rel-table td { padding: 7px 6px; }
 .rel-table .sub { font-size: 12px; }
 .rel-foot { margin-top: 14px; }
+.relatorio.firm-vip .rel-head { border-bottom-color: #6AA74E; }
+.firm-pick { width: auto; margin-top: 6px; padding: 6px 8px; font-size: 13.5px; }
 /* Verde claro = pago; vermelho bem claro = falta receber (sem valor fica sem cor) */
 .rel-table tbody tr.rel-pago td { background: #e6f4e1; }
 .rel-table tbody tr.rel-nao-pago td { background: #fdeeee; }
@@ -403,7 +405,8 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
   .topbar, .tabs, .side, .toast, .no-print { display: none !important; }
   body.logged, body { padding: 0 !important; }
   body.logged main, main { padding: 0 !important; margin: 0 !important; max-width: none !important; }
-  .card.relatorio { border: 0; box-shadow: none; padding: 0; margin: 0; }
+  .card.relatorio { border: 0; box-shadow: none; padding: 0; margin: 0; break-after: page; }
+  .card.relatorio:last-of-type { break-after: auto; }
   .rel-scroll { overflow: visible; }
   .rel-table.table { min-width: 0 !important; font-size: 10.5px; }
   .rel-table th, .rel-table td { padding: 4px 6px; }
@@ -411,6 +414,7 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
   .rel-table th { position: static; background: #eee; color: #000; }
   .rel-table tr { break-inside: avoid; }
   .rel-head { border-bottom-color: #C8102E; }
+  .relatorio.firm-vip .rel-head { border-bottom-color: #6AA74E; }
   .relatorio { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   :root[data-theme="dark"] .rel-table tbody tr.rel-pago td, .rel-table tbody tr.rel-pago td { background: #e6f4e1 !important; }
   :root[data-theme="dark"] .rel-table tbody tr.rel-nao-pago td, .rel-table tbody tr.rel-nao-pago td { background: #fdeeee !important; }
