@@ -79,7 +79,7 @@ test('empresa com vários solicitantes: extrato agrupado e só o que está em ab
   const inv = await owner(`/services/${s1.id}/invoices`);
   assert.match(inv.data.draft.bill_to, /^USAVE MOTORS\n/);
   assert.match(inv.data.draft.items[0].details, /Requested by: Mike/);
-  assert.equal((await owner(`/services/${s1.id}`)).data.company_name, 'USAVE Motors');
+  assert.equal((await owner(`/services/${s1.id}`)).data.company_name, 'USAVE MOTORS');
 });
 
 test('robô: empresa e extrato', async () => {
