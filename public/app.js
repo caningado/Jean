@@ -1507,7 +1507,7 @@ screens.relatorio = async (params) => {
         ? `<div class="rel-scroll"><table class="table rel-table rel-main"><thead><tr><th>Nº</th><th>Hora</th><th>Motorista</th><th>Cliente</th><th>Telefone</th><th>Veículo</th><th>Retirada → Entrega</th><th>Situação</th><th>Pagamento</th><th class="num">Valor</th></tr></thead>
           <tbody>${r.services
             .map(
-              (s) => `<tr><td class="nowrap">#${s.id}</td><td class="nowrap">${hora(s.created_at)}</td><td>${esc(s.driver_name || '–')}</td>
+              (s) => `<tr class="${!s.price_cents ? '' : s.received_cents >= s.price_cents ? 'rel-pago' : 'rel-nao-pago'}"><td class="nowrap">#${s.id}</td><td class="nowrap">${hora(s.created_at)}</td><td>${esc(s.driver_name || '–')}</td>
                 <td>${esc(s.contact_name || '')}</td><td class="nowrap">${s.contact_phone ? phoneFmt(s.contact_phone) : '–'}</td>
                 <td>${esc(s.vehicle || '')}${s.plate ? `<div class="sub">${esc(s.plate)}</div>` : ''}</td>
                 <td>${short(s.pickup)}${s.dropoff ? `<div class="sub">→ ${short(s.dropoff)}</div>` : ''}</td>

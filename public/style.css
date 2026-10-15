@@ -383,6 +383,11 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .rel-table th, .rel-table td { padding: 7px 6px; }
 .rel-table .sub { font-size: 12px; }
 .rel-foot { margin-top: 14px; }
+/* Verde claro = pago; vermelho bem claro = falta receber (sem valor fica sem cor) */
+.rel-table tbody tr.rel-pago td { background: #e6f4e1; }
+.rel-table tbody tr.rel-nao-pago td { background: #fdeeee; }
+:root[data-theme="dark"] .rel-table tbody tr.rel-pago td { background: var(--pago-bg); }
+:root[data-theme="dark"] .rel-table tbody tr.rel-nao-pago td { background: var(--nao-pago-bg); }
 @media (max-width: 560px) { .rel-stats { grid-template-columns: repeat(2, 1fr); } .rel-main { min-width: 1080px; } }
 
 @media print {
@@ -398,4 +403,7 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
   .rel-table th { position: static; background: #eee; color: #000; }
   .rel-table tr { break-inside: avoid; }
   .rel-head { border-bottom-color: #C8102E; }
+  .relatorio { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  :root[data-theme="dark"] .rel-table tbody tr.rel-pago td, .rel-table tbody tr.rel-pago td { background: #e6f4e1 !important; }
+  :root[data-theme="dark"] .rel-table tbody tr.rel-nao-pago td, .rel-table tbody tr.rel-nao-pago td { background: #fdeeee !important; }
 }
