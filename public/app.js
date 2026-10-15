@@ -1752,8 +1752,9 @@ screens.empresa = async () => {
       ${field('email', 'E-mail', 'type="email"')}
       <div class="row2"><div>${field('zelle', 'Zelle')}</div><div>${field('zelleName', 'Nome no Zelle')}</div></div>
       ${field('itemName', 'Nome do serviço no invoice')}
-      <div class="row2"><div><label>Próximo número</label><input name="nextNumber" inputmode="numeric" value="${c.next_number}"></div>
+      <div class="row2"><div><label>Próximo número</label><input value="${c.next_number}" disabled></div>
         <div><label>Prazo (dias)</label><input name="dueDays" inputmode="numeric" value="${c.dueDays}"></div></div>
+      <p class="sub">O número do invoice é ano + mês + sequência do mês (ex.: 2610001 = outubro de 2026, o 1º do mês).</p>
       <button class="block">Salvar</button>
     </form>
     <div class="card"><h2>Logo</h2><img class="logo-preview" src="/api/company/logo?t=${Date.now()}" alt="Logo">
