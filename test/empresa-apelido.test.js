@@ -61,6 +61,9 @@ test('empresa que exige VIN e sempre faz invoice', async (t) => {
   assert.equal(co.requires_vin, 1);
   const { body: s } = await call('POST', '/services', { contact_name: 'ss', pickup: '1 Main St, Oviedo FL', price: '150', driver_id: driver.id });
   assert.equal((await call('GET', `/services/${s.id}`)).body.company_requires_vin, true);
+  // Entrou na fila do motorista; ele começa.
+  assert.equal(s.status, 'pendente');
+  assert.match((await chat(ctx, DRIVER_PHONE, `abrir ${s.id}`))[0], /agora estou no serviço/);
 
   // Sem VIN não fecha (painel e WhatsApp).
   const r = await call('PATCH', `/services/${s.id}`, { status: 'concluido' }, drv);
@@ -83,6 +86,7 @@ test('empresa que exige VIN e sempre faz invoice', async (t) => {
 
   // Pelo WhatsApp também.
   const { body: s2 } = await call('POST', '/services', { contact_name: 'ss', pickup: '1 Main St, Oviedo FL', price: '90', driver_id: driver.id });
+  await chat(ctx, DRIVER_PHONE, `abrir ${s2.id}`);
   ctx.db.prepare("UPDATE services SET vin = '1HGCM82633A004352' WHERE id = ?").run(s2.id);
   const [fim] = await chat(ctx, DRIVER_PHONE, 'entregue');
   assert.match(fim, /entregue/);

@@ -49,6 +49,8 @@ export function loadConfig(overrides = {}) {
     },
     // Cobrança atrasada: avisa quando passa desse número de dias sem receber.
     overdueDays: Number(env.COBRANCA_DIAS) > 0 ? Number(env.COBRANCA_DIAS) : 7,
+    // Quantos serviços um motorista pode ter em andamento ao mesmo tempo (o resto fica na fila dele).
+    maxActive: Number(env.MAX_EM_ANDAMENTO) > 0 ? Number(env.MAX_EM_ANDAMENTO) : 2,
     // Hora do aviso da manhã para o dono (pelo WhatsApp), no fuso da empresa. AVISO_HORA=off desliga.
     dailyHour: env.AVISO_HORA === 'off' ? null : Number.isInteger(Number(env.AVISO_HORA)) && env.AVISO_HORA !== '' && env.AVISO_HORA != null ? Number(env.AVISO_HORA) : 8,
     anthropicApiKey: env.ANTHROPIC_API_KEY || '',

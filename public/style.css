@@ -357,3 +357,4 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .table tbody tr.pago td, .list li.pago > a { background: var(--pago-bg); }
 .table tbody tr.nao-pago td, .list li.nao-pago > a { background: var(--nao-pago-bg); }
 .list li.pago > a, .list li.nao-pago > a { border-radius: 10px; padding-left: 8px; padding-right: 8px; }
+.badge.aguardando { color: var(--muted); background: var(--bg); border: 1px solid var(--line); }
