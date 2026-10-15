@@ -1298,6 +1298,7 @@ screens.resumo = async (params) => {
     <div id="caixa"></div>
     ${s.open_cents || s.to_receive_cents ? `<div class="card"><h2>Pendências (todas)</h2><p>Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
     ${s.expenses_by_category && Object.keys(s.expenses_by_category).length ? `<div class="card"><h2>Despesas</h2><ul class="list">${Object.entries(s.expenses_by_category).map(([k, v]) => `<li><div class="row"><span>${CATEGORIES[k] || k}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}
+    ${state.me.role === 'dono' ? '<a class="card linkcard" href="#/relatorio"><span>🖨 Relatório do dia para imprimir</span><span>›</span></a>' : ''}
     ${has('planilha') ? `<a class="card linkcard" href="#/planilha"><span>📊 Planilha do Excel</span><span>›</span></a>` : ''}`;
   view.querySelectorAll('.segmented button').forEach((b) => {
     b.classList.toggle('active', b.dataset.p === period);
@@ -1453,6 +1454,7 @@ screens.mais = async () => {
       ${has('manutencao') ? '<li><a href="#/caminhoes"><span>🔧 Caminhões e manutenção</span><span>›</span></a></li>' : ''}
       ${has('comissao') ? `<li><a href="${state.me.role === 'dono' ? '#/comissao' : `#/motorista/${state.me.id}`}"><span>💰 ${state.me.role === 'dono' ? 'Pagamento dos motoristas' : 'Meus ganhos'}</span><span>›</span></a></li>` : ''}
       ${has('empresas') && state.me.role === 'dono' ? '<li><a href="#/empresas"><span>🏢 Empresas (oficinas, dealers) e extrato</span><span>›</span></a></li>' : ''}
+      ${state.me.role === 'dono' ? '<li><a href="#/relatorio"><span>🖨 Relatório do dia (imprimir)</span><span>›</span></a></li>' : ''}
       ${state.me.role === 'dono' ? '<li><a href="#/equipe"><span>👥 Equipe</span><span>›</span></a></li>' : ''}
       ${has('invoice') && state.me.role === 'dono' ? '<li><a href="#/empresa"><span>🏢 Dados da empresa (invoice)</span><span>›</span></a></li>' : ''}
       <li><a href="#/enderecos"><span>📍 Endereços com apelido</span><span>›</span></a></li>
@@ -1469,6 +1471,59 @@ screens.mais = async () => {
       screens.mais();
     };
   });
+};
+
+// Relatório do dia (só dono): serviços abertos ou entregues no dia, pronto para imprimir.
+screens.relatorio = async (params) => {
+  setScreen('Relatório do dia', { tab: 'mais', back: '#/mais' });
+  const r = await api(`/relatorio/dia${params.get('dia') ? `?dia=${encodeURIComponent(params.get('dia'))}` : ''}`);
+  const [y, m, d] = r.day.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const weekday = date.toLocaleDateString('pt-BR', { weekday: 'long' });
+  const hora = (iso) => (iso ? new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '');
+  const short = (t) => esc((t || '').replace(/https?:\/\/\S+/g, 'local no mapa'));
+  const pay = (s) => {
+    if (!s.price_cents) return '<span class="sub">sem valor</span>';
+    const how = s.methods.length ? ` <span class="sub">${esc(s.methods.join(', '))}</span>` : '';
+    if (s.received_cents >= s.price_cents) return `Pago${how}`;
+    if (s.received_cents) return `Falta ${money(s.price_cents - s.received_cents)}${how}`;
+    return `A receber${how}`;
+  };
+  const t = r.totals;
+  view.innerHTML = `
+    <div class="card no-print"><label>Dia</label>
+      <div class="copyrow"><input type="date" id="dia" value="${r.day}" max="${r.today}"><button id="imprimir">🖨 Imprimir</button></div>
+    </div>
+    <div class="card relatorio">
+      <div class="rel-head"><div><h2>${esc(r.company)}</h2><div class="sub">Relatório de serviços do dia</div></div>
+        <div class="right"><strong>${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}</strong><div class="sub">${weekday}</div></div></div>
+      <div class="rel-stats">
+        <div><span class="sub">Serviços</span><strong>${t.count}</strong><span class="sub">${t.delivered} entregue(s)</span></div>
+        <div><span class="sub">Faturado</span><strong>${money(t.price_cents)}</strong></div>
+        <div><span class="sub">Recebido</span><strong>${money(t.received_cents)}</strong></div>
+        <div><span class="sub">A receber</span><strong>${money(t.open_cents)}</strong></div>
+      </div>
+      ${r.services.length
+        ? `<div class="rel-scroll"><table class="table rel-table rel-main"><thead><tr><th>Nº</th><th>Hora</th><th>Motorista</th><th>Cliente</th><th>Veículo</th><th>Retirada → Entrega</th><th>Situação</th><th>Pagamento</th><th class="num">Valor</th></tr></thead>
+          <tbody>${r.services
+            .map(
+              (s) => `<tr><td class="nowrap">#${s.id}</td><td class="nowrap">${hora(s.created_at)}</td><td>${esc(s.driver_name || '–')}</td>
+                <td>${esc(s.contact_name || '')}${s.contact_phone ? `<div class="sub nowrap">${phoneFmt(s.contact_phone)}</div>` : ''}</td>
+                <td>${esc(s.vehicle || '')}${s.plate ? `<div class="sub">${esc(s.plate)}</div>` : ''}</td>
+                <td>${short(s.pickup)}${s.dropoff ? `<div class="sub">→ ${short(s.dropoff)}</div>` : ''}</td>
+                <td class="nowrap">${s.status === 'concluido' ? `Entregue ${hora(s.completed_at)}` : s.status === 'pendente' ? (s.driver_id ? 'Aguardando' : 'Pendente') : 'Em andamento'}</td>
+                <td>${pay(s)}</td><td class="num">${s.price_cents ? money(s.price_cents) : '–'}</td></tr>`
+            )
+            .join('')}</tbody>
+          <tfoot><tr><td colspan="8"><strong>Total</strong></td><td class="num"><strong>${money(t.price_cents)}</strong></td></tr></tfoot></table></div>
+          <h3>Por motorista</h3>
+          <div class="rel-scroll"><table class="table rel-table"><thead><tr><th>Motorista</th><th class="num">Serviços</th><th class="num">Faturado</th><th class="num">Recebido</th></tr></thead>
+          <tbody>${r.drivers.map((g) => `<tr><td>${esc(g.name)}</td><td class="num">${g.count}</td><td class="num">${money(g.price_cents)}</td><td class="num">${money(g.received_cents)}</td></tr>`).join('')}</tbody></table></div>`
+        : '<p class="empty">Nenhum serviço neste dia.</p>'}
+      <p class="sub rel-foot">Impresso em ${new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}. Cancelados não entram.</p>
+    </div>`;
+  view.querySelector('#dia').onchange = (e) => e.target.value && (location.hash = `#/relatorio?dia=${e.target.value}`);
+  view.querySelector('#imprimir').onclick = () => window.print();
 };
 
 // Endereços com apelido: oficinas, lojas... Ao digitar o apelido na retirada ou no destino, vira o endereço.

@@ -1006,6 +1006,60 @@ function routes(api, ctx) {
     res.json({ period, ...buildSummary(ctx, { since: periodStart(ctx, period), userId }) });
   });
 
+  // Relatório do dia para imprimir: serviços abertos ou entregues no dia (sem cancelados).
+  api.get('/relatorio/dia', (req, res) => {
+    requireOwner(req);
+    const tz = ctx.config.timeZone;
+    const todayLocal = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.dia || '')) ? String(req.query.dia) : todayLocal;
+    const [y, m, d] = day.split('-').map(Number);
+    if (!y || m < 1 || m > 12 || d < 1 || d > 31) throw new HttpError(400, 'Data inválida.');
+    // Meio-dia UTC ainda é o mesmo dia no fuso dos EUA.
+    const start = startOfDayIso(tz, new Date(Date.UTC(y, m - 1, d, 12)));
+    const end = startOfDayIso(tz, new Date(Date.UTC(y, m - 1, d + 1, 12)));
+    const rows = db
+      .prepare(
+        `SELECT s.*, c.name AS contact_name, c.phone AS contact_phone, u.name AS driver_name
+         FROM services s LEFT JOIN contacts c ON c.id = s.contact_id LEFT JOIN users u ON u.id = s.driver_id
+         WHERE s.status <> 'cancelado'
+           AND ((s.created_at >= ? AND s.created_at < ?) OR (s.completed_at >= ? AND s.completed_at < ?))
+         ORDER BY s.created_at, s.id`
+      )
+      .all(start, end, start, end);
+    const pag = ctx.api.pagamentos;
+    const methodsOf = db.prepare('SELECT DISTINCT method, payer FROM payments WHERE service_id = ?');
+    const services = rows.map((s) => {
+      const b = pag ? pag.balance(s) : { received_cents: 0, to_receive_cents: 0, open_cents: s.price_cents || 0 };
+      const methods = pag ? methodsOf.all(s.id).map((p) => p.payer || pag.methods[p.method] || p.method) : [];
+      return { ...s, ...b, methods: [...new Set(methods)] };
+    });
+    const sum = (list, key) => list.reduce((t, s) => t + (s[key] || 0), 0);
+    const byDriver = new Map();
+    for (const s of services) {
+      const name = s.driver_name || 'Sem motorista';
+      const g = byDriver.get(name) || { name, count: 0, price_cents: 0, received_cents: 0 };
+      g.count++;
+      g.price_cents += s.price_cents || 0;
+      g.received_cents += Math.min(s.received_cents, s.price_cents || 0);
+      byDriver.set(name, g);
+    }
+    const received = services.reduce((t, s) => t + Math.min(s.received_cents, s.price_cents || 0), 0);
+    res.json({
+      day,
+      today: todayLocal,
+      company: ctx.api.invoice?.getCompany()?.name || ctx.config.companyName,
+      services,
+      drivers: [...byDriver.values()],
+      totals: {
+        count: services.length,
+        delivered: services.filter((s) => s.status === 'concluido').length,
+        price_cents: sum(services, 'price_cents'),
+        received_cents: received,
+        open_cents: sum(services, 'price_cents') - received,
+      },
+    });
+  });
+
   // Simulador: conversa com o robô pelo painel, sem precisar do WhatsApp.
   api.post('/bot/simulate', async (req, res) => {
     const replies = await ctx.bot.handle({ phone: req.user.phone, text: String(req.body?.text || '') });
