@@ -358,3 +358,14 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .table tbody tr.nao-pago td, .list li.nao-pago > a { background: var(--nao-pago-bg); }
 .list li.pago > a, .list li.nao-pago > a { border-radius: 10px; padding-left: 8px; padding-right: 8px; }
 .badge.aguardando { color: var(--muted); background: var(--bg); border: 1px solid var(--line); }
+
+/* Escolha com busca (ligar cliente e empresa): até 5 por vez */
+.picker { margin-top: 6px; }
+.picker .pickrow { display: flex; flex-direction: column; align-items: flex-start; width: 100%; background: none; border: 0; padding: 10px 2px; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+.picker .pickrow .sub { font-weight: normal; }
+/* Campo que parece lista, mas abre a janela com busca */
+.select-tap { position: relative; }
+.select-tap select { pointer-events: none; }
+.select-tap button { position: absolute; inset: 0; width: 100%; background: transparent; border: 0; padding: 0; cursor: pointer; }
+.dialog .pick-box input { margin: 10px 0 0; }
+.copyrow .select-tap { flex: 1; min-width: 0; }

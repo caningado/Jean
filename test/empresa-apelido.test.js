@@ -27,19 +27,19 @@ test('empresa com apelido: "ss" acha a Super Speed e seus solicitantes', async (
 
   // Sem solicitantes: oferece a própria empresa.
   let sug = await call('GET', '/contacts/suggest?q=ss');
-  assert.deepEqual(sug.body.map((c) => [c.id, c.name, c.company_id]), [[null, 'Super Speed', co.id]]);
+  assert.deepEqual(sug.body.map((c) => [c.id, c.name, c.company_id]), [[null, 'SUPER SPEED', co.id]]);
 
   // Digitar só "SS" no nome cria o cliente Super Speed já ligado à empresa.
   const s = await call('POST', '/services', { contact_name: 'SS', pickup: '1 Main St, Oviedo FL' });
-  assert.equal(s.body.contact_name, 'Super Speed');
-  assert.equal((await call('GET', `/services/${s.body.id}`)).body.company_name, 'Super Speed');
+  assert.equal(s.body.contact_name, 'SUPER SPEED');
+  assert.equal((await call('GET', `/services/${s.body.id}`)).body.company_name, 'SUPER SPEED');
 
   // Com solicitantes: aparecem todos.
   const { body: joao } = await call('POST', '/contacts', { name: 'João Pereira', phone: '(407) 555-0123' });
   await call('PUT', `/contacts/${joao.id}/company`, { company_id: co.id });
   sug = await call('GET', '/contacts/suggest?q=SS');
-  assert.deepEqual(sug.body.map((c) => c.name).sort(), ['João Pereira', 'Super Speed']);
-  assert.ok(sug.body.every((c) => c.company_name === 'Super Speed'));
+  assert.deepEqual(sug.body.map((c) => c.name).sort(), ['João Pereira', 'SUPER SPEED']);
+  assert.ok(sug.body.every((c) => c.company_name === 'SUPER SPEED'));
 });
 
 test('pelo WhatsApp: "ss" no novo serviço pergunta qual solicitante da Super Speed', async (t) => {
@@ -68,7 +68,7 @@ test('empresa que exige VIN e sempre faz invoice', async (t) => {
   // Sem VIN não fecha (painel e WhatsApp).
   const r = await call('PATCH', `/services/${s.id}`, { status: 'concluido' }, drv);
   assert.equal(r.status, 400);
-  assert.match(r.body.error, /Super Speed exige o VIN/);
+  assert.match(r.body.error, /SUPER SPEED exige o VIN/);
   const [bot] = await chat(ctx, DRIVER_PHONE, 'entregue');
   assert.match(bot, /exige o VIN/);
   assert.equal(ctx.data.services.get(s.id).status, 'aberto');
@@ -77,7 +77,7 @@ test('empresa que exige VIN e sempre faz invoice', async (t) => {
   ctx.db.prepare("UPDATE services SET vin = '1HGCM82633A004352' WHERE id = ?").run(s.id);
   const ok = await call('PATCH', `/services/${s.id}`, { status: 'concluido' }, drv);
   assert.equal(ok.status, 200);
-  assert.match(ok.body.notices[0], /Invoice nº \d+ criado para a Super Speed/);
+  assert.match(ok.body.notices[0], /Invoice nº \d+ criado para a SUPER SPEED/);
   assert.equal(ctx.api.invoice.numbersFor(s.id).length, 1);
   // Reabrir e fechar de novo não cria outro.
   await call('PATCH', `/services/${s.id}`, { status: 'aberto' }, drv);
