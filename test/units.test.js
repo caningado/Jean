@@ -133,3 +133,24 @@ test('veículo: modelo curto com número (F 150, X5) é aceito; só número não
   assert.throws(() => checkVehicle('23'), /marca e o modelo/);
   assert.throws(() => checkVehicle('F'), /marca e o modelo/);
 });
+
+test('vcf: nomes em quoted-printable (Android) com linha quebrada, marca invisível e letras enfeitadas', async () => {
+  const { repairEncodedNames } = await import('../src/core/data.js');
+  const vcf = [
+    'BEGIN:VCARD', 'VERSION:2.1',
+    'FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:=E2=80=8E=43=6C=61=75=64=69=6F=20=41=62=72=61=68=61=6F=20=43=76=73=61=',
+    '=73=20=4A=C3=BA=6E=69=6F=72',
+    'TEL;CELL:(407) 800-7374', 'END:VCARD',
+    'BEGIN:VCARD', 'VERSION:2.1',
+    'FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:=F0=9D=90=82=F0=9D=90=A5=F0=9D=90=9A=F0=9D=90=AE',
+    'TEL;CELL:(813) 217-2942', 'END:VCARD',
+  ].join('\r\n');
+  assert.deepEqual(parseVcf(vcf).map((c) => c.name), ['Claudio Abrahao Cvsas Júnior', 'Clau']);
+
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE contacts (id INTEGER PRIMARY KEY, name TEXT)');
+  db.prepare('INSERT INTO contacts (name) VALUES (?), (?), (?)').run('=E2=80=8E=44=65=73=63=6F', '=C3=8D=63=61=72=6F=', 'Maria = Souza');
+  assert.equal(repairEncodedNames(db), 2);
+  assert.deepEqual(db.prepare('SELECT name FROM contacts ORDER BY id').all().map((r) => r.name), ['Desco', 'Ícaro', 'Maria = Souza']);
+});

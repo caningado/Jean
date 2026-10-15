@@ -1,6 +1,7 @@
 // Núcleo: equipe, contatos (agenda) e serviços. Todos os outros módulos se apoiam nele.
 import express from 'express';
 import { FlowError } from './bot.js';
+import { repairEncodedNames } from './data.js';
 import { hashPin, verifyPin, signToken } from '../lib/auth.js';
 import { collectAlerts, servicesBlocked } from '../lib/daily.js';
 import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkMoney, isMapReference } from '../lib/validate.js';
@@ -1035,4 +1036,8 @@ export default {
   routes,
   publicRoutes,
   exportSheets,
+  setup(ctx) {
+    const fixed = repairEncodedNames(ctx.db);
+    if (fixed) ctx.log?.(`Nomes de clientes corrigidos (importação antiga): ${fixed}`);
+  },
 };
