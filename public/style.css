@@ -367,3 +367,4 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .select-tap select { pointer-events: none; }
 .select-tap button { position: absolute; inset: 0; width: 100%; background: transparent; border: 0; padding: 0; cursor: pointer; }
 .dialog .pick-box input { margin: 10px 0 0; }
+.copyrow .select-tap { flex: 1; min-width: 0; }

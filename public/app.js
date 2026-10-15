@@ -1937,7 +1937,7 @@ screens.cliente = async (params, id) => {
         : '<li class="empty">Ninguém ainda. Ligue abaixo as pessoas que pedem serviço por esta empresa.</li>'
     }</ul>
       <label>Adicionar solicitante</label>
-      <div class="select-tap"><select tabindex="-1"><option>Escolha um cliente…</option></select><button type="button" id="addReq" aria-label="Escolher cliente"></button></div>
+      <div class="copyrow"><div class="select-tap"><select id="reqSel" tabindex="-1"><option value="">Escolha um cliente…</option></select><button type="button" id="addReq" aria-label="Escolher cliente"></button></div><button class="secondary" id="addBtn">Adicionar</button></div>
       <p class="sub">Pelo WhatsApp: abra o serviço e mande <strong>empresa ${esc(c.name.split(' ')[0].toLowerCase())}</strong>.</p>
     </div>
     <details class="card"><summary>Dados da empresa</summary>
@@ -1976,9 +1976,13 @@ screens.cliente = async (params, id) => {
           .filter((x) => !linked.has(x.id))
           .map((x) => ({ id: x.id, name: x.name, sub: x.phone ? phoneFmt(x.phone) : '' })),
     });
-    if (!p) return;
+    if (p) view.querySelector('#reqSel').innerHTML = `<option value="${p.id}">${esc(p.name)}${p.sub ? ' · ' + esc(p.sub) : ''}</option>`;
+  };
+  view.querySelector('#addBtn').onclick = async () => {
+    const pid = view.querySelector('#reqSel').value;
+    if (!pid) return toast('Escolha um cliente');
     try {
-      await api(`/contacts/${p.id}/company`, { method: 'PUT', body: { company_id: Number(id) } });
+      await api(`/contacts/${pid}/company`, { method: 'PUT', body: { company_id: Number(id) } });
       toast('Solicitante adicionado');
       reload();
     } catch (err) {
