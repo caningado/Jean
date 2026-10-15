@@ -27,6 +27,10 @@ test('Entregues: hoje, semana e mês pelo dia da entrega', async (t) => {
   assert.deepEqual(await got('semana'), [ids[0]]);
   assert.deepEqual(await got('mes'), [ids[0]]);
   assert.deepEqual(await got(''), [...ids].sort());
+  // Aba Todos: pelo dia em que o serviço foi aberto, qualquer situação.
+  ctx.db.prepare('UPDATE services SET created_at = ? WHERE id = ?').run(new Date(now - 40 * day).toISOString(), ids[1]);
+  const all = async (p) => (await json('GET', `/services?status=&periodo=${p}`)).map((s) => s.id).sort();
+  assert.deepEqual(await all('dia'), [ids[0], ids[2]].sort());
   // segunda-feira desta semana, nunca depois de hoje
   const tz = ctx.config.timeZone;
   assert.ok(startOfWeekIso(tz) <= startOfDayIso(tz));

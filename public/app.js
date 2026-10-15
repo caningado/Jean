@@ -408,7 +408,9 @@ screens.servicos = async (params) => {
   const status = params.get('status') ?? 'aberto';
   const driver = params.get('driver') || '';
   // Entregues: abre no dia de hoje; dá para trocar para a semana ou o mês.
-  const periodo = status === 'concluido' ? (['semana', 'mes'].includes(params.get('periodo')) ? params.get('periodo') : 'dia') : '';
+  // "Todos" (só dono/sócio): também por período, de todos os motoristas.
+  const comPeriodo = status === 'concluido' || (status === '' && state.me.role === 'dono');
+  const periodo = comPeriodo ? (['semana', 'mes'].includes(params.get('periodo')) ? params.get('periodo') : 'dia') : '';
   // O dono pode ver só os serviços de um motorista (inclusive os dele mesmo).
   const drivers = state.me.role === 'dono' ? await api('/users') : [];
   const query = (s, d, p = '') => `#/servicos?status=${s}${d ? `&driver=${d}` : ''}${p ? `&periodo=${p}` : ''}`;
@@ -417,7 +419,7 @@ screens.servicos = async (params) => {
   const fila = state.me.role === 'dono' ? await api('/services?status=pendente').catch(() => []) : [];
   view.innerHTML = `
     <div class="segmented">
-      ${state.me.role === 'dono' ? `<button data-s="pendente">Pendentes${fila.length ? ` <span class="badge pendente">${fila.length}</span>` : ''}</button>` : ''}<button data-s="aberto">Andamento</button><button data-s="concluido">Entregues</button><button data-s="">Todos</button>
+      ${state.me.role === 'dono' ? `<button data-s="pendente">Pendentes${fila.length ? ` <span class="badge pendente">${fila.length}</span>` : ''}</button>` : ''}<button data-s="aberto">Andamento</button><button data-s="concluido">Entregues</button>${state.me.role === 'dono' ? '<button data-s="">Todos</button>' : ''}
     </div>
     ${periodo ? `<div class="segmented periodo">${[['dia', 'Hoje'], ['semana', 'Semana'], ['mes', 'Mês']].map(([p, l]) => `<button data-p="${p}" class="${p === periodo ? 'active' : ''}">${l}</button>`).join('')}</div>` : ''}
     ${drivers.length > 1 ? `<select id="driver" aria-label="Motorista"><option value="">Todos os motoristas</option>${drivers.map((d) => `<option value="${d.id}" ${String(d.id) === driver ? 'selected' : ''}>${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select>` : ''}
@@ -438,7 +440,9 @@ screens.servicos = async (params) => {
     view.innerHTML = `<div class="card"><h2>🚫 Lista suspensa</h2><p>${esc(err.message)}</p><a class="btn block" href="#/caminhoes">📏 Mandar a milhagem</a></div>`;
     return;
   }
-  const empty = status === 'pendente' ? 'Nenhum serviço na fila. 👍' : { dia: 'Nenhum serviço entregue hoje.', semana: 'Nenhum serviço entregue nesta semana.', mes: 'Nenhum serviço entregue neste mês.' }[periodo] || 'Nenhum serviço aqui.';
+  const empty = status === 'pendente' ? 'Nenhum serviço na fila. 👍' : (status === 'concluido'
+        ? { dia: 'Nenhum serviço entregue hoje.', semana: 'Nenhum serviço entregue nesta semana.', mes: 'Nenhum serviço entregue neste mês.' }
+        : { dia: 'Nenhum serviço hoje.', semana: 'Nenhum serviço nesta semana.', mes: 'Nenhum serviço neste mês.' })[periodo] || 'Nenhum serviço aqui.';
   if (status === 'aberto' && fila.length) {
     view.querySelector('.segmented').insertAdjacentHTML('afterend', `<a class="card linkcard" href="${query('pendente', driver)}"><span>⏳ <strong>${fila.length}</strong> serviço(s) na fila, sem motorista</span><span>›</span></a>`);
   }

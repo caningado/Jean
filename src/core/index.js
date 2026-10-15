@@ -773,8 +773,11 @@ function routes(api, ctx) {
     // Entregues de hoje, da semana (desde segunda) ou do mês.
     const tz = ctx.config.timeZone;
     const starts = { dia: startOfDayIso, semana: startOfWeekIso, mes: startOfMonthIso };
-    const doneSince = starts[req.query.periodo]?.(tz) || null;
-    res.json(data.services.list({ status, driverId, doneSince, limit: Number(req.query.limit) || (doneSince ? 2000 : 100) }));
+    // Entregues contam pelo dia da entrega; "Todos" pelo dia em que o serviço foi aberto.
+    const start = starts[req.query.periodo]?.(tz) || null;
+    const doneSince = status === 'concluido' ? start : null;
+    const since = status === 'concluido' ? null : start;
+    res.json(data.services.list({ status, driverId, since, doneSince, limit: Number(req.query.limit) || (start ? 2000 : 100) }));
   });
   // Sugestões de endereço enquanto digita no painel.
   api.get('/places', async (req, res) => {
