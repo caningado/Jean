@@ -86,13 +86,14 @@ export function createCoreData(db) {
     get(id) {
       return db.prepare(`${SERVICE_SELECT} WHERE s.id = ?`).get(id);
     },
-    list({ status, driverId, contactId, since, doneSince, limit = 100 } = {}) {
+    list({ status, driverId, contactId, since, doneSince, hideCancelled = false, limit = 100 } = {}) {
       const where = [];
       const params = [];
       if (status) {
         where.push('s.status = ?');
         params.push(status);
       }
+      if (hideCancelled) where.push("s.status <> 'cancelado'");
       if (driverId) {
         where.push('s.driver_id = ?');
         params.push(driverId);
