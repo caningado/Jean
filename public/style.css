@@ -389,6 +389,12 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 :root[data-theme="dark"] .rel-table tbody tr.rel-pago td { background: var(--pago-bg); }
 :root[data-theme="dark"] .rel-table tbody tr.rel-nao-pago td { background: var(--nao-pago-bg); }
 @media (max-width: 560px) { .rel-stats { grid-template-columns: repeat(2, 1fr); } .rel-main { min-width: 1080px; } }
+/* Cópia escondida do relatório no tamanho da folha, para medir e caber numa página só */
+.card.rel-measure { position: absolute; left: -10000px; top: 0; width: 980px; padding: 0; border: 0; margin: 0; }
+.rel-measure .rel-stats { grid-template-columns: repeat(4, 1fr); }
+.rel-measure .rel-scroll { overflow: visible; }
+.rel-measure .rel-table.table { min-width: 0 !important; font-size: 10.5px; }
+.rel-measure .rel-table th, .rel-measure .rel-table td { padding: 4px 6px; }
 
 @media print {
   @page { size: letter landscape; margin: 10mm; }
@@ -400,6 +406,8 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
   .card.relatorio { border: 0; box-shadow: none; padding: 0; margin: 0; }
   .rel-scroll { overflow: visible; }
   .rel-table.table { min-width: 0 !important; font-size: 10.5px; }
+  .rel-table th, .rel-table td { padding: 4px 6px; }
+  .card.relatorio { zoom: var(--fit, 1); }
   .rel-table th { position: static; background: #eee; color: #000; }
   .rel-table tr { break-inside: avoid; }
   .rel-head { border-bottom-color: #C8102E; }

@@ -1522,8 +1522,25 @@ screens.relatorio = async (params) => {
       <p class="sub rel-foot">Impresso em ${new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}. Cancelados não entram.</p>
     </div>`;
   view.querySelector('#dia').onchange = (e) => e.target.value && (location.hash = `#/relatorio?dia=${e.target.value}`);
-  view.querySelector('#imprimir').onclick = () => window.print();
+  view.querySelector('#imprimir').onclick = () => {
+    fitOnePage();
+    window.print();
+  };
 };
+
+// Relatório do dia: diminui o tamanho para caber numa folha só (Carta deitada).
+function fitOnePage() {
+  const report = view.querySelector('.relatorio');
+  if (!report) return;
+  const copy = report.cloneNode(true);
+  copy.classList.add('rel-measure');
+  document.body.appendChild(copy);
+  const height = copy.scrollHeight;
+  copy.remove();
+  // Área útil da folha: 11 x 8,5 pol. menos as margens, com uma folga.
+  report.style.setProperty('--fit', Math.min(1, 700 / height).toFixed(3));
+}
+window.addEventListener('beforeprint', fitOnePage);
 
 // Endereços com apelido: oficinas, lojas... Ao digitar o apelido na retirada ou no destino, vira o endereço.
 screens.enderecos = async () => {
