@@ -1298,6 +1298,7 @@ screens.resumo = async (params) => {
     <div id="caixa"></div>
     ${s.open_cents || s.to_receive_cents ? `<div class="card"><h2>Pendências (todas)</h2><p>Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
     ${s.expenses_by_category && Object.keys(s.expenses_by_category).length ? `<div class="card"><h2>Despesas</h2><ul class="list">${Object.entries(s.expenses_by_category).map(([k, v]) => `<li><div class="row"><span>${CATEGORIES[k] || k}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}
+    ${state.me.role === 'dono' ? '<a class="card linkcard" href="#/relatorio"><span>🖨 Relatório do dia para imprimir</span><span>›</span></a>' : ''}
     ${has('planilha') ? `<a class="card linkcard" href="#/planilha"><span>📊 Planilha do Excel</span><span>›</span></a>` : ''}`;
   view.querySelectorAll('.segmented button').forEach((b) => {
     b.classList.toggle('active', b.dataset.p === period);
@@ -1453,6 +1454,7 @@ screens.mais = async () => {
       ${has('manutencao') ? '<li><a href="#/caminhoes"><span>🔧 Caminhões e manutenção</span><span>›</span></a></li>' : ''}
       ${has('comissao') ? `<li><a href="${state.me.role === 'dono' ? '#/comissao' : `#/motorista/${state.me.id}`}"><span>💰 ${state.me.role === 'dono' ? 'Pagamento dos motoristas' : 'Meus ganhos'}</span><span>›</span></a></li>` : ''}
       ${has('empresas') && state.me.role === 'dono' ? '<li><a href="#/empresas"><span>🏢 Empresas (oficinas, dealers) e extrato</span><span>›</span></a></li>' : ''}
+      ${state.me.role === 'dono' ? '<li><a href="#/relatorio"><span>🖨 Relatório do dia (imprimir)</span><span>›</span></a></li>' : ''}
       ${state.me.role === 'dono' ? '<li><a href="#/equipe"><span>👥 Equipe</span><span>›</span></a></li>' : ''}
       ${has('invoice') && state.me.role === 'dono' ? '<li><a href="#/empresa"><span>🏢 Dados da empresa (invoice)</span><span>›</span></a></li>' : ''}
       <li><a href="#/enderecos"><span>📍 Endereços com apelido</span><span>›</span></a></li>
@@ -1470,6 +1472,80 @@ screens.mais = async () => {
     };
   });
 };
+
+// Relatório do dia (só dono): serviços abertos ou entregues no dia, pronto para imprimir.
+screens.relatorio = async (params) => {
+  setScreen('Relatório do dia', { tab: 'mais', back: '#/mais' });
+  const r = await api(`/relatorio/dia${params.get('dia') ? `?dia=${encodeURIComponent(params.get('dia'))}` : ''}`);
+  const [y, m, d] = r.day.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const weekday = date.toLocaleDateString('pt-BR', { weekday: 'long' });
+  const short = (t) => esc((t || '').replace(/https?:\/\/\S+/g, 'local no mapa'));
+  const pay = (s) => {
+    if (!s.price_cents) return '<span class="sub">sem valor</span>';
+    const how = s.methods.length ? ` <span class="sub">${esc(s.methods.join(', '))}</span>` : '';
+    if (s.received_cents >= s.price_cents) return `Pago${how}`;
+    if (s.received_cents) return `Falta ${money(s.price_cents - s.received_cents)}${how}`;
+    return `A receber${how}`;
+  };
+  // Uma folha por empresa (J&J e VIP): o serviço vai para a empresa do motorista.
+  const sheet = (rep) => {
+    const t = rep.totals;
+    return `<div class="card relatorio firm-${rep.firm}">
+      <div class="rel-head"><div><h2>${esc(rep.name)}</h2><div class="sub">Relatório de serviços do dia</div></div>
+        <div class="right"><strong>${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}</strong><div class="sub">${weekday}</div></div></div>
+      <div class="rel-stats">
+        <div><span class="sub">Serviços</span><strong>${t.count}</strong><span class="sub">${t.delivered} entregue(s)</span></div>
+        <div><span class="sub">Faturado</span><strong>${money(t.price_cents)}</strong></div>
+        <div><span class="sub">Recebido</span><strong>${money(t.received_cents)}</strong></div>
+        <div><span class="sub">A receber</span><strong>${money(t.open_cents)}</strong></div>
+      </div>
+      ${rep.services.length
+        ? `<div class="rel-scroll"><table class="table rel-table rel-main"><thead><tr><th>Nº</th><th>Motorista</th><th>Cliente</th><th>Telefone</th><th>Veículo</th><th>Retirada → Entrega</th><th>Situação</th><th>Pagamento</th><th class="num">Valor</th></tr></thead>
+          <tbody>${rep.services
+            .map(
+              (s) => `<tr class="${!s.price_cents ? '' : s.received_cents >= s.price_cents ? 'rel-pago' : 'rel-nao-pago'}"><td class="nowrap">#${s.id}</td><td>${esc(s.driver_name || '–')}</td>
+                <td>${esc(s.contact_name || '')}</td><td class="nowrap">${s.contact_phone ? phoneFmt(s.contact_phone) : '–'}</td>
+                <td>${esc(s.vehicle || '')}${s.plate ? `<div class="sub">${esc(s.plate)}</div>` : ''}</td>
+                <td>${short(s.pickup)}${s.dropoff ? `<div class="sub">→ ${short(s.dropoff)}</div>` : ''}</td>
+                <td class="nowrap">${s.status === 'concluido' ? 'Entregue' : s.status === 'pendente' ? (s.driver_id ? 'Aguardando' : 'Pendente') : 'Em andamento'}</td>
+                <td>${pay(s)}</td><td class="num">${s.price_cents ? money(s.price_cents) : '–'}</td></tr>`
+            )
+            .join('')}</tbody>
+          <tfoot><tr><td colspan="8"><strong>Total</strong></td><td class="num"><strong>${money(t.price_cents)}</strong></td></tr></tfoot></table></div>
+          <h3>Por motorista</h3>
+          <div class="rel-scroll"><table class="table rel-table"><thead><tr><th>Motorista</th><th class="num">Serviços</th><th class="num">Faturado</th><th class="num">Recebido</th></tr></thead>
+          <tbody>${rep.drivers.map((g) => `<tr><td>${esc(g.name)}</td><td class="num">${g.count}</td><td class="num">${money(g.price_cents)}</td><td class="num">${money(g.received_cents)}</td></tr>`).join('')}</tbody></table></div>`
+        : '<p class="empty">Nenhum serviço neste dia.</p>'}
+      <p class="sub rel-foot">Impresso em ${new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}. Cancelados não entram.${rep.firm === 'jj' ? ' Serviço sem motorista entra nesta folha.' : ''}</p>
+    </div>`;
+  };
+  view.innerHTML = `
+    <div class="card no-print"><label>Dia</label>
+      <div class="copyrow"><input type="date" id="dia" value="${r.day}" max="${r.today}"><button id="imprimir">🖨 Imprimir</button></div>
+      <p class="sub">Sai uma folha para cada empresa. A empresa de cada motorista fica em Mais › Equipe.</p>
+    </div>
+    ${r.reports.map(sheet).join('')}`;
+  view.querySelector('#dia').onchange = (e) => e.target.value && (location.hash = `#/relatorio?dia=${e.target.value}`);
+  view.querySelector('#imprimir').onclick = () => {
+    fitOnePage();
+    window.print();
+  };
+};
+
+// Relatório do dia: cada folha diminui o tamanho para caber numa página só (Carta deitada).
+function fitOnePage() {
+  for (const report of view.querySelectorAll('.relatorio')) {
+    const copy = report.cloneNode(true);
+    copy.classList.add('rel-measure');
+    document.body.appendChild(copy);
+    const height = copy.scrollHeight;
+    copy.remove();
+    // Área útil da folha: 11 x 8,5 pol. menos as margens, com uma folga.
+    report.style.setProperty('--fit', Math.min(1, 700 / height).toFixed(3));
+  }
+}
+window.addEventListener('beforeprint', fitOnePage);
 
 // Endereços com apelido: oficinas, lojas... Ao digitar o apelido na retirada ou no destino, vira o endereço.
 screens.enderecos = async () => {
@@ -2218,7 +2294,8 @@ screens.equipe = async () => {
   const users = await api('/users');
   view.innerHTML = `
     <div class="card"><ul class="list">${users
-      .map((u) => `<li><div class="row"><div><strong>${esc(u.name)}</strong> ${u.active ? '' : '<span class="badge cancelado">desativado</span>'}<div class="sub">${phoneFmt(u.phone)} · ${u.role === 'dono' ? 'Dono' : 'Motorista'}</div></div>
+      .map((u) => `<li><div class="row"><div><strong>${esc(u.name)}</strong> ${u.active ? '' : '<span class="badge cancelado">desativado</span>'}<div class="sub">${phoneFmt(u.phone)} · ${u.role === 'dono' ? 'Dono' : 'Motorista'}</div>
+        <select class="firm-pick" data-firm="${u.id}" aria-label="Empresa de ${esc(u.name)}">${firmOptions(u.firm)}</select></div>
         ${u.id !== state.me.id ? `<button class="secondary" data-toggle="${u.id}" data-active="${u.active}">${u.active ? 'Desativar' : 'Ativar'}</button>` : ''}</div></li>`)
       .join('')}</ul></div>
     <form class="card" id="f">
@@ -2228,6 +2305,7 @@ screens.equipe = async () => {
       <label>Telefone (WhatsApp)</label><input name="phone" type="tel" required>
       <label>PIN para entrar no painel (opcional)</label><input name="pin" inputmode="numeric" pattern="[0-9]{4,8}">
       <label>Função</label><select name="role"><option value="motorista">Motorista</option><option value="dono">Dono / sócio</option></select>
+      <label>Empresa</label><select name="firm">${firmOptions('jj')}</select>
       <button class="block">Adicionar</button>
     </form>`;
   view.querySelector('#f').onsubmit = async (e) => {
@@ -2246,7 +2324,23 @@ screens.equipe = async () => {
       screens.equipe();
     };
   });
+  // Empresa do motorista: os serviços dele saem na folha dessa empresa no relatório do dia.
+  view.querySelectorAll('[data-firm]').forEach((sel) => {
+    sel.onchange = async () => {
+      try {
+        await api(`/users/${sel.dataset.firm}`, { method: 'PATCH', body: { firm: sel.value } });
+        toast(`Agora é da ${sel.selectedOptions[0].textContent}`);
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+  });
 };
+
+function firmOptions(selected) {
+  const firms = state.firms?.length ? state.firms : [{ id: 'jj', name: 'Towing J&J LLC' }, { id: 'vip', name: 'Towing VIP LLC' }];
+  return firms.map((f) => `<option value="${f.id}"${f.id === (selected || 'jj') ? ' selected' : ''}>${esc(f.name)}</option>`).join('');
+}
 
 screens.robo = async () => {
   setScreen('Testar o robô', { tab: 'mais', back: '#/mais' });
@@ -2714,6 +2808,7 @@ async function loadMe() {
     state.me = me.user;
     state.modules = me.modules;
     state.company = me.company;
+    state.firms = me.firms;
     state.pricing = me.pricing;
     renderSide();
   } catch {

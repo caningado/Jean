@@ -369,3 +369,53 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .select-tap button { position: absolute; inset: 0; width: 100%; background: transparent; border: 0; padding: 0; cursor: pointer; }
 .dialog .pick-box input { margin: 10px 0 0; }
 .copyrow .select-tap { flex: 1; min-width: 0; }
+
+/* Relatório do dia: na tela e impresso */
+.relatorio h2 { margin: 0; }
+.relatorio h3 { margin: 18px 0 6px; font-size: 15px; }
+.rel-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; border-bottom: 2px solid var(--brand); padding-bottom: 10px; }
+.rel-head .right { text-align: right; }
+.rel-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0; }
+.rel-stats > div { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.rel-stats strong { font-size: 18px; }
+.rel-scroll { overflow-x: auto; margin: 0 -4px; }
+.rel-table { font-size: 13px; }
+.rel-table th, .rel-table td { padding: 7px 6px; }
+.rel-table .sub { font-size: 12px; }
+.rel-foot { margin-top: 14px; }
+.relatorio.firm-vip .rel-head { border-bottom-color: #6AA74E; }
+.firm-pick { width: auto; margin-top: 6px; padding: 6px 8px; font-size: 13.5px; }
+/* Verde claro = pago; vermelho bem claro = falta receber (sem valor fica sem cor) */
+.rel-table tbody tr.rel-pago td { background: #e6f4e1; }
+.rel-table tbody tr.rel-nao-pago td { background: #fdeeee; }
+:root[data-theme="dark"] .rel-table tbody tr.rel-pago td { background: var(--pago-bg); }
+:root[data-theme="dark"] .rel-table tbody tr.rel-nao-pago td { background: var(--nao-pago-bg); }
+@media (max-width: 560px) { .rel-stats { grid-template-columns: repeat(2, 1fr); } .rel-main { min-width: 1080px; } }
+/* Cópia escondida do relatório no tamanho da folha, para medir e caber numa página só */
+.card.rel-measure { position: absolute; left: -10000px; top: 0; width: 980px; padding: 0; border: 0; margin: 0; }
+.rel-measure .rel-stats { grid-template-columns: repeat(4, 1fr); }
+.rel-measure .rel-scroll { overflow: visible; }
+.rel-measure .rel-table.table { min-width: 0 !important; font-size: 10.5px; }
+.rel-measure .rel-table th, .rel-measure .rel-table td { padding: 4px 6px; }
+
+@media print {
+  @page { size: letter landscape; margin: 10mm; }
+  :root, :root[data-theme="dark"] { --bg: #fff; --card: #fff; --text: #000; --muted: #444; --line: #bbb; color-scheme: light; }
+  html, body { background: #fff !important; color: #000; }
+  .topbar, .tabs, .side, .toast, .no-print { display: none !important; }
+  body.logged, body { padding: 0 !important; }
+  body.logged main, main { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+  .card.relatorio { border: 0; box-shadow: none; padding: 0; margin: 0; break-after: page; }
+  .card.relatorio:last-of-type { break-after: auto; }
+  .rel-scroll { overflow: visible; }
+  .rel-table.table { min-width: 0 !important; font-size: 10.5px; }
+  .rel-table th, .rel-table td { padding: 4px 6px; }
+  .card.relatorio { zoom: var(--fit, 1); }
+  .rel-table th { position: static; background: #eee; color: #000; }
+  .rel-table tr { break-inside: avoid; }
+  .rel-head { border-bottom-color: #C8102E; }
+  .relatorio.firm-vip .rel-head { border-bottom-color: #6AA74E; }
+  .relatorio { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  :root[data-theme="dark"] .rel-table tbody tr.rel-pago td, .rel-table tbody tr.rel-pago td { background: #e6f4e1 !important; }
+  :root[data-theme="dark"] .rel-table tbody tr.rel-nao-pago td, .rel-table tbody tr.rel-nao-pago td { background: #fdeeee !important; }
+}
