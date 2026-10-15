@@ -43,15 +43,20 @@ test('serviço na fila: só o dono põe na fila e escolhe o motorista', async (t
   assert.equal(dele.body.status, 'aberto');
   assert.equal(dele.body.driver_id, driver.id);
 
-  // O dono passa para o motorista: em andamento, "em mãos" se ele está livre, e avisado.
+  // O dono passa para o motorista: entra na fila dele (ainda não começa) e ele é avisado.
   ctx.db.prepare('UPDATE users SET active_service_id = NULL').run();
   const passou = await call('POST', `/services/${r.body.id}/passar`, { driver_id: driver.id });
   assert.equal(passou.status, 200);
-  assert.equal(passou.body.status, 'aberto');
+  assert.equal(passou.body.status, 'pendente');
   assert.equal(passou.body.driver_id, driver.id);
-  assert.equal(ctx.db.prepare('SELECT active_service_id FROM users WHERE id = ?').get(driver.id).active_service_id, r.body.id);
+  assert.equal(ctx.db.prepare('SELECT active_service_id FROM users WHERE id = ?').get(driver.id).active_service_id, null);
   await new Promise((r) => setImmediate(r));
-  assert.match(sent.find((m) => m.phone === DRIVER_PHONE).text, /passou um serviço para você/);
+  assert.match(sent.find((m) => m.phone === DRIVER_PHONE).text, /passou um serviço para a sua fila/);
+  // O motorista vê na fila dele e começa: em andamento e "em mãos".
+  assert.deepEqual((await call('GET', '/services?status=pendente', null, drv)).body.map((s) => s.id), [r.body.id]);
+  const comecou = await call('PATCH', `/services/${r.body.id}`, { status: 'aberto' }, drv);
+  assert.equal(comecou.body.status, 'aberto');
+  assert.equal(ctx.db.prepare('SELECT active_service_id FROM users WHERE id = ?').get(driver.id).active_service_id, r.body.id);
   assert.equal((await call('POST', `/services/${r.body.id}/passar`, { driver_id: driver.id })).status, 409);
 
   // Voltar para a fila: só o dono.
@@ -60,9 +65,10 @@ test('serviço na fila: só o dono põe na fila e escolhe o motorista', async (t
   assert.equal(volta.body.status, 'pendente');
   assert.equal(volta.body.driver_id, null);
   assert.equal(ctx.db.prepare('SELECT active_service_id FROM users WHERE id = ?').get(driver.id).active_service_id, null);
-  // Escolher pelo Editar também tira da fila.
+  // Escolher pelo Editar põe na fila do motorista.
   const edit = await call('PATCH', `/services/${r.body.id}`, { driver_id: driver.id });
-  assert.equal(edit.body.status, 'aberto');
+  assert.equal(edit.body.status, 'pendente');
+  assert.equal(edit.body.driver_id, driver.id);
 });
 
 test('pelo WhatsApp: só o dono vê a fila', async (t) => {
@@ -73,7 +79,7 @@ test('pelo WhatsApp: só o dono vê a fila', async (t) => {
   const [lista] = await chat(ctx, OWNER_PHONE, 'fila');
   assert.match(lista, new RegExp(`#${s.id}\\* Ana`));
   const [motorista] = await chat(ctx, DRIVER_PHONE, 'fila');
-  assert.match(motorista, /Só o dono/);
+  assert.match(motorista, /Sua fila está vazia/);
   const [abrir] = await chat(ctx, DRIVER_PHONE, `abrir ${s.id}`);
   assert.match(abrir, /Não achei/);
   assert.equal(ctx.data.services.get(s.id).status, 'pendente');

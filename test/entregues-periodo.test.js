@@ -50,6 +50,9 @@ test('lista de serviços diz se está pago', async (t) => {
   const pago = await json('POST', '/services', { contact_name: 'Pago', pickup: '12 Main St, Orlando FL', price: 100, driver_id: driver.id });
   const devendo = await json('POST', '/services', { contact_name: 'Devendo', pickup: '12 Main St, Orlando FL', price: 80, driver_id: driver.id });
   const semValor = await json('POST', '/services', { contact_name: 'Sem valor', pickup: '12 Main St, Orlando FL', driver_id: driver.id });
+  // Passados para o motorista entram na fila dele; começa os dois.
+  await json('PATCH', `/services/${pago.id}`, { status: 'aberto' });
+  await json('PATCH', `/services/${devendo.id}`, { status: 'aberto' });
   ctx.db.prepare("INSERT INTO payments (service_id, amount_cents, method, status, created_at) VALUES (?, 10000, 'zelle', 'recebido', ?)").run(pago.id, new Date().toISOString());
   const list = await json('GET', '/services?status=');
   const by = Object.fromEntries(list.map((s) => [s.id, s.paid]));

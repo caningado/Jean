@@ -11,6 +11,9 @@ const has = (name) => state.modules.some((m) => m.name === name);
 const METHODS = { zelle: 'Zelle', dinheiro: 'Dinheiro', cartao: 'Cartão', cheque: 'Cheque', seguradora: 'Seguradora / motor club' };
 const CATEGORIES = { combustivel: 'Combustível', pedagio: 'Pedágio', manutencao: 'Manutenção', alimentacao: 'Alimentação', outros: 'Outros' };
 const STATUS = { pendente: 'Pendente', aberto: 'Em andamento', concluido: 'Entregue', cancelado: 'Cancelado' };
+// Pendente que já tem motorista: está na fila dele, "Aguardando" ele escolher e começar.
+const queued = (s) => s.status === 'pendente' && !!s.driver_id;
+const badge = (s) => (queued(s) ? '<span class="badge aguardando">Aguardando</span>' : `<span class="badge ${s.status}">${STATUS[s.status]}</span>`);
 const PHOTO_KINDS = { antes: 'Antes', depois: 'Depois', vin: 'VIN', outro: 'Outra' };
 
 // ---------- utilidades ----------
@@ -477,7 +480,7 @@ screens.servicos = async (params) => {
                 ${owner ? `<td>${esc(s.driver_name || '') || '<span class="sub">—</span>'}</td>` : ''}
                 <td class="nowrap">${when(s.created_at)}</td>
                 <td class="num">${s.price_cents != null ? money(s.price_cents) : '<span class="sub">—</span>'}</td>
-                <td><span class="badge ${s.status}">${STATUS[s.status]}</span></td>
+                <td>${badge(s)}</td>
               </tr>`
             )
             .join('')}</tbody>
@@ -511,7 +514,7 @@ screens.servicos = async (params) => {
             <div><strong>#${s.id} ${esc(s.contact_name || 'Sem cliente')}</strong>
               <div class="sub">${esc([s.vehicle, s.plate].filter(Boolean).join(' · ') || (s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa'))}</div>
               <div class="sub">${when(s.created_at)}${state.me.role === 'dono' && s.driver_name ? ' · ' + esc(s.driver_name) : ''}</div></div>
-            <div class="right">${s.price_cents != null ? money(s.price_cents) : ''}<br><span class="badge ${s.status}">${STATUS[s.status]}</span></div>
+            <div class="right">${s.price_cents != null ? money(s.price_cents) : ''}<br>${badge(s)}</div>
           </a></li>`
         )
         .join('')
@@ -764,7 +767,7 @@ screens.novo = async () => {
         location.hash = `#/servico/${service.id}`;
         return;
       }
-      toast(service.status === 'pendente' ? `Serviço #${service.id} na fila` : `Serviço #${service.id} criado`);
+      toast(queued(service) ? `Serviço #${service.id} na fila de ${service.driver_name || 'motorista'}` : service.status === 'pendente' ? `Serviço #${service.id} na fila` : `Serviço #${service.id} criado`);
       location.hash = `#/servico/${service.id}`;
     } catch (err) {
       toast(err.message);
@@ -787,7 +790,7 @@ screens.servico = async (params, id) => {
     <div class="card">
       <div class="row" style="display:flex;justify-content:space-between;align-items:center">
         <h2 style="margin:0">${esc(s.contact_name || 'Sem cliente')}${s.company_name ? ` <span class="sub">· ${esc(s.company_name)}</span>` : ''}</h2>
-        <span class="badge ${s.status}">${STATUS[s.status]}</span>
+        ${badge(s)}
       </div>
       ${s.contact_phone ? `<p><a href="tel:+${s.contact_phone}">📞 ${phoneFmt(s.contact_phone)}</a> · <a href="https://wa.me/${s.contact_phone}" target="_blank" rel="noopener">WhatsApp</a></p>` : ''}
       ${placeHtml('📍', s.pickup, s.pickup_name)}${placeHtml('🏁', s.dropoff, s.dropoff_name)}
@@ -797,12 +800,12 @@ screens.servico = async (params, id) => {
       <p class="sub">${when(s.created_at)}${s.driver_name ? ' · ' + esc(s.driver_name) : ''}</p>
       ${s.notes ? `<p>${esc(s.notes)}</p>` : ''}
       <div class="actions">
-        ${s.status === 'pendente' ? '' : s.status === 'aberto' ? '<button id="done">✅ Entregue</button>' : '<button class="secondary" id="reopen">Reabrir</button>'}
-        ${s.status !== 'pendente' || state.me.role === 'dono' ? '<button class="secondary" id="edit">Editar</button>' : ''}
+        ${s.status === 'pendente' ? (queued(s) && (owner || s.driver_id === state.me.id) ? '<button id="start">▶ Começar</button>' : '') : s.status === 'aberto' ? '<button id="done">✅ Entregue</button>' : '<button class="secondary" id="reopen">Reabrir</button>'}
+        ${s.status !== 'pendente' || owner || s.driver_id === state.me.id ? '<button class="secondary" id="edit">Editar</button>' : ''}
       </div>
-      ${s.status === 'pendente' ? `<p class="sub">⏳ Na fila: ainda sem motorista.</p>${owner ? `<label>Escolher o motorista</label><div class="actions"><select id="assign" aria-label="Escolher o motorista"><option value="">Quem vai fazer?</option>${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}">${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select></div>` : ''}` : ''}
+      ${s.status === 'pendente' ? `<p class="sub">${queued(s) ? `⏳ Aguardando: na fila de ${esc(s.driver_name || 'motorista')}. Toque em Começar quando for fazer este.` : '⏳ Na fila: ainda sem motorista.'}</p>${owner ? `<label>Escolher o motorista</label><div class="actions"><select id="assign" aria-label="Escolher o motorista"><option value="">${queued(s) ? 'Passar para outro motorista?' : 'Quem vai fazer?'}</option>${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}">${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select></div>` : ''}` : ''}
       ${s.status === 'aberto' && owner ? '<div class="actions"><button class="secondary" id="queue">⏳ Voltar para a fila</button></div>' : ''}
-      ${(s.status === 'aberto' && (owner || s.driver_id === state.me.id)) || (s.status === 'pendente' && owner) ? '<div class="actions"><button class="danger" id="cancel">✖ Cancelar serviço</button></div>' : ''}
+      ${(['aberto', 'pendente'].includes(s.status) && (owner || s.driver_id === state.me.id)) ? '<div class="actions"><button class="danger" id="cancel">✖ Cancelar serviço</button></div>' : ''}
     </div>
 
     ${has('fotos') ? `
@@ -914,6 +917,15 @@ screens.servico = async (params, id) => {
       }
     };
   }
+  on('#start', async () => {
+    try {
+      await api(`/services/${id}`, { method: 'PATCH', body: { status: 'aberto' } });
+      toast('Serviço em andamento');
+      reload();
+    } catch (err) {
+      toast(err.message);
+    }
+  });
   on('#queue', async () => {
     if (!(await ask('Voltar este serviço para a fila, sem motorista?', { ok: 'Voltar para a fila', cancel: 'Não' }))) return;
     await api(`/services/${id}`, { method: 'PATCH', body: { status: 'pendente' } });

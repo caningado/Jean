@@ -86,13 +86,16 @@ export function createCoreData(db) {
     get(id) {
       return db.prepare(`${SERVICE_SELECT} WHERE s.id = ?`).get(id);
     },
-    list({ status, driverId, contactId, since, doneSince, hideCancelled = false, limit = 100 } = {}) {
+    list({ status, driverId, contactId, since, doneSince, hideCancelled = false, withQueue = false, noDriver = false, limit = 100 } = {}) {
       const where = [];
       const params = [];
-      if (status) {
+      // withQueue: "em andamento" + os que estão na fila de um motorista (aguardando ele começar).
+      if (status === 'aberto' && withQueue) where.push("(s.status = 'aberto' OR (s.status = 'pendente' AND s.driver_id IS NOT NULL))");
+      else if (status) {
         where.push('s.status = ?');
         params.push(status);
       }
+      if (noDriver) where.push('s.driver_id IS NULL');
       if (hideCancelled) where.push("s.status <> 'cancelado'");
       if (driverId) {
         where.push('s.driver_id = ?');

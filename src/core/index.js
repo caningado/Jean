@@ -107,8 +107,26 @@ function blockDone(ctx, service) {
   return null;
 }
 
-// Tira um serviço da fila: o dono passa para um motorista e fica "em andamento".
+// Fila do motorista: serviço "pendente" que já tem motorista. Ele escolhe qual começa;
+// em andamento ao mesmo tempo, no máximo config.maxActive (padrão 2).
+const maxActive = (ctx) => ctx.config.maxActive || 2;
+function activeCount(ctx, driverId, exceptId = 0) {
+  return ctx.db.prepare("SELECT COUNT(*) AS n FROM services WHERE driver_id = ? AND status = 'aberto' AND id <> ?").get(driverId, exceptId).n;
+}
+function checkCanStart(ctx, driverId, serviceId = 0) {
+  if (activeCount(ctx, driverId, serviceId) < maxActive(ctx)) return;
+  const name = ctx.data.users.get(driverId)?.name || 'O motorista';
+  throw new HttpError(409, `${name} já tem ${maxActive(ctx)} serviços em andamento. Entregue um antes de começar outro.`);
+}
+
+// O dono passa um serviço para um motorista: entra na fila dele (ainda não começa).
+function assignService(ctx, service, driverId) {
+  return ctx.data.services.update(service.id, { status: 'pendente', driver_id: driverId });
+}
+
+// O motorista começa um serviço da fila dele: vira "em andamento" (respeitando o limite).
 function takeService(ctx, service, driverId) {
+  checkCanStart(ctx, driverId, service.id);
   const updated = ctx.data.services.update(service.id, { status: 'aberto', driver_id: driverId });
   // Vira o serviço "em mãos" do motorista, se ele não está com outro.
   const current = ctx.data.services.active({ id: driverId });
@@ -122,7 +140,7 @@ async function notifyAssigned(ctx, service, byUser) {
   const driver = ctx.data.users.get(service.driver_id);
   if (!driver) return;
   try {
-    await ctx.send(driver.phone, [`🚚 ${byUser.name} passou um serviço para você.`, ctx.data.services.describe(service)].join('\n\n'));
+    await ctx.send(driver.phone, [`🚚 ${byUser.name} passou um serviço para a sua fila.`, ctx.data.services.describe(service), `Para começar, mande *abrir ${service.id}* (ou toque em Começar no painel).`].join('\n\n'));
   } catch (err) {
     ctx.log(`Não consegui avisar ${driver.name} do serviço #${service.id}`, err);
   }
@@ -500,10 +518,15 @@ const commands = [
   },
   {
     names: ['fila'],
-    help: '*fila* – serviços pendentes, sem motorista (só o dono)',
+    help: '*fila* – serviços esperando (motorista: a sua fila; dono: os sem motorista)',
     run({ ctx, user }) {
-      if (user.role !== 'dono') return 'Só o dono vê a fila e escolhe o motorista de cada serviço.';
-      const list = ctx.data.services.list({ status: 'pendente', limit: 20 });
+      if (user.role !== 'dono') {
+        const mine = ctx.data.services.list({ status: 'pendente', driverId: user.id, limit: 20 });
+        if (!mine.length) return 'Sua fila está vazia. 👍';
+        const rows = mine.map((s) => `• *#${s.id}* ${s.contact_name || 'Sem cliente'} – ${String(s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa')}${s.vehicle ? ` (${s.vehicle})` : ''}`);
+        return [`📋 *Sua fila* (${mine.length})`, ...rows, '', `Para começar um, mande *abrir* e o número (no máximo ${maxActive(ctx)} em andamento).`].join('\n');
+      }
+      const list = ctx.data.services.list({ status: 'pendente', limit: 50 }).filter((s) => !s.driver_id).slice(0, 20);
       if (!list.length) return 'Nenhum serviço na fila. 👍';
       const lines = list.map((s) => `• *#${s.id}* ${s.contact_name || 'Sem cliente'} – ${String(s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa')}${s.vehicle ? ` (${s.vehicle})` : ''}`);
       return [`⏳ *Fila* (${list.length})`, ...lines, '', 'Para escolher o motorista, abra o serviço no painel.'].join('\n');
@@ -517,8 +540,15 @@ const commands = [
       const id = Number(String(args[0] || '').replace('#', ''));
       const service = id && ctx.data.services.get(id);
       if (!canSee(user, service)) return 'Não achei esse serviço.';
-      if (service.status === 'pendente') takeService(ctx, service, user.id);
-      else if (service.status !== 'aberto') ctx.data.services.update(service.id, { status: 'aberto' });
+      try {
+        if (service.status === 'pendente') takeService(ctx, service, service.driver_id || user.id);
+        else if (service.status !== 'aberto') {
+          checkCanStart(ctx, service.driver_id || user.id, service.id);
+          ctx.data.services.update(service.id, { status: 'aberto' });
+        }
+      } catch (err) {
+        return err.message;
+      }
       ctx.data.services.setActive(user.id, service.id);
       return `Ok, agora estou no serviço #${service.id}.`;
     },
@@ -779,7 +809,7 @@ function routes(api, ctx) {
     const doneSince = status === 'concluido' ? start : null;
     const since = status === 'concluido' ? null : start;
     // Cancelados não aparecem na lista (ficam guardados no histórico e no backup).
-    const list = data.services.list({ status, driverId, since, doneSince, hideCancelled: !status, limit: Number(req.query.limit) || (start ? 2000 : 100) });
+    const list = data.services.list({ status, driverId, since, doneSince, hideCancelled: !status, withQueue: status === 'aberto', noDriver: status === 'pendente' && req.user.role === 'dono' && !req.query.driver, limit: Number(req.query.limit) || (start ? 2000 : 100) });
     // Pago ou não (para pintar a linha): só serviço com valor, em andamento ou entregue.
     const pag = ctx.api.pagamentos;
     res.json(
@@ -889,8 +919,12 @@ function routes(api, ctx) {
       return res.status(201).json(service);
     }
     const driverId = req.user.role === 'dono' ? fields.driver_id || req.user.id : req.user.id;
-    const service = data.services.create({ ...fields, status: 'aberto', contact_id: contactId, driver_id: driverId });
-    data.services.setActive(driverId, service.id);
+    // Dono escolheu outro motorista: entra na fila dele. Quem cria para si mesmo começa já,
+    // a não ser que já esteja com o máximo em andamento (aí vai para a própria fila).
+    const start = driverId === req.user.id && activeCount(ctx, driverId) < maxActive(ctx);
+    const service = data.services.create({ ...fields, status: start ? 'aberto' : 'pendente', contact_id: contactId, driver_id: driverId });
+    if (start) data.services.setActive(driverId, service.id);
+    else if (driverId !== req.user.id) notifyAssigned(ctx, service, req.user);
     res.status(201).json(service);
   });
   api.get('/services/:id', (req, res) => {
@@ -913,12 +947,14 @@ function routes(api, ctx) {
     if (body.pickup === null) delete body.pickup; // retirada não pode ficar vazia
     if (req.user.role !== 'dono') delete body.driver_id;
     // Fila: só o dono põe e tira serviço dela (é ele quem escolhe o motorista).
-    if (req.user.role !== 'dono' && (body.status === 'pendente' || service.status === 'pendente')) throw new HttpError(403, 'Só o dono escolhe o motorista do serviço.');
-    if (service.status === 'pendente' && body.status === 'aberto' && !body.driver_id) body.driver_id = req.user.id;
-    // Volta para a fila: sem motorista. Só o dono ou o motorista do serviço.
-    if (body.status === 'pendente') body.driver_id = null;
-    // Pendente com motorista escolhido pelo dono: passa a estar em andamento.
-    else if (service.status === 'pendente' && body.driver_id && !body.status) body.status = 'aberto';
+    // O motorista mexe nos da fila dele (e começa um), mas não põe nada na fila geral.
+    if (req.user.role !== 'dono' && (body.status === 'pendente' || (service.status === 'pendente' && service.driver_id !== req.user.id))) throw new HttpError(403, 'Só o dono escolhe o motorista do serviço.');
+    if (service.status === 'pendente' && body.status === 'aberto' && !body.driver_id) body.driver_id = service.driver_id || req.user.id;
+    // Volta para a fila geral: sem motorista (só o dono).
+    if (body.status === 'pendente' && body.driver_id === undefined) body.driver_id = null;
+    // Começar (ou reabrir): no máximo config.maxActive em andamento por motorista.
+    const starting = body.status === 'aberto' && service.status !== 'aberto';
+    if (starting) checkCanStart(ctx, body.driver_id || service.driver_id || req.user.id, service.id);
     // Fechar: confere as regras da empresa (ex.: VIN obrigatório).
     const finishing = body.status === 'concluido' && service.status !== 'concluido';
     if (finishing) {
@@ -941,8 +977,9 @@ function routes(api, ctx) {
     }
     if (service.status === 'pendente' && updated.status === 'aberto' && updated.driver_id) {
       if (!data.services.active({ id: updated.driver_id })) data.services.setActive(updated.driver_id, service.id);
-      notifyAssigned(ctx, updated, req.user);
     }
+    // Dono passou para a fila de um motorista (ou trocou o motorista da fila): avisa.
+    if (updated.status === 'pendente' && updated.driver_id && updated.driver_id !== service.driver_id) notifyAssigned(ctx, updated, req.user);
     if (body.status && body.status !== 'aberto') {
       db.prepare('UPDATE users SET active_service_id = NULL WHERE active_service_id = ?').run(service.id);
     }
@@ -957,8 +994,9 @@ function routes(api, ctx) {
     if (service.status !== 'pendente') throw new HttpError(409, service.driver_name ? `Esse serviço já está com ${service.driver_name}.` : 'Esse serviço não está mais na fila.');
     const driver = data.users.get(Number(req.body?.driver_id) || req.user.id);
     if (!driver || !driver.active) throw new HttpError(400, 'Motorista não encontrado.');
-    const updated = takeService(ctx, service, driver.id);
-    notifyAssigned(ctx, updated, req.user);
+    // Entra na fila do motorista; ele escolhe quando começar.
+    const updated = assignService(ctx, service, driver.id);
+    if (driver.id !== service.driver_id) notifyAssigned(ctx, updated, req.user);
     res.json(updated);
   });
 
