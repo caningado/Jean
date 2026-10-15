@@ -1790,8 +1790,9 @@ screens.empresa = async () => {
 // Apelido e regras da empresa (no cadastro e na edição).
 // Apelido logo depois do nome: é por ele que a empresa é achada no Novo serviço e no endereço.
 const companyNick = (c = {}) => `<label>Apelido (ex.: SS, Moving)</label><input name="nickname" maxlength="30" placeholder="Nome curto para digitar rápido" value="${esc(c.nickname || '')}">`;
+// Um endereço só: vai na cobrança (Bill to) e é onde pegar ou deixar carros.
+const companyAddressField = (c = {}) => `<label>Endereço (cobrança e entrega)</label><input name="address" maxlength="300" placeholder="Rua, cidade, estado e CEP" value="${esc(c.address || '')}">`;
 const companyRules = (c = {}) => `
-  <label>Endereço da oficina (onde pegar ou deixar carros)</label><input name="address" maxlength="300" placeholder="Vazio: usa o endereço do Bill to" value="${esc(c.address || '')}">
   <p class="sub">O endereço vira sozinho um apelido: digite ${c.nickname || c.name ? `<strong>${esc(c.nickname || c.name)}</strong>` : 'o apelido (ou o nome)'} na retirada ou no destino.</p>
   <label class="check"><input type="checkbox" name="requires_vin" ${c.requires_vin ? 'checked' : ''}> Exige o VIN para fechar o serviço</label>
   <label class="check"><input type="checkbox" name="always_invoice" ${c.always_invoice ? 'checked' : ''}> Sempre fazer invoice ao fechar o serviço</label>`;
@@ -1816,7 +1817,7 @@ const novaEmpresa = () => {
     <form class="card" id="f">
       <label>Nome</label><input name="name" required placeholder="Ex.: USAVE Motors">
       ${companyNick()}
-      <label>Para quem sai a cobrança (Bill to): nome e endereço</label><textarea name="bill_to" rows="3" placeholder="Nome, rua, cidade, estado e CEP"></textarea>
+      ${companyAddressField()}
       <div class="row2"><div><label>Telefone</label><input name="phone" type="tel"></div><div><label>E-mail</label><input name="email" type="email"></div></div>
       ${companyRules()}
       <button class="block">Cadastrar</button>
@@ -1875,7 +1876,7 @@ screens.cliente = async (params, id) => {
       <form id="f">
         <label>Nome</label><input name="name" value="${esc(c.name)}" required>
         ${companyNick(c)}
-        <label>Para quem sai a cobrança (Bill to)</label><textarea name="bill_to" rows="3">${esc(c.bill_to || '')}</textarea>
+        ${companyAddressField(c)}
         <div class="row2"><div><label>Telefone</label><input name="phone" type="tel" value="${esc(c.phone || '')}"></div><div><label>E-mail</label><input name="email" type="email" value="${esc(c.email || '')}"></div></div>
         ${companyRules(c)}
         <label>Observações</label><textarea name="notes" rows="2">${esc(c.notes || '')}</textarea>

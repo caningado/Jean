@@ -189,9 +189,11 @@ function saveCompany(ctx, body, existing = null) {
   if (!name) throw new HttpError(400, 'Coloque o nome da empresa.');
   const other = ctx.db.prepare('SELECT id FROM companies WHERE name = ? COLLATE NOCASE').get(name);
   if (other && other.id !== existing?.id) throw new HttpError(409, `Já existe a empresa ${name}.`);
+  // Painel manda só o endereço: a cobrança (Bill to) vira nome + esse mesmo endereço.
+  const sameAddress = body.address !== undefined && body.bill_to === undefined;
   const f = {
     name,
-    bill_to: body.bill_to !== undefined ? cleanText(body.bill_to, 400) : existing?.bill_to ?? null,
+    bill_to: sameAddress ? [name, cleanText(String(body.address ?? '').replace(/\s*\n\s*/g, ', '), 300)].filter(Boolean).join('\n') : body.bill_to !== undefined ? cleanText(body.bill_to, 400) : existing?.bill_to ?? null,
     email: body.email !== undefined ? cleanText(body.email, 120) : existing?.email ?? null,
     phone: body.phone !== undefined ? cleanText(body.phone, 40) : existing?.phone ?? null,
     notes: body.notes !== undefined ? cleanText(body.notes, 1000) : existing?.notes ?? null,
@@ -286,7 +288,8 @@ function routes(api, ctx) {
     owner(req);
     const c = company(req);
     const periodo = String(req.query.periodo || 'abertos');
-    res.json({ ...c, requesters: requesters(ctx, c.id), statement: statementData(ctx, c, periodo), link: publicLink(ctx, c, periodo) });
+    // Empresa antiga sem endereço próprio: mostra o que está no Bill to.
+    res.json({ ...c, address: companyAddress(c), requesters: requesters(ctx, c.id), statement: statementData(ctx, c, periodo), link: publicLink(ctx, c, periodo) });
   });
 
   api.patch('/companies/:id', (req, res) => {
