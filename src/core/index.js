@@ -778,7 +778,8 @@ function routes(api, ctx) {
     const start = starts[req.query.periodo]?.(tz) || null;
     const doneSince = status === 'concluido' ? start : null;
     const since = status === 'concluido' ? null : start;
-    const list = data.services.list({ status, driverId, since, doneSince, limit: Number(req.query.limit) || (start ? 2000 : 100) });
+    // Cancelados não aparecem na lista (ficam guardados no histórico e no backup).
+    const list = data.services.list({ status, driverId, since, doneSince, hideCancelled: !status, limit: Number(req.query.limit) || (start ? 2000 : 100) });
     // Pago ou não (para pintar a linha): só serviço com valor, em andamento ou entregue.
     const pag = ctx.api.pagamentos;
     res.json(
