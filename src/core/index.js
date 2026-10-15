@@ -5,7 +5,7 @@ import { repairEncodedNames } from './data.js';
 import { hashPin, verifyPin, signToken } from '../lib/auth.js';
 import { collectAlerts, servicesBlocked } from '../lib/daily.js';
 import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkMoney, isMapReference } from '../lib/validate.js';
-import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfMonthIso, startOfYearIso, formatPhone } from '../lib/util.js';
+import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfWeekIso, startOfMonthIso, startOfYearIso, formatPhone } from '../lib/util.js';
 
 const migrations = [
   `CREATE TABLE users (
@@ -770,7 +770,11 @@ function routes(api, ctx) {
     if (blocked) throw new HttpError(423, blocked.replace(/\*/g, ''));
     const status = req.query.status || null;
     const driverId = req.user.role === 'dono' ? Number(req.query.driver) || null : req.user.id;
-    res.json(data.services.list({ status, driverId, limit: Number(req.query.limit) || 100 }));
+    // Entregues de hoje, da semana (desde segunda) ou do mês.
+    const tz = ctx.config.timeZone;
+    const starts = { dia: startOfDayIso, semana: startOfWeekIso, mes: startOfMonthIso };
+    const doneSince = starts[req.query.periodo]?.(tz) || null;
+    res.json(data.services.list({ status, driverId, doneSince, limit: Number(req.query.limit) || (doneSince ? 2000 : 100) }));
   });
   // Sugestões de endereço enquanto digita no painel.
   api.get('/places', async (req, res) => {

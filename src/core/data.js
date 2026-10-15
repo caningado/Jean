@@ -86,7 +86,7 @@ export function createCoreData(db) {
     get(id) {
       return db.prepare(`${SERVICE_SELECT} WHERE s.id = ?`).get(id);
     },
-    list({ status, driverId, contactId, since, limit = 100 } = {}) {
+    list({ status, driverId, contactId, since, doneSince, limit = 100 } = {}) {
       const where = [];
       const params = [];
       if (status) {
@@ -104,6 +104,11 @@ export function createCoreData(db) {
       if (since) {
         where.push('s.created_at >= ?');
         params.push(since);
+      }
+      // Entregues no período: conta pelo dia da entrega.
+      if (doneSince) {
+        where.push('COALESCE(s.completed_at, s.created_at) >= ?');
+        params.push(doneSince);
       }
       const sql = `${SERVICE_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY s.id DESC LIMIT ?`;
       return db.prepare(sql).all(...params, limit);
