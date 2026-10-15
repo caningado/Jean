@@ -73,6 +73,13 @@ export function startOfMonthIso(timeZone, date = new Date()) {
   return startOfDayIso(timeZone, first);
 }
 
+// Segunda-feira desta semana, meia-noite no fuso da empresa.
+export function startOfWeekIso(timeZone, date = new Date()) {
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short' }).format(date);
+  const back = (['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(weekday) + 7) % 7;
+  return startOfDayIso(timeZone, new Date(date.getTime() - back * 86400000));
+}
+
 export function startOfYearIso(timeZone, date = new Date()) {
   const year = Number(new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric' }).format(date));
   // Meio-dia UTC de 1º de janeiro ainda é 1º de janeiro no fuso dos EUA.

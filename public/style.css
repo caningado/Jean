@@ -347,3 +347,6 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .viewer-body .sub, .viewer-body .warn { color: #fff; }
 .more { text-align: center; margin: 4px 0 16px; }
 .more button { width: auto; }
+.segmented.periodo { margin-top: -4px; }
+.list li.total { display: flex; justify-content: space-between; padding: 12px 4px; color: var(--muted); }
+.list li.total strong { color: var(--text, inherit); }
