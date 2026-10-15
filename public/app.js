@@ -408,7 +408,7 @@ screens.servicos = async (params) => {
   const status = params.get('status') ?? 'aberto';
   const driver = params.get('driver') || '';
   // Entregues: abre no dia de hoje; dá para trocar para a semana ou o mês.
-  const periodo = status === 'concluido' ? params.get('periodo') || 'dia' : '';
+  const periodo = status === 'concluido' ? (['semana', 'mes'].includes(params.get('periodo')) ? params.get('periodo') : 'dia') : '';
   // O dono pode ver só os serviços de um motorista (inclusive os dele mesmo).
   const drivers = state.me.role === 'dono' ? await api('/users') : [];
   const query = (s, d, p = '') => `#/servicos?status=${s}${d ? `&driver=${d}` : ''}${p ? `&periodo=${p}` : ''}`;
@@ -419,7 +419,7 @@ screens.servicos = async (params) => {
     <div class="segmented">
       ${state.me.role === 'dono' ? `<button data-s="pendente">Pendentes${fila.length ? ` <span class="badge pendente">${fila.length}</span>` : ''}</button>` : ''}<button data-s="aberto">Andamento</button><button data-s="concluido">Entregues</button><button data-s="">Todos</button>
     </div>
-    ${periodo ? `<div class="segmented periodo">${[['dia', 'Hoje'], ['semana', 'Semana'], ['mes', 'Mês'], ['tudo', 'Todos']].map(([p, l]) => `<button data-p="${p}" class="${p === periodo ? 'active' : ''}">${l}</button>`).join('')}</div>` : ''}
+    ${periodo ? `<div class="segmented periodo">${[['dia', 'Hoje'], ['semana', 'Semana'], ['mes', 'Mês']].map(([p, l]) => `<button data-p="${p}" class="${p === periodo ? 'active' : ''}">${l}</button>`).join('')}</div>` : ''}
     ${drivers.length > 1 ? `<select id="driver" aria-label="Motorista"><option value="">Todos os motoristas</option>${drivers.map((d) => `<option value="${d.id}" ${String(d.id) === driver ? 'selected' : ''}>${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select>` : ''}
     <div class="card"><ul class="list" id="list"><li class="empty">Carregando…</li></ul></div>`;
   view.querySelectorAll('.segmented:not(.periodo) button').forEach((b) => {
@@ -431,7 +431,7 @@ screens.servicos = async (params) => {
   if (select) select.onchange = () => (location.hash = query(status, select.value, periodo));
   let list;
   try {
-    list = await api(`/services?status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}${periodo && periodo !== 'tudo' ? `&periodo=${periodo}` : ''}`);
+    list = await api(`/services?status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}${periodo ? `&periodo=${periodo}` : ''}`);
   } catch (err) {
     // Lista suspensa por falta da milhagem da semana: mostra o que fazer.
     if (!/suspensa/.test(err.message)) throw err;
