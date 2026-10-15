@@ -602,6 +602,12 @@ screens.novo = async () => {
     box.hidden = true;
     phoneBox.hidden = true;
   };
+  // Toque/clique na sugestão sem tirar o foco do campo: assim a lista não fecha
+  // antes de escolher (clique demorado no computador fazia a escolha se perder).
+  const keepFocus = (b, pick) => {
+    b.onmousedown = (e) => e.preventDefault();
+    b.onclick = pick;
+  };
   const search = (q) => {
     clearTimeout(timer);
     timer = setTimeout(async () => {
@@ -610,7 +616,7 @@ screens.novo = async () => {
         .map((c, i) => `<li><button type="button" data-i="${i}"><strong>${c.id ? '' : '🏢 '}${esc(c.name)}</strong><span class="sub">${!c.id ? 'empresa (ninguém cadastrado ainda)' : c.phone ? phoneFmt(c.phone) : 'sem telefone'}${c.company_name ? ' · ' + esc(c.company_name) : ''}${c.last?.vehicle ? ' · ' + esc(c.last.vehicle) : ''}</span></button></li>`)
         .join('');
       box.hidden = !found.length;
-      box.querySelectorAll('button').forEach((b) => (b.onclick = () => choose(found[Number(b.dataset.i)])));
+      box.querySelectorAll('button').forEach((b) => keepFocus(b, () => choose(found[Number(b.dataset.i)])));
     }, 250);
   };
   form.contact_name.oninput = () => {
@@ -642,7 +648,7 @@ screens.novo = async () => {
         return;
       }
       phoneBox.hidden = false;
-      phoneBox.querySelectorAll('button').forEach((b) => (b.onclick = () => choose(list[Number(b.dataset.i)])));
+      phoneBox.querySelectorAll('button').forEach((b) => keepFocus(b, () => choose(list[Number(b.dataset.i)])));
     }, 300);
   };
   form.contact_phone.onblur = () => setTimeout(() => (phoneBox.hidden = true), 200);
