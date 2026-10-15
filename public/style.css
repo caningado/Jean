@@ -350,3 +350,10 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .segmented.periodo { margin-top: -4px; }
 .list li.total { display: flex; justify-content: space-between; padding: 12px 4px; color: var(--muted); }
 .list li.total strong { color: var(--text, inherit); }
+
+/* Lista de serviços: pago (verde claro) ou falta receber (vermelho claro) */
+:root { --pago-bg: #e6f4e1; --nao-pago-bg: #fde4e4; }
+:root[data-theme="dark"] { --pago-bg: #1d3320; --nao-pago-bg: #3a1d1d; }
+.table tbody tr.pago td, .list li.pago > a { background: var(--pago-bg); }
+.table tbody tr.nao-pago td, .list li.nao-pago > a { background: var(--nao-pago-bg); }
+.list li.pago > a, .list li.nao-pago > a { border-radius: 10px; padding-left: 8px; padding-right: 8px; }
