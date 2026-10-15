@@ -125,3 +125,11 @@ test('localização 📍 do WhatsApp vira texto com coordenadas', () => {
   ] } }] }] };
   assert.equal(extractMessages(payload)[0].text, "Joe's Auto, 1 Elm St (42.3601, -71.0589)");
 });
+
+test('veículo: modelo curto com número (F 150, X5) é aceito; só número não', async () => {
+  const { checkVehicle } = await import('../src/lib/validate.js');
+  assert.equal(checkVehicle('F 150'), 'F 150');
+  assert.equal(checkVehicle('X5'), 'X5');
+  assert.throws(() => checkVehicle('23'), /marca e o modelo/);
+  assert.throws(() => checkVehicle('F'), /marca e o modelo/);
+});

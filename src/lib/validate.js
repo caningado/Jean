@@ -39,7 +39,9 @@ export function checkAddress(raw, what = 'O endereço') {
 
 export function checkVehicle(raw) {
   const vehicle = String(raw ?? '').trim().replace(/\s+/g, ' ');
-  if (letters(vehicle) < 2) throw new ValidationError('Mande a marca e o modelo do veículo. Ex: Honda Civic ABC1234');
+  // Modelos curtos com número também valem: F 150, X5, Q7, M3.
+  const ok = letters(vehicle) >= 2 || (letters(vehicle) >= 1 && /\d/.test(vehicle));
+  if (!ok) throw new ValidationError('Mande a marca e o modelo do veículo. Ex: Honda Civic ABC1234');
   if (vehicle.length > 60) throw new ValidationError('O veículo está muito comprido (máximo 60 letras).');
   return vehicle;
 }
