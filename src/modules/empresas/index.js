@@ -185,7 +185,8 @@ function cleanText(v, max = 300) {
 }
 
 function saveCompany(ctx, body, existing = null) {
-  const name = cleanText(body.name ?? existing?.name, 120);
+  // Padrão do Caningado: nome de empresa sempre em MAIÚSCULAS.
+  const name = cleanText(body.name ?? existing?.name, 120)?.toUpperCase() || null;
   if (!name) throw new HttpError(400, 'Coloque o nome da empresa.');
   const other = ctx.db.prepare('SELECT id FROM companies WHERE name = ? COLLATE NOCASE').get(name);
   if (other && other.id !== existing?.id) throw new HttpError(409, `Já existe a empresa ${name}.`);
@@ -339,6 +340,15 @@ function publicRoutes(app, ctx) {
 }
 
 function setup(ctx) {
+  // Empresas cadastradas antes do padrão: passa o nome (e a 1ª linha do Bill to, se for o nome) para MAIÚSCULAS.
+  for (const c of ctx.db.prepare('SELECT * FROM companies').all()) {
+    const upper = c.name.toUpperCase();
+    if (upper === c.name) continue;
+    const lines = String(c.bill_to || '').split('\n');
+    if (lines[0].trim() === c.name) lines[0] = upper;
+    ctx.db.prepare('UPDATE companies SET name = ?, bill_to = ? WHERE id = ?').run(upper, c.bill_to == null ? null : lines.join('\n'), c.id);
+    syncCompanyPlace(ctx, getCompany(ctx, c.id));
+  }
   // Empresas cadastradas antes: o endereço do "Bill to" também vira apelido.
   for (const c of ctx.db.prepare('SELECT * FROM companies WHERE place_id IS NULL').all()) syncCompanyPlace(ctx, c);
   ctx.api.empresas = {

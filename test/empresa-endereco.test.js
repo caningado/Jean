@@ -17,7 +17,7 @@ test('endereço da oficina/dealer vira apelido sozinho', async (t) => {
 
   // Sem endereço próprio: usa o Bill to (depois da linha do nome).
   const moving = await call('POST', '/companies', { name: 'Moving', bill_to: 'Moving\n100 Main St\nOrlando FL 32801' });
-  assert.deepEqual(places(), [{ nickname: 'Moving', address: '100 Main St, Orlando FL 32801' }]);
+  assert.deepEqual(places(), [{ nickname: 'MOVING', address: '100 Main St, Orlando FL 32801' }]);
 
   // Endereço próprio e apelido: o apelido passa a ser o da empresa.
   await call('PATCH', `/companies/${moving.id}`, { nickname: 'MV', address: '5 Dock Rd, Sanford FL' });
@@ -29,7 +29,7 @@ test('endereço da oficina/dealer vira apelido sozinho', async (t) => {
 
   // O nome da empresa também vale, mesmo com outro apelido: "Moving" na lista e no destino.
   const sug = await call('GET', '/places?q=moving');
-  assert.deepEqual(sug.saved, [{ nickname: 'MV · Moving', address: '5 Dock Rd, Sanford FL' }]);
+  assert.deepEqual(sug.saved, [{ nickname: 'MV · MOVING', address: '5 Dock Rd, Sanford FL' }]);
   const s2 = await call('POST', '/services', { contact_name: 'Bia', pickup: '1 A St', dropoff: 'Moving', driver_id: 1 });
   assert.equal(s2.dropoff, '5 Dock Rd, Sanford FL', JSON.stringify(s2));
 
@@ -39,5 +39,5 @@ test('endereço da oficina/dealer vira apelido sozinho', async (t) => {
 
   // Apagar a empresa apaga o apelido dela.
   await call('DELETE', `/companies/${moving.id}`);
-  assert.deepEqual(places().map((p) => p.nickname), ['Ace Auto']);
+  assert.deepEqual(places().map((p) => p.nickname), ['ACE AUTO']);
 });
