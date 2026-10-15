@@ -1077,9 +1077,9 @@ screens.contatos = async (params) => {
   view.innerHTML = `
     <form id="search" class="actions" style="margin-top:0;margin-bottom:12px"><input name="q" type="search" placeholder="Buscar nome ou telefone" value="${esc(q)}"></form>
     <div class="actions" style="margin-bottom:12px">
-      ${state.me.role === 'dono' && canPickContacts ? '<button class="secondary" id="pick">📇 Da agenda do celular</button>' : ''}
-      ${has('empresas') && state.me.role === 'dono' ? '<button class="secondary" id="nova-empresa">➕ Nova empresa</button>' : ''}
-      <button class="secondary" id="add">➕ Novo cliente</button>
+      ${state.me.role === 'dono' && canPickContacts ? '<button class="secondary" id="pick">📇 Da Agenda do Celular</button>' : ''}
+      ${has('empresas') && state.me.role === 'dono' ? '<button class="secondary" id="nova-empresa">➕ Nova Empresa</button>' : ''}
+      <button class="secondary" id="add">➕ Novo Cliente</button>
     </div>
     <div class="card"><ul class="list" id="list"><li class="empty">Carregando…</li></ul></div>`;
   view.querySelector('#search').onsubmit = (e) => {
