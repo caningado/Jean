@@ -383,7 +383,7 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .rel-table th, .rel-table td { padding: 7px 6px; }
 .rel-table .sub { font-size: 12px; }
 .rel-foot { margin-top: 14px; }
-@media (max-width: 560px) { .rel-stats { grid-template-columns: repeat(2, 1fr); } .rel-main { min-width: 980px; } }
+@media (max-width: 560px) { .rel-stats { grid-template-columns: repeat(2, 1fr); } .rel-main { min-width: 1080px; } }
 
 @media print {
   @page { size: letter landscape; margin: 10mm; }

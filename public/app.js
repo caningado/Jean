@@ -1504,18 +1504,18 @@ screens.relatorio = async (params) => {
         <div><span class="sub">A receber</span><strong>${money(t.open_cents)}</strong></div>
       </div>
       ${r.services.length
-        ? `<div class="rel-scroll"><table class="table rel-table rel-main"><thead><tr><th>Nº</th><th>Hora</th><th>Motorista</th><th>Cliente</th><th>Veículo</th><th>Retirada → Entrega</th><th>Situação</th><th>Pagamento</th><th class="num">Valor</th></tr></thead>
+        ? `<div class="rel-scroll"><table class="table rel-table rel-main"><thead><tr><th>Nº</th><th>Hora</th><th>Motorista</th><th>Cliente</th><th>Telefone</th><th>Veículo</th><th>Retirada → Entrega</th><th>Situação</th><th>Pagamento</th><th class="num">Valor</th></tr></thead>
           <tbody>${r.services
             .map(
               (s) => `<tr><td class="nowrap">#${s.id}</td><td class="nowrap">${hora(s.created_at)}</td><td>${esc(s.driver_name || '–')}</td>
-                <td>${esc(s.contact_name || '')}${s.contact_phone ? `<div class="sub nowrap">${phoneFmt(s.contact_phone)}</div>` : ''}</td>
+                <td>${esc(s.contact_name || '')}</td><td class="nowrap">${s.contact_phone ? phoneFmt(s.contact_phone) : '–'}</td>
                 <td>${esc(s.vehicle || '')}${s.plate ? `<div class="sub">${esc(s.plate)}</div>` : ''}</td>
                 <td>${short(s.pickup)}${s.dropoff ? `<div class="sub">→ ${short(s.dropoff)}</div>` : ''}</td>
                 <td class="nowrap">${s.status === 'concluido' ? `Entregue ${hora(s.completed_at)}` : s.status === 'pendente' ? (s.driver_id ? 'Aguardando' : 'Pendente') : 'Em andamento'}</td>
                 <td>${pay(s)}</td><td class="num">${s.price_cents ? money(s.price_cents) : '–'}</td></tr>`
             )
             .join('')}</tbody>
-          <tfoot><tr><td colspan="8"><strong>Total</strong></td><td class="num"><strong>${money(t.price_cents)}</strong></td></tr></tfoot></table></div>
+          <tfoot><tr><td colspan="9"><strong>Total</strong></td><td class="num"><strong>${money(t.price_cents)}</strong></td></tr></tfoot></table></div>
           <h3>Por motorista</h3>
           <div class="rel-scroll"><table class="table rel-table"><thead><tr><th>Motorista</th><th class="num">Serviços</th><th class="num">Faturado</th><th class="num">Recebido</th></tr></thead>
           <tbody>${r.drivers.map((g) => `<tr><td>${esc(g.name)}</td><td class="num">${g.count}</td><td class="num">${money(g.price_cents)}</td><td class="num">${money(g.received_cents)}</td></tr>`).join('')}</tbody></table></div>`
