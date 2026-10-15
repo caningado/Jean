@@ -1126,7 +1126,6 @@ screens.contatos = async (params) => {
   const phoneRow = (c) => `<li><a href="#/contato/${c.id}"><div><strong>${esc(c.name)}</strong><div class="sub">${[phoneFmt(c.phone), esc(company(c))].filter(Boolean).join(' · ')}</div></div>
           <div class="right sub">${owner && c.year_count ? `${c.year_count} no ano<br>${money(c.year_cents)}` : ''}</div></a></li>`;
   const card = view.querySelector('#list').closest('.card');
-  if (!q && list.length) card.insertAdjacentHTML('beforebegin', `<p class="sub" style="margin:4px 2px 8px">Últimos ${list.length} clientes novos${total > list.length ? ` de ${total.toLocaleString('pt-BR')}. Para achar os outros, use a busca.` : ''}</p>`);
   if (isDesk()) {
     card.outerHTML = list.length
       ? `<div class="card table-card"><table class="table">
