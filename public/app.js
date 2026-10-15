@@ -44,7 +44,7 @@ function toast(message) {
   toast.timer = setTimeout(() => toastEl.classList.add('hidden'), 3000);
 }
 
-async function api(path, { method = 'GET', body, raw, type } = {}) {
+async function api(path, { method = 'GET', body, raw, type, withTotal } = {}) {
   const opts = { method, headers: {} };
   if (raw) {
     opts.body = raw;
@@ -65,7 +65,7 @@ async function api(path, { method = 'GET', body, raw, type } = {}) {
     err.code = data?.code;
     throw err;
   }
-  return data;
+  return withTotal ? { data, total: Number(res.headers.get('X-Total-Count')) || 0 } : data;
 }
 
 // Agenda do celular (Contact Picker): funciona no Chrome do Android. O iPhone ainda não deixa.
@@ -1107,33 +1107,57 @@ screens.contatos = async (params) => {
       input.click();
     };
   }
-  const [list, companies] = await Promise.all([api(`/contacts?q=${encodeURIComponent(q)}`), has('empresas') ? api('/companies').catch(() => []) : []]);
+  const PAGE = 300;
+  const [first, companies] = await Promise.all([
+    api(`/contacts?q=${encodeURIComponent(q)}&limit=${PAGE}`, { withTotal: true }),
+    has('empresas') ? api('/companies').catch(() => []) : [],
+  ]);
+  const list = first.data;
+  const total = first.total;
   // Nome da empresa (oficina, dealer) de cada cliente, quando ele pede serviço por uma.
   const companyOf = Object.fromEntries(companies.map((co) => [co.id, co.name]));
   const company = (c) => (c.company_id && companyOf[c.company_id]) || '';
   // Números de serviços e valores: só o dono recebe do servidor.
   const owner = state.me.role === 'dono';
+  const empty = 'Nenhum cliente. Traga a agenda do celular ou adicione um.';
+  const deskRow = (c) =>
+    `<tr data-href="#/contato/${c.id}" tabindex="0"><td><strong>${esc(c.name)}</strong></td><td class="nowrap">${phoneFmt(c.phone)}</td>${has('empresas') ? `<td>${esc(company(c)) || '<span class="sub">Particular</span>'}</td>` : ''}<td>${esc(c.email || '')}</td>${owner ? `<td class="num">${c.month_count || ''}</td><td class="num">${c.year_count || ''}</td><td class="num">${c.month_cents ? money(c.month_cents) : ''}</td><td class="num">${c.year_cents ? money(c.year_cents) : ''}</td>` : ''}</tr>`;
+  const phoneRow = (c) => `<li><a href="#/contato/${c.id}"><div><strong>${esc(c.name)}</strong><div class="sub">${[phoneFmt(c.phone), esc(company(c))].filter(Boolean).join(' · ')}</div></div>
+          <div class="right sub">${owner && c.year_count ? `${c.year_count} no ano<br>${money(c.year_cents)}` : ''}</div></a></li>`;
+  const card = view.querySelector('#list').closest('.card');
   if (isDesk()) {
-    view.querySelector('#list').closest('.card').outerHTML = list.length
+    card.outerHTML = list.length
       ? `<div class="card table-card"><table class="table">
           <thead><tr><th>Nome</th><th>Telefone</th>${has('empresas') ? '<th>Empresa</th>' : ''}<th>E-mail</th>${owner ? '<th class="num">Serviços mês</th><th class="num">Serviços ano</th><th class="num">Valor mês</th><th class="num">Valor ano</th>' : ''}</tr></thead>
-          <tbody>${list
-            .map(
-              (c) => `<tr data-href="#/contato/${c.id}" tabindex="0"><td><strong>${esc(c.name)}</strong></td><td class="nowrap">${phoneFmt(c.phone)}</td>${has('empresas') ? `<td>${esc(company(c)) || '<span class="sub">Particular</span>'}</td>` : ''}<td>${esc(c.email || '')}</td>${owner ? `<td class="num">${c.month_count || ''}</td><td class="num">${c.year_count || ''}</td><td class="num">${c.month_cents ? money(c.month_cents) : ''}</td><td class="num">${c.year_cents ? money(c.year_cents) : ''}</td>` : ''}</tr>`
-            )
-            .join('')}</tbody></table></div>`
-      : '<div class="card"><p class="empty">Nenhum cliente. Traga a agenda do celular ou adicione um.</p></div>';
-    linkRows(view);
-    return;
+          <tbody id="list">${list.map(deskRow).join('')}</tbody></table></div>`
+      : `<div class="card"><p class="empty">${empty}</p></div>`;
+  } else {
+    view.querySelector('#list').innerHTML = list.length ? list.map(phoneRow).join('') : `<li class="empty">${empty}</li>`;
   }
-  view.querySelector('#list').innerHTML = list.length
-    ? list
-        .map(
-          (c) => `<li><a href="#/contato/${c.id}"><div><strong>${esc(c.name)}</strong><div class="sub">${[phoneFmt(c.phone), esc(company(c))].filter(Boolean).join(' · ')}</div></div>
-          <div class="right sub">${owner && c.year_count ? `${c.year_count} no ano<br>${money(c.year_cents)}` : ''}</div></a></li>`
-        )
-        .join('')
-    : '<li class="empty">Nenhum cliente. Traga a agenda do celular ou adicione um.</li>';
+  // Agenda grande: mostra aos poucos, com o total e o botão "Mostrar mais".
+  if (total > list.length) {
+    view.insertAdjacentHTML('beforeend', '<div class="more"><p class="sub" id="shown"></p><button class="secondary" id="more">Mostrar mais</button></div>');
+    const shown = view.querySelector('#shown');
+    const more = view.querySelector('#more');
+    const count = () => (shown.textContent = `Mostrando ${list.length.toLocaleString('pt-BR')} de ${total.toLocaleString('pt-BR')} clientes${q ? '' : '. Para achar alguém rápido, use a busca acima.'}`);
+    count();
+    more.onclick = async () => {
+      more.disabled = true;
+      try {
+        const next = await api(`/contacts?q=${encodeURIComponent(q)}&limit=${PAGE}&offset=${list.length}`);
+        list.push(...next);
+        view.querySelector('#list').insertAdjacentHTML('beforeend', next.map(isDesk() ? deskRow : phoneRow).join(''));
+        if (isDesk()) linkRows(view);
+        count();
+        if (!next.length || list.length >= total) more.closest('.more').remove();
+      } catch (err) {
+        toast(err.message);
+      } finally {
+        more.disabled = false;
+      }
+    };
+  }
+  if (isDesk()) linkRows(view);
 };
 
 screens.contato = async (params, id) => {
@@ -1803,7 +1827,7 @@ screens.empresas = async () => {
 screens.cliente = async (params, id) => {
   setScreen('Empresa', { tab: 'contatos', back: '#/empresas' });
   const periodo = params.get('periodo') || 'abertos';
-  const [c, contacts] = await Promise.all([api(`/companies/${id}?periodo=${periodo}`), api('/contacts')]);
+  const [c, contacts] = await Promise.all([api(`/companies/${id}?periodo=${periodo}`), api('/contacts?limit=10000')]);
   const st = c.statement;
   const now = new Date();
   const months = [...Array(12)].map((_, i) => {
