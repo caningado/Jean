@@ -179,7 +179,15 @@ export function createCoreData(db) {
 
 // Lê um arquivo .vcf (pode ter vários contatos). Fica com o primeiro telefone de cada um.
 export function parseVcf(text) {
-  const unfolded = String(text).replace(/\r\n/g, '\n').replace(/\n[ \t]/g, '');
+  const lines = [];
+  for (const line of String(text).replace(/\r\n?/g, '\n').split('\n')) {
+    const prev = lines.at(-1);
+    // Quoted-printable (vCard 2.1, Android): linha que termina em "=" continua na próxima.
+    if (prev?.qp && prev.text.endsWith('=')) prev.text = prev.text.slice(0, -1) + line.trimStart();
+    else if (prev && /^[ \t]/.test(line)) prev.text += line.slice(1);
+    else lines.push({ text: line, qp: /QUOTED-PRINTABLE/i.test(line.split(':')[0]) });
+  }
+  const unfolded = lines.map((l) => l.text).join('\n');
   const cards = [];
   let current = null;
   for (const line of unfolded.split('\n')) {
@@ -191,8 +199,10 @@ export function parseVcf(text) {
     } else if (current) {
       const idx = line.indexOf(':');
       if (idx < 0) continue;
-      const key = line.slice(0, idx).split(';')[0].split('.').pop().toUpperCase();
-      const value = line.slice(idx + 1).trim();
+      const params = line.slice(0, idx).toUpperCase();
+      const key = params.split(';')[0].split('.').pop();
+      let value = line.slice(idx + 1).trim();
+      if (params.includes('QUOTED-PRINTABLE')) value = decodeQuotedPrintable(value);
       if (key === 'FN' && value) current.name = decodeVcfText(value);
       else if (key === 'N' && !current.name) {
         const [last, first] = value.split(';');
@@ -205,5 +215,42 @@ export function parseVcf(text) {
 }
 
 function decodeVcfText(value) {
-  return value.replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\n/gi, ' ').trim();
+  return cleanName(value.replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\n/gi, ' '));
+}
+
+// =C3=A9 → é (bytes UTF-8 escritos em hexa).
+export function decodeQuotedPrintable(value) {
+  const bytes = [];
+  for (let i = 0; i < value.length; i++) {
+    const hex = value[i] === '=' && value.slice(i + 1, i + 3);
+    if (hex && /^[0-9A-F]{2}$/i.test(hex)) {
+      bytes.push(parseInt(hex, 16));
+      i += 2;
+    } else if (value[i] !== '=') bytes.push(...Buffer.from(value[i]));
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+// Tira marcas invisíveis (‎) e troca letras "enfeitadas" (𝐂𝐥𝐚𝐮𝐝𝐢𝐨) pelas normais.
+export function cleanName(value) {
+  return String(value)
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Nomes que já entraram codificados (=E2=80=8E=43...) por uma importação antiga.
+export function repairEncodedNames(db) {
+  const rows = db.prepare("SELECT id, name FROM contacts WHERE name LIKE '=%'").all();
+  const update = db.prepare('UPDATE contacts SET name = ? WHERE id = ?');
+  let fixed = 0;
+  for (const { id, name } of rows) {
+    if (!/^(=[0-9A-F]{2})+=?$/i.test(name)) continue;
+    const decoded = cleanName(decodeQuotedPrintable(name.replace(/=$/, '')).replace(/\uFFFD/g, ''));
+    if (!decoded) continue;
+    update.run(decoded.slice(0, 60), id);
+    fixed++;
+  }
+  return fixed;
 }
