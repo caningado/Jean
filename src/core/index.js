@@ -777,7 +777,15 @@ function routes(api, ctx) {
     const start = starts[req.query.periodo]?.(tz) || null;
     const doneSince = status === 'concluido' ? start : null;
     const since = status === 'concluido' ? null : start;
-    res.json(data.services.list({ status, driverId, since, doneSince, limit: Number(req.query.limit) || (start ? 2000 : 100) }));
+    const list = data.services.list({ status, driverId, since, doneSince, limit: Number(req.query.limit) || (start ? 2000 : 100) });
+    // Pago ou não (para pintar a linha): só serviço com valor, em andamento ou entregue.
+    const pag = ctx.api.pagamentos;
+    res.json(
+      list.map((s) => {
+        if (!pag || !s.price_cents || !['aberto', 'concluido'].includes(s.status)) return s;
+        return { ...s, paid: pag.balance(s).received_cents >= s.price_cents };
+      })
+    );
   });
   // Sugestões de endereço enquanto digita no painel.
   api.get('/places', async (req, res) => {

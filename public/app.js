@@ -403,6 +403,9 @@ screens.login = async () => {
   };
 };
 
+// Fundo verde claro = pago; vermelho claro = falta receber.
+const payClass = (s) => (s.paid === true ? ' class="pago"' : s.paid === false ? ' class="nao-pago"' : '');
+
 screens.servicos = async (params) => {
   setScreen('Serviços', { tab: 'servicos' });
   const status = params.get('status') ?? 'aberto';
@@ -466,7 +469,7 @@ screens.servicos = async (params) => {
           <thead><tr><th>#</th><th>Cliente</th><th>Veículo</th><th>Retirada → Destino</th>${owner ? '<th>Motorista</th>' : ''}<th>Data</th><th class="num">Valor</th><th>Status</th></tr></thead>
           <tbody>${list
             .map(
-              (s) => `<tr data-href="#/servico/${s.id}" data-cents="${s.price_cents || 0}" tabindex="0">
+              (s) => `<tr data-href="#/servico/${s.id}" data-cents="${s.price_cents || 0}" tabindex="0"${payClass(s)}>
                 <td class="sub">${s.id}</td>
                 <td><strong>${esc(s.contact_name || 'Sem cliente')}</strong>${s.contact_phone ? `<div class="sub">${phoneFmt(s.contact_phone)}</div>` : ''}</td>
                 <td>${esc([s.vehicle, s.plate].filter(Boolean).join(' · ')) || '<span class="sub">—</span>'}</td>
@@ -504,7 +507,7 @@ screens.servicos = async (params) => {
   view.querySelector('#list').innerHTML = list.length
     ? list
         .map(
-          (s) => `<li><a href="#/servico/${s.id}">
+          (s) => `<li${payClass(s)}><a href="#/servico/${s.id}">
             <div><strong>#${s.id} ${esc(s.contact_name || 'Sem cliente')}</strong>
               <div class="sub">${esc([s.vehicle, s.plate].filter(Boolean).join(' · ') || (s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa'))}</div>
               <div class="sub">${when(s.created_at)}${state.me.role === 'dono' && s.driver_name ? ' · ' + esc(s.driver_name) : ''}</div></div>
