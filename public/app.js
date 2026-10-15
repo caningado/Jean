@@ -254,7 +254,7 @@ function renderSide() {
       'Empresa',
       [
         has('manutencao') ? item('caminhoes', '#/caminhoes', 'Caminhões') : '',
-        has('empresas') && owner ? item('empresas', '#/empresas', 'Oficinas e dealers') : '',
+        has('empresas') && owner ? item('empresas', '#/empresas', 'Empresas e extrato') : '',
         owner ? item('equipe', '#/equipe', 'Equipe') : '',
         has('invoice') && owner ? item('empresa', '#/empresa', 'Dados da empresa') : '',
         item('enderecos', '#/enderecos', 'Endereços com apelido'),
@@ -1077,20 +1077,18 @@ screens.contatos = async (params) => {
   view.innerHTML = `
     <form id="search" class="actions" style="margin-top:0;margin-bottom:12px"><input name="q" type="search" placeholder="Buscar nome ou telefone" value="${esc(q)}"></form>
     <div class="actions" style="margin-bottom:12px">
-      <button class="secondary" id="add">➕ Novo cliente</button>
-      ${state.me.role === 'dono' && canPickContacts ? '<button class="secondary" id="pick">📇 Da agenda do celular</button>' : ''}
-      ${state.me.role === 'dono' ? '<button class="secondary" id="import">📥 Importar arquivo (.vcf)</button>' : ''}
+      ${state.me.role === 'dono' && canPickContacts ? '<button class="secondary" id="pick">📇 Da Agenda do Celular</button>' : ''}
+      ${has('empresas') && state.me.role === 'dono' ? '<button class="secondary" id="nova-empresa">➕ Nova Empresa</button>' : ''}
+      <button class="secondary" id="add">➕ Novo Cliente</button>
     </div>
-    ${state.me.role === 'dono' && !canPickContacts ? `<details class="card"><summary>Como trazer a agenda do celular</summary>
-      <p class="sub"><strong>iPhone:</strong> no app <strong>Contatos</strong>, toque em <strong>Listas</strong> (no alto, à esquerda), segure o dedo em <strong>Todos os Contatos</strong> e toque em <strong>Exportar</strong>. Salve em Arquivos e depois toque em <strong>📥 Importar arquivo (.vcf)</strong> aqui e escolha o arquivo.</p>
-      <p class="sub"><strong>Android:</strong> abra o painel pelo <strong>Chrome</strong>: aparece o botão <strong>📇 Da agenda do celular</strong>.</p></details>` : ''}
-    ${has('empresas') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/empresas"><span>🏢 Empresas (oficinas, dealers) e extrato</span><span>›</span></a>' : ''}
     <div class="card"><ul class="list" id="list"><li class="empty">Carregando…</li></ul></div>`;
   view.querySelector('#search').onsubmit = (e) => {
     e.preventDefault();
     location.hash = `#/contatos?q=${encodeURIComponent(e.target.q.value)}`;
   };
   view.querySelector('#add').onclick = () => (location.hash = '#/contato/novo');
+  const novaEmpresa = view.querySelector('#nova-empresa');
+  if (novaEmpresa) novaEmpresa.onclick = () => (location.hash = '#/empresas/nova');
   // Escolhe vários contatos da agenda do celular e manda como um .vcf.
   const pickBtn = view.querySelector('#pick');
   if (pickBtn) {
@@ -1109,29 +1107,10 @@ screens.contatos = async (params) => {
       }
     };
   }
-  const importBtn = view.querySelector('#import');
-  if (importBtn) {
-    importBtn.onclick = () => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.vcf,text/vcard,text/x-vcard';
-      input.onchange = async () => {
-        const file = input.files[0];
-        if (!file) return;
-        try {
-          const r = await api('/contacts/import', { method: 'POST', raw: await file.text(), type: 'text/vcard' });
-          toast(`${r.created} novos, ${r.updated} atualizados${r.skipped ? `, ${r.skipped} sem telefone` : ''}`);
-          screens.contatos(params);
-        } catch (err) {
-          toast(err.message);
-        }
-      };
-      input.click();
-    };
-  }
+  // Sem busca: só os 5 clientes mais novos. Com busca: todos que batem, aos poucos.
   const PAGE = 300;
   const [first, companies] = await Promise.all([
-    api(`/contacts?q=${encodeURIComponent(q)}&limit=${PAGE}`, { withTotal: true }),
+    api(q ? `/contacts?q=${encodeURIComponent(q)}&limit=${PAGE}` : '/contacts?recent=1&limit=5', { withTotal: true }),
     has('empresas') ? api('/companies').catch(() => []) : [],
   ]);
   const list = first.data;
@@ -1147,6 +1126,7 @@ screens.contatos = async (params) => {
   const phoneRow = (c) => `<li><a href="#/contato/${c.id}"><div><strong>${esc(c.name)}</strong><div class="sub">${[phoneFmt(c.phone), esc(company(c))].filter(Boolean).join(' · ')}</div></div>
           <div class="right sub">${owner && c.year_count ? `${c.year_count} no ano<br>${money(c.year_cents)}` : ''}</div></a></li>`;
   const card = view.querySelector('#list').closest('.card');
+  if (!q && list.length) card.insertAdjacentHTML('beforebegin', `<p class="sub" style="margin:4px 2px 8px">Últimos ${list.length} clientes novos${total > list.length ? ` de ${total.toLocaleString('pt-BR')}. Para achar os outros, use a busca.` : ''}</p>`);
   if (isDesk()) {
     card.outerHTML = list.length
       ? `<div class="card table-card"><table class="table">
@@ -1157,7 +1137,7 @@ screens.contatos = async (params) => {
     view.querySelector('#list').innerHTML = list.length ? list.map(phoneRow).join('') : `<li class="empty">${empty}</li>`;
   }
   // Agenda grande: mostra aos poucos, com o total e o botão "Mostrar mais".
-  if (total > list.length) {
+  if (q && total > list.length) {
     view.insertAdjacentHTML('beforeend', '<div class="more"><p class="sub" id="shown"></p><button class="secondary" id="more">Mostrar mais</button></div>');
     const shown = view.querySelector('#shown');
     const more = view.querySelector('#more');
@@ -1392,6 +1372,7 @@ screens.mais = async () => {
       ${has('despesas') ? '<li><a href="#/despesas"><span>🧾 Despesas</span><span>›</span></a></li>' : ''}
       ${has('manutencao') ? '<li><a href="#/caminhoes"><span>🔧 Caminhões e manutenção</span><span>›</span></a></li>' : ''}
       ${has('comissao') ? `<li><a href="${state.me.role === 'dono' ? '#/comissao' : `#/motorista/${state.me.id}`}"><span>💰 ${state.me.role === 'dono' ? 'Pagamento dos motoristas' : 'Meus ganhos'}</span><span>›</span></a></li>` : ''}
+      ${has('empresas') && state.me.role === 'dono' ? '<li><a href="#/empresas"><span>🏢 Empresas (oficinas, dealers) e extrato</span><span>›</span></a></li>' : ''}
       ${state.me.role === 'dono' ? '<li><a href="#/equipe"><span>👥 Equipe</span><span>›</span></a></li>' : ''}
       ${has('invoice') && state.me.role === 'dono' ? '<li><a href="#/empresa"><span>🏢 Dados da empresa (invoice)</span><span>›</span></a></li>' : ''}
       <li><a href="#/enderecos"><span>📍 Endereços com apelido</span><span>›</span></a></li>
@@ -1809,27 +1790,34 @@ screens.empresa = async () => {
 // Apelido e regras da empresa (no cadastro e na edição).
 // Apelido logo depois do nome: é por ele que a empresa é achada no Novo serviço e no endereço.
 const companyNick = (c = {}) => `<label>Apelido (ex.: SS, Moving)</label><input name="nickname" maxlength="30" placeholder="Nome curto para digitar rápido" value="${esc(c.nickname || '')}">`;
+// Um endereço só: vai na cobrança (Bill to) e é onde pegar ou deixar carros.
+const companyAddressField = (c = {}) => `<label>Endereço (cobrança e entrega)</label><input name="address" maxlength="300" placeholder="Rua, cidade, estado e CEP" value="${esc(c.address || '')}">`;
 const companyRules = (c = {}) => `
-  <label>Endereço da oficina (onde pegar ou deixar carros)</label><input name="address" maxlength="300" placeholder="Vazio: usa o endereço do Bill to" value="${esc(c.address || '')}">
   <p class="sub">O endereço vira sozinho um apelido: digite ${c.nickname || c.name ? `<strong>${esc(c.nickname || c.name)}</strong>` : 'o apelido (ou o nome)'} na retirada ou no destino.</p>
   <label class="check"><input type="checkbox" name="requires_vin" ${c.requires_vin ? 'checked' : ''}> Exige o VIN para fechar o serviço</label>
   <label class="check"><input type="checkbox" name="always_invoice" ${c.always_invoice ? 'checked' : ''}> Sempre fazer invoice ao fechar o serviço</label>`;
 const companyBody = (form) => ({ ...formData(form), requires_vin: form.requires_vin.checked, always_invoice: form.always_invoice.checked });
 
-screens.empresas = async () => {
-  setScreen('Empresas', { tab: 'contatos', back: '#/contatos' });
+// Lista de empresas com o extrato fica no menu Mais; "Nova empresa" abre só o cadastro (pela tela Clientes).
+screens.empresas = async (params, id) => {
+  if (id === 'nova') return novaEmpresa();
+  setScreen('Empresas e extrato', { tab: 'mais', back: '#/mais' });
   const list = await api('/companies');
   view.innerHTML = `
     <div class="card"><ul class="list">${
       list.length
         ? list.map((c) => `<li><a href="#/cliente/${c.id}"><div><strong>${esc(c.name)}</strong>${c.nickname ? ` <span class="badge">${esc(c.nickname)}</span>` : ''}<div class="sub">${c.requesters_count} solicitante(s)${c.requires_vin ? ' · exige VIN' : ''}${c.always_invoice ? ' · sempre invoice' : ''}</div></div><div class="right">${c.due_cents ? `<strong>${money(c.due_cents)}</strong><div class="sub">em aberto</div>` : '<span class="sub">em dia ✅</span>'}</div></a></li>`).join('')
-        : '<li class="empty">Nenhuma empresa ainda.</li>'
-    }</ul></div>
+        : '<li class="empty">Nenhuma empresa ainda. Cadastre em Clientes › Nova empresa.</li>'
+    }</ul></div>`;
+};
+
+const novaEmpresa = () => {
+  setScreen('Nova empresa', { tab: 'contatos', back: '#/contatos' });
+  view.innerHTML = `
     <form class="card" id="f">
-      <h2>Nova empresa</h2>
       <label>Nome</label><input name="name" required placeholder="Ex.: USAVE Motors">
       ${companyNick()}
-      <label>Para quem sai a cobrança (Bill to): nome e endereço</label><textarea name="bill_to" rows="3" placeholder="Nome, rua, cidade, estado e CEP"></textarea>
+      ${companyAddressField()}
       <div class="row2"><div><label>Telefone</label><input name="phone" type="tel"></div><div><label>E-mail</label><input name="email" type="email"></div></div>
       ${companyRules()}
       <button class="block">Cadastrar</button>
@@ -1847,7 +1835,7 @@ screens.empresas = async () => {
 };
 
 screens.cliente = async (params, id) => {
-  setScreen('Empresa', { tab: 'contatos', back: '#/empresas' });
+  setScreen('Empresa', { tab: 'mais', back: '#/empresas' });
   const periodo = params.get('periodo') || 'abertos';
   const [c, contacts] = await Promise.all([api(`/companies/${id}?periodo=${periodo}`), api('/contacts?limit=10000')]);
   const st = c.statement;
@@ -1888,7 +1876,7 @@ screens.cliente = async (params, id) => {
       <form id="f">
         <label>Nome</label><input name="name" value="${esc(c.name)}" required>
         ${companyNick(c)}
-        <label>Para quem sai a cobrança (Bill to)</label><textarea name="bill_to" rows="3">${esc(c.bill_to || '')}</textarea>
+        ${companyAddressField(c)}
         <div class="row2"><div><label>Telefone</label><input name="phone" type="tel" value="${esc(c.phone || '')}"></div><div><label>E-mail</label><input name="email" type="email" value="${esc(c.email || '')}"></div></div>
         ${companyRules(c)}
         <label>Observações</label><textarea name="notes" rows="2">${esc(c.notes || '')}</textarea>
