@@ -254,7 +254,7 @@ function renderSide() {
       'Empresa',
       [
         has('manutencao') ? item('caminhoes', '#/caminhoes', 'Caminhões') : '',
-        has('empresas') && owner ? item('empresas', '#/empresas', 'Oficinas e dealers') : '',
+        has('empresas') && owner ? item('empresas', '#/empresas', 'Empresas e extrato') : '',
         owner ? item('equipe', '#/equipe', 'Equipe') : '',
         has('invoice') && owner ? item('empresa', '#/empresa', 'Dados da empresa') : '',
         item('enderecos', '#/enderecos', 'Endereços com apelido'),
@@ -1079,14 +1079,16 @@ screens.contatos = async (params) => {
     <div class="actions" style="margin-bottom:12px">
       <button class="secondary" id="add">➕ Novo cliente</button>
       ${state.me.role === 'dono' && canPickContacts ? '<button class="secondary" id="pick">📇 Da agenda do celular</button>' : ''}
+      ${has('empresas') && state.me.role === 'dono' ? '<button class="secondary" id="nova-empresa">🏢 Nova empresa</button>' : ''}
     </div>
-    ${has('empresas') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/empresas"><span>🏢 Empresas (oficinas, dealers) e extrato</span><span>›</span></a>' : ''}
     <div class="card"><ul class="list" id="list"><li class="empty">Carregando…</li></ul></div>`;
   view.querySelector('#search').onsubmit = (e) => {
     e.preventDefault();
     location.hash = `#/contatos?q=${encodeURIComponent(e.target.q.value)}`;
   };
   view.querySelector('#add').onclick = () => (location.hash = '#/contato/novo');
+  const novaEmpresa = view.querySelector('#nova-empresa');
+  if (novaEmpresa) novaEmpresa.onclick = () => (location.hash = '#/empresas/nova');
   // Escolhe vários contatos da agenda do celular e manda como um .vcf.
   const pickBtn = view.querySelector('#pick');
   if (pickBtn) {
@@ -1370,6 +1372,7 @@ screens.mais = async () => {
       ${has('despesas') ? '<li><a href="#/despesas"><span>🧾 Despesas</span><span>›</span></a></li>' : ''}
       ${has('manutencao') ? '<li><a href="#/caminhoes"><span>🔧 Caminhões e manutenção</span><span>›</span></a></li>' : ''}
       ${has('comissao') ? `<li><a href="${state.me.role === 'dono' ? '#/comissao' : `#/motorista/${state.me.id}`}"><span>💰 ${state.me.role === 'dono' ? 'Pagamento dos motoristas' : 'Meus ganhos'}</span><span>›</span></a></li>` : ''}
+      ${has('empresas') && state.me.role === 'dono' ? '<li><a href="#/empresas"><span>🏢 Empresas (oficinas, dealers) e extrato</span><span>›</span></a></li>' : ''}
       ${state.me.role === 'dono' ? '<li><a href="#/equipe"><span>👥 Equipe</span><span>›</span></a></li>' : ''}
       ${has('invoice') && state.me.role === 'dono' ? '<li><a href="#/empresa"><span>🏢 Dados da empresa (invoice)</span><span>›</span></a></li>' : ''}
       <li><a href="#/enderecos"><span>📍 Endereços com apelido</span><span>›</span></a></li>
@@ -1794,17 +1797,23 @@ const companyRules = (c = {}) => `
   <label class="check"><input type="checkbox" name="always_invoice" ${c.always_invoice ? 'checked' : ''}> Sempre fazer invoice ao fechar o serviço</label>`;
 const companyBody = (form) => ({ ...formData(form), requires_vin: form.requires_vin.checked, always_invoice: form.always_invoice.checked });
 
-screens.empresas = async () => {
-  setScreen('Empresas', { tab: 'contatos', back: '#/contatos' });
+// Lista de empresas com o extrato fica no menu Mais; "Nova empresa" abre só o cadastro (pela tela Clientes).
+screens.empresas = async (params, id) => {
+  if (id === 'nova') return novaEmpresa();
+  setScreen('Empresas e extrato', { tab: 'mais', back: '#/mais' });
   const list = await api('/companies');
   view.innerHTML = `
     <div class="card"><ul class="list">${
       list.length
         ? list.map((c) => `<li><a href="#/cliente/${c.id}"><div><strong>${esc(c.name)}</strong>${c.nickname ? ` <span class="badge">${esc(c.nickname)}</span>` : ''}<div class="sub">${c.requesters_count} solicitante(s)${c.requires_vin ? ' · exige VIN' : ''}${c.always_invoice ? ' · sempre invoice' : ''}</div></div><div class="right">${c.due_cents ? `<strong>${money(c.due_cents)}</strong><div class="sub">em aberto</div>` : '<span class="sub">em dia ✅</span>'}</div></a></li>`).join('')
-        : '<li class="empty">Nenhuma empresa ainda.</li>'
-    }</ul></div>
+        : '<li class="empty">Nenhuma empresa ainda. Cadastre em Clientes › Nova empresa.</li>'
+    }</ul></div>`;
+};
+
+const novaEmpresa = () => {
+  setScreen('Nova empresa', { tab: 'contatos', back: '#/contatos' });
+  view.innerHTML = `
     <form class="card" id="f">
-      <h2>Nova empresa</h2>
       <label>Nome</label><input name="name" required placeholder="Ex.: USAVE Motors">
       ${companyNick()}
       <label>Para quem sai a cobrança (Bill to): nome e endereço</label><textarea name="bill_to" rows="3" placeholder="Nome, rua, cidade, estado e CEP"></textarea>
@@ -1825,7 +1834,7 @@ screens.empresas = async () => {
 };
 
 screens.cliente = async (params, id) => {
-  setScreen('Empresa', { tab: 'contatos', back: '#/empresas' });
+  setScreen('Empresa', { tab: 'mais', back: '#/empresas' });
   const periodo = params.get('periodo') || 'abertos';
   const [c, contacts] = await Promise.all([api(`/companies/${id}?periodo=${periodo}`), api('/contacts?limit=10000')]);
   const st = c.statement;
