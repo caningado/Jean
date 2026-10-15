@@ -654,7 +654,11 @@ function routes(api, ctx) {
 
   // Contatos
   api.get('/contacts', (req, res) => {
-    const list = data.contacts.search(req.query.q || '', 500);
+    // Agenda grande (milhares): a tela pede de pouco em pouco; o total vai no cabeçalho.
+    const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 10000);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const list = data.contacts.search(req.query.q || '', limit, offset);
+    res.set('X-Total-Count', String(data.contacts.count(req.query.q || '')));
     if (req.user.role !== 'dono') return res.json(list.map(({ services_count, ...c }) => c));
     // Só o dono vê quantos serviços e quanto cada cliente deu no mês e no ano (sem os cancelados).
     const month = startOfMonthIso(ctx.config.timeZone);

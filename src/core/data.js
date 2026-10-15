@@ -11,7 +11,7 @@ export function createCoreData(db) {
       const p = normalizePhone(phone);
       return p ? db.prepare('SELECT * FROM contacts WHERE phone = ?').get(p) : undefined;
     },
-    search(q, limit = 50) {
+    search(q, limit = 50, offset = 0) {
       const like = `%${q || ''}%`;
       const digits = normalizePhone(q);
       return db
@@ -19,9 +19,15 @@ export function createCoreData(db) {
           `SELECT c.*, (SELECT COUNT(*) FROM services s WHERE s.contact_id = c.id) AS services_count
            FROM contacts c
            WHERE c.name LIKE ? OR (? <> '' AND c.phone LIKE ?)
-           ORDER BY c.name COLLATE NOCASE LIMIT ?`
+           ORDER BY c.name COLLATE NOCASE LIMIT ? OFFSET ?`
         )
-        .all(like, digits, `%${digits}%`, limit);
+        .all(like, digits, `%${digits}%`, limit, offset);
+    },
+    count(q) {
+      const digits = normalizePhone(q);
+      return db
+        .prepare(`SELECT COUNT(*) AS n FROM contacts WHERE name LIKE ? OR (? <> '' AND phone LIKE ?)`)
+        .get(`%${q || ''}%`, digits, `%${digits}%`).n;
     },
     create({ name, phone, email = null, notes = null, source = 'manual' }) {
       const p = normalizePhone(phone) || null;

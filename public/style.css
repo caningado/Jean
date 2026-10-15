@@ -345,3 +345,5 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .viewer-body { flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .viewer-body canvas, .viewer-body img { max-width: 100%; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .4); }
 .viewer-body .sub, .viewer-body .warn { color: #fff; }
+.more { text-align: center; margin: 4px 0 16px; }
+.more button { width: auto; }
