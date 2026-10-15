@@ -1161,6 +1161,38 @@ screens.contatos = async (params) => {
   if (isDesk()) linkRows(view);
 };
 
+// Escolha com busca (ligar cliente e empresa): sem digitar, mostra os 5 mais novos; digitando, os que batem.
+// items(q) devolve [{ id, name, sub }]; onPick recebe o escolhido.
+function searchPicker(box, { placeholder, items, onPick }) {
+  box.innerHTML = `<input type="search" placeholder="${esc(placeholder)}"><ul class="list picker"><li class="empty">Carregando…</li></ul>`;
+  const input = box.querySelector('input');
+  const ul = box.querySelector('ul');
+  let seq = 0;
+  const show = async () => {
+    const mine = ++seq;
+    const q = input.value.trim();
+    let list;
+    try {
+      list = (await items(q)).slice(0, 5);
+    } catch (err) {
+      list = [];
+    }
+    if (mine !== seq) return;
+    ul.innerHTML = list.length
+      ? list.map((it, i) => `<li><button type="button" class="pickrow" data-i="${i}"><strong>${esc(it.name)}</strong>${it.sub ? `<span class="sub">${esc(it.sub)}</span>` : ''}</button></li>`).join('')
+      : `<li class="empty">${q ? 'Nada encontrado.' : 'Nenhum ainda.'}</li>`;
+    ul.querySelectorAll('button').forEach((b) => (b.onclick = () => onPick(list[Number(b.dataset.i)])));
+  };
+  let t;
+  input.oninput = () => {
+    clearTimeout(t);
+    t = setTimeout(show, 250);
+  };
+  input.onkeydown = (e) => e.key === 'Enter' && e.preventDefault();
+  show();
+}
+const plain = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
 screens.contato = async (params, id) => {
   const isNew = id === 'novo';
   setScreen(isNew ? 'Novo cliente' : 'Cliente', { tab: 'contatos', back: '#/contatos' });
@@ -1169,9 +1201,10 @@ screens.contato = async (params, id) => {
   view.innerHTML = `
     <form class="card" id="f">
       <label>Nome</label><input name="name" value="${esc(c.name)}" required>
-      ${has('empresas') ? `<label>Empresa (se pede serviço por uma oficina ou dealer)</label><select name="company_id"><option value="">Nenhuma (cliente particular)</option>${companies
-        .map((co) => `<option value="${co.id}"${co.id === c.company_id ? ' selected' : ''}>${esc(co.name)}</option>`)
-        .join('')}</select>` : ''}
+      ${has('empresas') ? `<label>Empresa (se pede serviço por uma oficina ou dealer)</label>
+        <input type="hidden" name="company_id" value="${c.company_id || ''}">
+        <div class="copyrow"><input id="companyName" readonly value="${esc(companies.find((co) => co.id === c.company_id)?.name || 'Nenhuma (cliente particular)')}"><button type="button" class="secondary" id="companyClear">Nenhuma</button></div>
+        <div id="companyPick"></div>` : ''}
       <label>Telefone</label><input name="phone" type="tel" value="${esc(c.phone ? phoneFmt(c.phone) : '')}">
       <label>E-mail</label><input name="email" type="email" value="${esc(c.email)}">
       <label>Observações</label><textarea name="notes" rows="2">${esc(c.notes)}</textarea>
@@ -1182,6 +1215,22 @@ screens.contato = async (params, id) => {
         ? c.services.map((s) => `<li><a href="#/servico/${s.id}"><div>#${s.id} ${esc(s.vehicle || s.pickup || '')}<div class="sub">${when(s.created_at)}</div></div><div class="right">${s.price_cents != null ? money(s.price_cents) : ''}</div></a></li>`).join('')
         : '<li class="empty">Nenhum serviço ainda.</li>'
     }</ul></div>` : ''}`;
+  const companyPick = view.querySelector('#companyPick');
+  if (companyPick) {
+    const f = view.querySelector('#f');
+    const set = (co) => {
+      f.company_id.value = co ? co.id : '';
+      view.querySelector('#companyName').value = co ? co.name : 'Nenhuma (cliente particular)';
+    };
+    view.querySelector('#companyClear').onclick = () => set(null);
+    // Mais novas primeiro; a busca olha o nome e o apelido.
+    const newest = [...companies].sort((a, b) => b.id - a.id);
+    searchPicker(companyPick, {
+      placeholder: 'Buscar empresa',
+      items: async (q) => newest.filter((co) => !q || plain(co.name).includes(plain(q)) || plain(co.nickname).includes(plain(q))).map((co) => ({ id: co.id, name: co.name, sub: co.nickname || '' })),
+      onPick: set,
+    });
+  }
   view.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
     try {
@@ -1837,7 +1886,7 @@ const novaEmpresa = () => {
 screens.cliente = async (params, id) => {
   setScreen('Empresa', { tab: 'mais', back: '#/empresas' });
   const periodo = params.get('periodo') || 'abertos';
-  const [c, contacts] = await Promise.all([api(`/companies/${id}?periodo=${periodo}`), api('/contacts?limit=10000')]);
+  const c = await api(`/companies/${id}?periodo=${periodo}`);
   const st = c.statement;
   const now = new Date();
   const months = [...Array(12)].map((_, i) => {
@@ -1846,7 +1895,6 @@ screens.cliente = async (params, id) => {
   });
   const monthName = (m) => new Date(`${m}-15T12:00:00`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
   const pdfUrl = `/api/companies/${id}/statement.pdf?periodo=${periodo}`;
-  const free = contacts.filter((p) => !c.requesters.some((r) => r.id === p.id));
   view.innerHTML = `
     <div class="card">
       <h2>${esc(c.name)}</h2>
@@ -1869,7 +1917,7 @@ screens.cliente = async (params, id) => {
         : '<li class="empty">Ninguém ainda. Ligue abaixo as pessoas que pedem serviço por esta empresa.</li>'
     }</ul>
       <label>Adicionar solicitante</label>
-      <div class="copyrow"><select id="addReq"><option value="">Escolha um cliente…</option>${free.map((p) => `<option value="${p.id}">${esc(p.name)}${p.phone ? ' · ' + phoneFmt(p.phone) : ''}</option>`).join('')}</select><button class="secondary" id="addBtn">Adicionar</button></div>
+      <div id="addReq"></div>
       <p class="sub">Pelo WhatsApp: abra o serviço e mande <strong>empresa ${esc(c.name.split(' ')[0].toLowerCase())}</strong>.</p>
     </div>
     <details class="card"><summary>Dados da empresa</summary>
@@ -1897,13 +1945,24 @@ screens.cliente = async (params, id) => {
     if (c.link && navigator.share) return navigator.share({ title: name, text: `Here is your statement: ${c.link}` }).catch(() => {});
     location.href = pdfUrl + '&download=1';
   };
-  view.querySelector('#addBtn').onclick = async () => {
-    const pid = view.querySelector('#addReq').value;
-    if (!pid) return toast('Escolha um cliente');
-    await api(`/contacts/${pid}/company`, { method: 'PUT', body: { company_id: Number(id) } });
-    toast('Solicitante adicionado');
-    reload();
-  };
+  // Clientes mais novos (ou os da busca) que ainda não são desta empresa; tocar adiciona.
+  const linked = new Set(c.requesters.map((r) => r.id));
+  searchPicker(view.querySelector('#addReq'), {
+    placeholder: 'Buscar cliente por nome ou telefone',
+    items: async (q) =>
+      (await api(q ? `/contacts?q=${encodeURIComponent(q)}&limit=20` : '/contacts?recent=1&limit=20'))
+        .filter((p) => !linked.has(p.id))
+        .map((p) => ({ id: p.id, name: p.name, sub: p.phone ? phoneFmt(p.phone) : '' })),
+    onPick: async (p) => {
+      try {
+        await api(`/contacts/${p.id}/company`, { method: 'PUT', body: { company_id: Number(id) } });
+        toast('Solicitante adicionado');
+        reload();
+      } catch (err) {
+        toast(err.message);
+      }
+    },
+  });
   view.querySelectorAll('[data-unlink]').forEach((b) => {
     b.onclick = async () => {
       if (!(await ask('Tirar esta pessoa da empresa? Os serviços dela saem do extrato.'))) return;

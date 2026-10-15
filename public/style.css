@@ -357,3 +357,8 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .table tbody tr.pago td, .list li.pago > a { background: var(--pago-bg); }
 .table tbody tr.nao-pago td, .list li.nao-pago > a { background: var(--nao-pago-bg); }
 .list li.pago > a, .list li.nao-pago > a { border-radius: 10px; padding-left: 8px; padding-right: 8px; }
+
+/* Escolha com busca (ligar cliente e empresa): até 5 por vez */
+.picker { margin-top: 6px; }
+.picker .pickrow { display: flex; flex-direction: column; align-items: flex-start; width: 100%; background: none; border: 0; padding: 10px 2px; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+.picker .pickrow .sub { font-weight: normal; }
