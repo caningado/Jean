@@ -786,7 +786,7 @@ screens.servico = async (params, id) => {
     ${has('fotos') ? `
     <div class="card docs-card" id="docs-zone">
       <h2>📄 Gate pass</h2>
-      ${s.docs?.length ? `<ul class="list">${s.docs.map((d) => `<li><div class="row"><a href="${d.url}" target="_blank" rel="noopener">${d.mime === 'application/pdf' ? '📄' : '🖼️'} ${esc(d.name || 'gate pass')}</a>${owner || d.uploaded_by === state.me.id ? `<button class="danger" data-deldoc="${d.id}" aria-label="Apagar">✕</button>` : ''}</div></li>`).join('')}</ul>` : '<p class="sub">Nenhum gate pass anexado.</p>'}
+      ${s.docs?.length ? `<ul class="list">${s.docs.map((d) => `<li><div class="row"><a href="${d.url}" target="_blank" rel="noopener" data-opendoc="${d.id}">${d.mime === 'application/pdf' ? '📄' : '🖼️'} ${esc(d.name || 'gate pass')}</a>${owner || d.uploaded_by === state.me.id ? `<button class="danger" data-deldoc="${d.id}" aria-label="Apagar">✕</button>` : ''}</div></li>`).join('')}</ul>` : '<p class="sub">Nenhum gate pass anexado.</p>'}
       <div class="actions"><button class="secondary" id="docs-add">📎 Anexar PDF ou foto</button></div>
       ${isDesk() ? '<p class="sub">Também dá para colar (Ctrl+V) ou arrastar o arquivo aqui.</p>' : ''}
     </div>` : ''}
@@ -849,6 +849,13 @@ screens.servico = async (params, id) => {
       } catch (err) {
         toast(err.message);
       }
+    });
+    view.querySelectorAll('[data-opendoc]').forEach((a) => {
+      a.onclick = (e) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+        e.preventDefault();
+        openDoc(s.docs.find((d) => String(d.id) === a.dataset.opendoc));
+      };
     });
     view.querySelectorAll('[data-deldoc]').forEach((b) => {
       b.onclick = async () => {
@@ -2336,6 +2343,87 @@ async function guidedPhotos(serviceId, kind, doneAngles = [], onlyAngle = null) 
   overlay.remove();
   if (saved) toast(`${saved} foto${saved === 1 ? '' : 's'} salva${saved === 1 ? '' : 's'}`);
   return saved;
+}
+
+// Abre o gate pass dentro do app. O app instalado no iPhone não leva o login para
+// outra aba, e o Chrome do Android baixa o PDF em vez de mostrar; aqui o PDF é
+// desenhado página por página com o pdf.js, e a foto aparece direto.
+let pdfjsPromise;
+function pdfjs() {
+  pdfjsPromise ??= import('/vendor/pdf.mjs').then((lib) => {
+    lib.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.mjs';
+    return lib;
+  });
+  pdfjsPromise.catch(() => (pdfjsPromise = null));
+  return pdfjsPromise;
+}
+
+async function openDoc(doc) {
+  if (!doc) return;
+  const name = doc.name || 'gate pass';
+  const overlay = document.createElement('div');
+  overlay.className = 'viewer';
+  overlay.innerHTML = `
+    <div class="viewer-bar"><strong>${esc(name)}</strong><button class="secondary" data-act="share" disabled>Compartilhar</button><button class="secondary" data-act="close" aria-label="Fechar">✕</button></div>
+    <div class="viewer-body"><p class="sub">Abrindo…</p></div>`;
+  document.body.appendChild(overlay);
+  const body = overlay.querySelector('.viewer-body');
+  let blobUrl;
+  const close = () => {
+    window.removeEventListener('popstate', close);
+    document.removeEventListener('keydown', onKey);
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
+    overlay.remove();
+  };
+  const onKey = (e) => e.key === 'Escape' && overlay.querySelector('[data-act=close]').click();
+  history.pushState({ viewer: true }, '');
+  window.addEventListener('popstate', close);
+  document.addEventListener('keydown', onKey);
+  overlay.querySelector('[data-act=close]').onclick = () => (history.state?.viewer ? history.back() : close());
+
+  try {
+    const res = await fetch(doc.url);
+    if (!res.ok) throw new Error(res.status === 404 ? 'Arquivo não encontrado.' : 'Não consegui abrir o arquivo.');
+    const blob = await res.blob();
+    if (!overlay.isConnected) return;
+    const file = new File([blob], name, { type: doc.mime });
+    blobUrl = URL.createObjectURL(blob);
+    const share = overlay.querySelector('[data-act=share]');
+    share.disabled = false;
+    share.onclick = async () => {
+      if (navigator.canShare?.({ files: [file] })) return navigator.share({ files: [file], title: name }).catch(() => {});
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = name;
+      a.click();
+    };
+    if (doc.mime !== 'application/pdf') {
+      body.innerHTML = '';
+      const img = new Image();
+      img.alt = name;
+      img.src = blobUrl;
+      body.appendChild(img);
+      return;
+    }
+    const lib = await pdfjs();
+    const pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
+    body.innerHTML = '';
+    const width = body.clientWidth - 16;
+    for (let n = 1; n <= pdf.numPages && overlay.isConnected; n++) {
+      const page = await pdf.getPage(n);
+      const base = page.getViewport({ scale: 1 });
+      const scale = Math.min(width / base.width, 3);
+      const viewport = page.getViewport({ scale: scale * (window.devicePixelRatio || 1) });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(viewport.width);
+      canvas.height = Math.floor(viewport.height);
+      canvas.style.width = `${Math.floor(base.width * scale)}px`;
+      body.appendChild(canvas);
+      await page.render({ canvas, canvasContext: canvas.getContext('2d'), viewport }).promise;
+    }
+  } catch (err) {
+    if (overlay.isConnected) body.innerHTML = `<p class="warn">${esc(err.message || 'Não consegui abrir o arquivo.')}</p>`;
+  }
 }
 
 // Leitor de código de barras: usa o do celular (Android/Chrome) e, quando não

@@ -32,10 +32,16 @@ const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 
 
 // Leitor de código de barras para celulares sem leitor próprio (iPhone).
 // O .wasm tem que ser da mesma versão que o barcode-detector usa.
+function pdfjsFile(name) {
+  return path.join(path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')), 'legacy', 'build', name);
+}
 const barcodeDetectorFile = createRequire(import.meta.url).resolve('barcode-detector/ponyfill');
 const VENDOR = {
   '/vendor/barcode-detector.js': path.join(path.dirname(barcodeDetectorFile), '..', 'iife', 'ponyfill.js'),
   '/vendor/zxing_reader.wasm': createRequire(barcodeDetectorFile).resolve('zxing-wasm/reader/zxing_reader.wasm'),
+  // Leitor de PDF dentro do app (gate pass): o app instalado no iPhone não abre PDF em outra aba.
+  '/vendor/pdf.mjs': pdfjsFile('pdf.min.mjs'),
+  '/vendor/pdf.worker.mjs': pdfjsFile('pdf.worker.min.mjs'),
 };
 
 export function createContext(config) {
