@@ -1079,11 +1079,7 @@ screens.contatos = async (params) => {
     <div class="actions" style="margin-bottom:12px">
       <button class="secondary" id="add">➕ Novo cliente</button>
       ${state.me.role === 'dono' && canPickContacts ? '<button class="secondary" id="pick">📇 Da agenda do celular</button>' : ''}
-      ${state.me.role === 'dono' ? '<button class="secondary" id="import">📥 Importar arquivo (.vcf)</button>' : ''}
     </div>
-    ${state.me.role === 'dono' && !canPickContacts ? `<details class="card"><summary>Como trazer a agenda do celular</summary>
-      <p class="sub"><strong>iPhone:</strong> no app <strong>Contatos</strong>, toque em <strong>Listas</strong> (no alto, à esquerda), segure o dedo em <strong>Todos os Contatos</strong> e toque em <strong>Exportar</strong>. Salve em Arquivos e depois toque em <strong>📥 Importar arquivo (.vcf)</strong> aqui e escolha o arquivo.</p>
-      <p class="sub"><strong>Android:</strong> abra o painel pelo <strong>Chrome</strong>: aparece o botão <strong>📇 Da agenda do celular</strong>.</p></details>` : ''}
     ${has('empresas') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/empresas"><span>🏢 Empresas (oficinas, dealers) e extrato</span><span>›</span></a>' : ''}
     <div class="card"><ul class="list" id="list"><li class="empty">Carregando…</li></ul></div>`;
   view.querySelector('#search').onsubmit = (e) => {
@@ -1109,29 +1105,10 @@ screens.contatos = async (params) => {
       }
     };
   }
-  const importBtn = view.querySelector('#import');
-  if (importBtn) {
-    importBtn.onclick = () => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.vcf,text/vcard,text/x-vcard';
-      input.onchange = async () => {
-        const file = input.files[0];
-        if (!file) return;
-        try {
-          const r = await api('/contacts/import', { method: 'POST', raw: await file.text(), type: 'text/vcard' });
-          toast(`${r.created} novos, ${r.updated} atualizados${r.skipped ? `, ${r.skipped} sem telefone` : ''}`);
-          screens.contatos(params);
-        } catch (err) {
-          toast(err.message);
-        }
-      };
-      input.click();
-    };
-  }
+  // Sem busca: só os 5 clientes mais novos. Com busca: todos que batem, aos poucos.
   const PAGE = 300;
   const [first, companies] = await Promise.all([
-    api(`/contacts?q=${encodeURIComponent(q)}&limit=${PAGE}`, { withTotal: true }),
+    api(q ? `/contacts?q=${encodeURIComponent(q)}&limit=${PAGE}` : '/contacts?recent=1&limit=5', { withTotal: true }),
     has('empresas') ? api('/companies').catch(() => []) : [],
   ]);
   const list = first.data;
@@ -1147,6 +1124,7 @@ screens.contatos = async (params) => {
   const phoneRow = (c) => `<li><a href="#/contato/${c.id}"><div><strong>${esc(c.name)}</strong><div class="sub">${[phoneFmt(c.phone), esc(company(c))].filter(Boolean).join(' · ')}</div></div>
           <div class="right sub">${owner && c.year_count ? `${c.year_count} no ano<br>${money(c.year_cents)}` : ''}</div></a></li>`;
   const card = view.querySelector('#list').closest('.card');
+  if (!q && list.length) card.insertAdjacentHTML('beforebegin', `<p class="sub" style="margin:4px 2px 8px">Últimos ${list.length} clientes novos${total > list.length ? ` de ${total.toLocaleString('pt-BR')}. Para achar os outros, use a busca.` : ''}</p>`);
   if (isDesk()) {
     card.outerHTML = list.length
       ? `<div class="card table-card"><table class="table">
@@ -1157,7 +1135,7 @@ screens.contatos = async (params) => {
     view.querySelector('#list').innerHTML = list.length ? list.map(phoneRow).join('') : `<li class="empty">${empty}</li>`;
   }
   // Agenda grande: mostra aos poucos, com o total e o botão "Mostrar mais".
-  if (total > list.length) {
+  if (q && total > list.length) {
     view.insertAdjacentHTML('beforeend', '<div class="more"><p class="sub" id="shown"></p><button class="secondary" id="more">Mostrar mais</button></div>');
     const shown = view.querySelector('#shown');
     const more = view.querySelector('#more');
