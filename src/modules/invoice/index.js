@@ -122,9 +122,14 @@ export function draftFor(ctx, service) {
   };
 }
 
+// Número = ano (2 dígitos) + mês (2) + sequência do mês (3), ex.: out/2026 → 2610001, 2610002…
+// Cada mês recomeça em 001 (jan/2027 → 2701001), assim o número mostra o ano e o mês do invoice.
 function nextNumber(ctx) {
-  const max = ctx.db.prepare('SELECT MAX(number) AS n FROM invoices').get().n || 0;
-  return Math.max(Number(getCompany(ctx).nextNumber) || 1, max + 1);
+  const [y, m] = today(ctx).split('-');
+  const base = (Number(y.slice(2)) * 100 + Number(m)) * 1000;
+  const max = ctx.db.prepare('SELECT MAX(number) AS n FROM invoices WHERE number > ? AND number < ?').get(base, base + 1000).n || base;
+  if (max >= base + 999) throw new HttpError(400, 'Chegou a 999 invoices neste mês.');
+  return max + 1;
 }
 
 function cleanItems(items) {
@@ -165,9 +170,6 @@ function saveInvoice(ctx, { service, body, userId, existing = null }) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(number, service.id, billTo, JSON.stringify(items), total, issue, due, notes, crypto.randomBytes(16).toString('base64url'), userId, nowIso());
-  // Próximo número continua depois deste.
-  const company = getCompany(ctx);
-  if (number >= company.nextNumber) setSetting(ctx, 'company', JSON.stringify({ ...company, nextNumber: number + 1 }));
   return getInvoice(ctx, Number(info.lastInsertRowid));
 }
 
@@ -263,13 +265,6 @@ function routes(api, ctx) {
       const n = Number(body.dueDays);
       if (!Number.isInteger(n) || n < 0 || n > 120) throw new HttpError(400, 'Prazo de pagamento inválido.');
       next.dueDays = n;
-    }
-    if (body.nextNumber !== undefined && body.nextNumber !== '') {
-      const n = Number(body.nextNumber);
-      if (!Number.isInteger(n) || n < 1) throw new HttpError(400, 'Número inválido.');
-      const max = ctx.db.prepare('SELECT MAX(number) AS n FROM invoices').get().n || 0;
-      if (n <= max) throw new HttpError(400, `Já existe o invoice ${max}. O próximo tem que ser maior.`);
-      next.nextNumber = n;
     }
     setSetting(ctx, 'company', JSON.stringify(next));
     res.json({ ...next, next_number: nextNumber(ctx) });
