@@ -987,9 +987,15 @@ function routes(api, ctx) {
       body.contact_id = contactId;
     }
     if (req.user.role !== 'dono') delete body.driver_id;
-    // Fila: só o dono põe e tira serviço dela (é ele quem escolhe o motorista).
-    // O motorista mexe nos da fila dele (e começa um), mas não põe nada na fila geral.
-    if (req.user.role !== 'dono' && (body.status === 'pendente' || (service.status === 'pendente' && service.driver_id !== req.user.id))) throw new HttpError(403, 'Só o ADM escolhe o motorista do serviço.');
+    // Fila: só o dono põe e tira serviço da fila geral (é ele quem escolhe o motorista).
+    // O motorista mexe nos da fila dele: começa um, ou volta um em andamento para a fila dele.
+    if (req.user.role !== 'dono') {
+      if (service.status === 'pendente' && service.driver_id !== req.user.id) throw new HttpError(403, 'Só o ADM escolhe o motorista do serviço.');
+      if (body.status === 'pendente' && service.status !== 'pendente') {
+        if (service.status !== 'aberto') throw new HttpError(403, 'Serviço entregue ou cancelado não volta para Pendente. Fale com o ADM.');
+        body.driver_id = req.user.id; // continua com ele, na fila dele
+      }
+    }
     if (service.status === 'pendente' && body.status === 'aberto' && !body.driver_id) body.driver_id = service.driver_id || req.user.id;
     // Volta para a fila geral: sem motorista (só o dono).
     if (body.status === 'pendente' && body.driver_id === undefined) body.driver_id = null;
