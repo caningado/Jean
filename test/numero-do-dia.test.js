@@ -19,19 +19,36 @@ test('número do dia: cada motorista conta 1, 2, 3... e recomeça no dia seguint
 
   // Na fila, sem motorista: ainda não tem número do dia.
   const fila = await novo({ driver_id: 'fila' });
-  assert.equal(fila.driver_ref, null);
+  assert.equal(fila.driver_seq, null);
   // Passado para o Jorge: é o 1 dele hoje; o próximo é o 2.
   const a = ctx.data.services.update(fila.id, { driver_id: jorge.id });
-  assert.equal(a.driver_ref, 1);
+  assert.equal(a.driver_seq, 1);
   const b = ctx.data.services.update((await novo({ driver_id: 'fila' })).id, { driver_id: jorge.id });
-  assert.equal(b.driver_ref, 2);
+  assert.equal(b.driver_seq, 2);
   assert.equal(ctx.data.services.ref(b, jorge), 2);
   assert.equal(ctx.data.services.ref(b, { id: 1, role: 'dono' }), b.id);
 
   // Dia seguinte: recomeça no 1. "abrir 1" pelo WhatsApp acha o 1 mais recente dele.
   ctx.db.prepare("UPDATE services SET driver_ref_day = '2000-01-01'").run();
   const c = ctx.data.services.update((await novo({ driver_id: 'fila' })).id, { driver_id: jorge.id });
-  assert.equal(c.driver_ref, 1);
+  assert.equal(c.driver_seq, 1);
   assert.equal(ctx.data.services.byRef(jorge, 1).id, c.id);
   assert.match(ctx.data.services.describe(c, jorge), new RegExp(`Serviço #1\\b`));
+
+  // Sempre em sequência: três serviços hoje (1, 2, 3). O 1 passa para outro motorista: o 2 vira 1 e o 3 vira 2.
+  // Quando o 1 volta para ele, entra no fim (3). Cancelado sai da conta; entregue continua contando.
+  ctx.db.prepare("UPDATE services SET driver_ref_day = '2000-01-01'").run();
+  const owner = ctx.db.prepare("SELECT * FROM users WHERE role = 'dono'").get();
+  const ids = [];
+  for (let i = 0; i < 3; i++) ids.push(ctx.data.services.update((await novo({ driver_id: 'fila' })).id, { driver_id: jorge.id }).id);
+  const seq = () => ids.map((id) => ctx.data.services.get(id).driver_seq);
+  assert.deepEqual(seq(), [1, 2, 3]);
+  ctx.data.services.update(ids[0], { driver_id: owner.id });
+  assert.deepEqual(seq().slice(1), [1, 2]);
+  ctx.data.services.update(ids[0], { driver_id: jorge.id });
+  assert.deepEqual(seq(), [3, 1, 2]);
+  ctx.data.services.update(ids[1], { status: 'concluido' });
+  ctx.data.services.update(ids[2], { status: 'cancelado' });
+  assert.deepEqual(seq(), [2, 1, null]);
+  assert.equal(ctx.data.services.byRef(jorge, 2).id, ids[0]);
 });
