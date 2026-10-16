@@ -57,10 +57,17 @@ test('serviço na fila: só o dono põe na fila e escolhe o motorista', async (t
   const comecou = await call('PATCH', `/services/${r.body.id}`, { status: 'aberto' }, drv);
   assert.equal(comecou.body.status, 'aberto');
   assert.equal(ctx.db.prepare('SELECT active_service_id FROM users WHERE id = ?').get(driver.id).active_service_id, r.body.id);
+  // O motorista volta o serviço para a fila dele (continua com ele) e começa de novo.
+  const voltou = await call('PATCH', `/services/${r.body.id}`, { status: 'pendente' }, drv);
+  assert.equal(voltou.status, 200);
+  assert.equal(voltou.body.status, 'pendente');
+  assert.equal(voltou.body.driver_id, driver.id);
+  assert.equal(ctx.db.prepare('SELECT active_service_id FROM users WHERE id = ?').get(driver.id).active_service_id, null);
+  assert.equal((await call('PATCH', `/services/${r.body.id}`, { status: 'aberto' }, drv)).body.status, 'aberto');
   assert.equal((await call('POST', `/services/${r.body.id}/passar`, { driver_id: driver.id })).status, 409);
 
-  // Voltar para a fila: só o dono.
-  assert.equal((await call('PATCH', `/services/${r.body.id}`, { status: 'pendente' }, drv)).status, 403);
+  // Voltar para a fila geral (sem motorista): só o ADM. O motorista só volta para a fila dele.
+  assert.equal((await call('PATCH', `/services/${r.body.id}`, { status: 'pendente', driver_id: '' }, drv)).body.driver_id, driver.id);
   const volta = await call('PATCH', `/services/${r.body.id}`, { status: 'pendente' });
   assert.equal(volta.body.status, 'pendente');
   assert.equal(volta.body.driver_id, null);
