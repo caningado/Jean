@@ -287,9 +287,13 @@ function routes(api, ctx) {
   });
 
   api.delete('/photos/:id', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode apagar fotos.');
     const photo = ctx.db.prepare('SELECT * FROM photos WHERE id = ?').get(Number(req.params.id));
     if (!photo) throw new HttpError(404, 'Foto não encontrada.');
+    // O motorista apaga as fotos do serviço dele enquanto trabalha; depois de entregue, só o dono.
+    const service = findServiceFor(ctx, req.user, photo.service_id);
+    if (req.user.role !== 'dono' && (service.status === 'concluido' || service.status === 'cancelado')) {
+      throw new HttpError(403, 'Serviço já entregue: só o dono pode apagar fotos.');
+    }
     ctx.db.prepare('DELETE FROM photos WHERE id = ?').run(photo.id);
     fs.rmSync(path.join(ctx.config.uploadsDir, photo.file), { force: true });
     res.json({ ok: true });

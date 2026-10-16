@@ -1006,7 +1006,8 @@ screens.servico = async (params, id) => {
   view.querySelectorAll('[data-view]').forEach((btn) => {
     btn.onclick = async () => {
       const photo = (s.photos || []).find((p) => String(p.id) === btn.dataset.view);
-      if (photo && (await viewPhoto(photo, btn.dataset.label))) reload();
+      const canDelete = owner || (s.status !== 'concluido' && s.status !== 'cancelado');
+      if (photo && (await viewPhoto(photo, btn.dataset.label, canDelete))) reload();
     };
   });
   view.querySelectorAll('[data-retake]').forEach((btn) => {
@@ -2486,15 +2487,14 @@ function photoGroups(photos) {
   return groups.join('');
 }
 
-// Foto em tela cheia, com Apagar (só o dono). Devolve true se apagou.
-function viewPhoto(photo, label) {
+// Foto em tela cheia, com Apagar (motorista só até entregar; o dono sempre). Devolve true se apagou.
+function viewPhoto(photo, label, canDelete) {
   return new Promise((resolve) => {
-    const owner = state.me.role === 'dono';
     const back = document.createElement('div');
     back.className = 'photo-view';
     back.innerHTML = `<div class="photo-view-top"><span>${esc(label || '')}</span><button type="button" class="secondary" data-act="close">✕ Fechar</button></div>
       <img src="${photo.url}" alt="${esc(label || '')}">
-      ${owner ? '<div class="photo-view-actions"><button type="button" class="danger" data-act="delete">🗑 Apagar foto</button></div>' : ''}`;
+      ${canDelete ? '<div class="photo-view-actions"><button type="button" class="danger" data-act="delete">🗑 Apagar foto</button></div>' : ''}`;
     const done = (value) => {
       back.remove();
       document.removeEventListener('keydown', onKey);
