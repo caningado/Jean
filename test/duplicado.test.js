@@ -22,7 +22,7 @@ test('toque duplo em "Criar serviço" não cria dois serviços', async (t) => {
   assert.notEqual(c.id, a.id);
 });
 
-test('serviço novo do dono começa Pendente; com motorista escolhido, em andamento', async (t) => {
+test('serviço novo nunca começa sozinho: sem motorista vai para a fila; com motorista, para a fila dele', async (t) => {
   const ctx = makeContext({ GEOCODER: 'off' });
   const server = createApp(ctx).listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -36,5 +36,6 @@ test('serviço novo do dono começa Pendente; com motorista escolhido, em andame
   assert.equal(a.driver_id, null);
   const ownerId = ctx.db.prepare("SELECT id FROM users WHERE role = 'dono'").get().id;
   const b = await post({ contact_name: 'Bruno Alves', pickup: '2 Main St', driver_id: ownerId });
-  assert.equal(b.status, 'aberto');
+  assert.equal(b.status, 'pendente');
+  assert.equal(b.driver_id, ownerId);
 });
