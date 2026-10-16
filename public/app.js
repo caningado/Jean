@@ -773,11 +773,11 @@ screens.novo = async () => {
       const failed = [];
       for (const [i, file] of pendingDocs.entries()) await uploadDoc(service.id, file, i).catch(() => failed.push(file));
       if (failed.length) {
-        toast(`Serviço #${service.id} criado, mas ${failed.length} arquivo(s) não foram. Anexe de novo na tela do serviço.`);
+        toast(`Serviço #${num(service)} criado, mas ${failed.length} arquivo(s) não foram. Anexe de novo na tela do serviço.`);
         location.hash = `#/servico/${service.id}`;
         return;
       }
-      toast(queued(service) ? `Serviço #${num(service)} na fila de ${service.driver_name || 'motorista'}` : service.status === 'pendente' ? `Serviço #${num(service)} na fila` : `Serviço #${num(service)} criado`);
+      toast(queued(service) ? (service.driver_id === state.me.id ? `Serviço #${num(service)} na sua fila. Toque em Começar quando for fazer.` : `Serviço #${num(service)} na fila de ${service.driver_name || 'motorista'}`) : service.status === 'pendente' ? `Serviço #${num(service)} na fila` : `Serviço #${num(service)} criado`);
       location.hash = `#/servico/${service.id}`;
     } catch (err) {
       toast(err.message);

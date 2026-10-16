@@ -957,12 +957,9 @@ function routes(api, ctx) {
       return res.status(201).json(service);
     }
     const driverId = req.user.role === 'dono' ? fields.driver_id || req.user.id : req.user.id;
-    // Dono escolheu outro motorista: entra na fila dele. Quem cria para si mesmo começa já,
-    // a não ser que já esteja com o máximo em andamento (aí vai para a própria fila).
-    const start = driverId === req.user.id && activeCount(ctx, driverId) < maxActive(ctx);
-    const service = data.services.create({ ...fields, status: start ? 'aberto' : 'pendente', contact_id: contactId, driver_id: driverId });
-    if (start) data.services.setActive(driverId, service.id);
-    else if (driverId !== req.user.id) notifyAssigned(ctx, service, req.user);
+    // Serviço novo nunca começa sozinho: entra na fila do motorista e ele toca em Começar.
+    const service = data.services.create({ ...fields, status: 'pendente', contact_id: contactId, driver_id: driverId });
+    if (driverId !== req.user.id) notifyAssigned(ctx, service, req.user);
     res.status(201).json(service);
   });
   api.get('/services/:id', (req, res) => {

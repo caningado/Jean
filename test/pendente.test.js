@@ -38,9 +38,9 @@ test('serviço na fila: só o dono põe na fila e escolhe o motorista', async (t
   assert.equal((await call('GET', '/services?status=pendente', null, drv)).body.length, 0);
   assert.equal((await call('GET', `/services/${r.body.id}`, null, drv)).status, 404);
   assert.equal((await call('POST', `/services/${r.body.id}/passar`, { driver_id: driver.id }, drv)).status, 403);
-  // Motorista que tenta criar "na fila" cria para si mesmo.
+  // Motorista que tenta criar "na fila" cria para si mesmo, na fila dele (não começa sozinho).
   const dele = await call('POST', '/services', { pickup: '200 Oak Ave, Orlando FL', driver_id: 'fila' }, drv);
-  assert.equal(dele.body.status, 'aberto');
+  assert.equal(dele.body.status, 'pendente');
   assert.equal(dele.body.driver_id, driver.id);
 
   // O dono passa para o motorista: entra na fila dele (ainda não começa) e ele é avisado.
@@ -53,7 +53,7 @@ test('serviço na fila: só o dono põe na fila e escolhe o motorista', async (t
   await new Promise((r) => setImmediate(r));
   assert.match(sent.find((m) => m.phone === DRIVER_PHONE).text, /passou um serviço para a sua fila/);
   // O motorista vê na fila dele e começa: em andamento e "em mãos".
-  assert.deepEqual((await call('GET', '/services?status=pendente', null, drv)).body.map((s) => s.id), [r.body.id]);
+  assert.deepEqual((await call('GET', '/services?status=pendente', null, drv)).body.map((s) => s.id), [dele.body.id, r.body.id]);
   const comecou = await call('PATCH', `/services/${r.body.id}`, { status: 'aberto' }, drv);
   assert.equal(comecou.body.status, 'aberto');
   assert.equal(ctx.db.prepare('SELECT active_service_id FROM users WHERE id = ?').get(driver.id).active_service_id, r.body.id);
