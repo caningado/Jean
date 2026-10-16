@@ -2447,41 +2447,46 @@ const ANGLE_LABEL = {
 };
 
 // Desenho do carro em cada ângulo, para encaixar o carro na foto.
-// Estilo do desenho: 'silhueta', 'linha' (contorno fino) ou 'cantos' (cantos + sombra).
-const FRAME_STYLE = 'silhueta';
+// Estilo do desenho: 'guia' (contorno fino + moldura tracejada, escolhido pelo Caningado),
+// 'silhueta', 'linha' (contorno fino) ou 'cantos' (cantos + sombra).
+const FRAME_STYLE = 'guia';
 const CAR_SIDE = {
-  viewBox: '0 0 600 220',
-  body: 'M40 170 Q30 168 30 150 L32 132 Q36 120 52 116 L150 102 Q185 98 228 96 Q262 58 300 50 Q350 44 400 46 Q440 50 478 92 L540 100 Q566 104 570 120 L572 150 Q572 168 556 170 L505 170 A45 45 0 0 0 415 170 L180 170 A45 45 0 0 0 90 170 Z',
-  details: 'M240 96 Q268 64 300 58 L345 56 L348 96 Z M360 96 L358 56 L398 56 Q430 60 462 94 Z M350 100 L352 162 M232 98 L224 88 L212 88 L216 98 Z M40 124 Q60 118 80 120 L74 132 Q52 134 40 132 Z M556 108 L570 116 L570 128 L556 124 Z M300 112 h18',
-  wheels: [[135, 172], [460, 172]],
-  ground: 206,
+  viewBox: '0 0 640 240',
+  body: 'M48 176 L44 150 Q44 130 60 124 L78 112 Q130 100 190 96 Q240 60 300 50 Q360 42 410 48 Q450 56 492 92 Q560 100 592 114 Q606 122 606 142 L602 168 Q600 178 588 180 L546 180 A46 46 0 0 0 454 180 L196 180 A46 46 0 0 0 104 180 L60 180 Q50 180 48 176 Z',
+  details: 'M206 96 Q250 64 300 56 L312 56 L318 96 Z M330 96 L326 56 L400 54 Q440 60 474 94 Z M322 98 L318 176 M206 100 Q200 140 210 176 M470 98 Q478 140 470 172 M474 96 L486 86 L500 90 L494 100 Z M572 112 Q594 118 600 130 L578 128 Q566 122 572 112 Z M50 132 Q62 124 84 122 L80 134 Q62 136 50 136 Z M190 104 L480 102 M280 114 h18 M420 114 h18 M196 168 L454 168',
+  wheels: [[150, 182], [500, 182]],
+  ground: 222,
 };
 const CAR_FRONT = {
   viewBox: '0 0 400 300',
-  body: 'M60 252 L56 190 Q58 160 80 150 L100 150 L130 80 Q140 66 160 64 L240 64 Q260 66 270 80 L300 150 L320 150 Q342 160 344 190 L340 252 Z',
-  details: 'M115 145 L140 88 Q146 78 160 78 L240 78 Q254 78 260 88 L285 145 Z M96 140 L72 132 L70 148 L96 152 Z M304 140 L328 132 L330 148 L304 152 Z M76 172 Q90 164 130 168 L126 186 Q96 188 78 184 Z M324 172 Q310 164 270 168 L274 186 Q304 188 322 184 Z M150 172 L250 172 Q256 172 254 180 L248 200 Q246 206 240 206 L160 206 Q154 206 152 200 L146 180 Q144 172 150 172 Z M64 222 L336 222 M170 228 h60 v18 h-60 Z',
-  tires: [[62, 250], [284, 250]],
-  ground: 278,
+  body: 'M70 262 L64 206 Q62 180 76 168 L90 160 L118 92 Q126 74 148 72 L252 72 Q274 74 282 92 L310 160 L324 168 Q338 180 336 206 L330 262 Z',
+  details: 'M104 128 Q84 124 80 136 Q82 146 100 146 Z M296 128 Q316 124 320 136 Q318 146 300 146 Z M122 156 L146 92 Q150 84 162 84 L238 84 Q250 84 254 92 L278 156 Q200 148 122 156 Z M92 166 Q200 150 308 166 M80 184 Q100 174 140 180 L132 198 Q100 200 82 196 Z M320 184 Q300 174 260 180 L268 198 Q300 200 318 196 Z M152 186 Q200 180 248 186 L242 210 Q200 216 158 210 Z M120 236 Q200 246 280 236 M88 224 h24 M288 224 h24 M176 222 h48 v14 h-48 Z',
+  tires: [[72, 258], [284, 258]],
+  ground: 290,
 };
 const CAR_REAR = {
   viewBox: '0 0 400 300',
   body: CAR_FRONT.body,
-  details: 'M120 145 L145 90 Q150 80 162 80 L238 80 Q250 80 255 90 L280 145 Z M96 140 L72 132 L70 148 L96 152 Z M304 140 L328 132 L330 148 L304 152 Z M62 170 L120 170 L116 194 L64 194 Z M338 170 L280 170 L284 194 L336 194 Z M120 168 L280 168 M165 192 h70 v26 h-70 Z M64 228 L336 228 M296 244 h22',
-  tires: [[62, 250], [284, 250]],
-  ground: 278,
+  details: 'M104 128 Q84 124 80 136 Q82 146 100 146 Z M296 128 Q316 124 320 136 Q318 146 300 146 Z M128 152 L150 96 Q154 88 166 88 L234 88 Q246 88 250 96 L272 152 Q200 144 128 152 Z M86 166 Q200 154 314 166 M72 176 Q116 168 162 176 L156 196 Q112 198 74 192 Z M328 176 Q284 168 238 176 L244 196 Q288 198 326 192 Z M162 178 L238 178 M170 204 h60 v24 h-60 Z M76 238 Q200 250 324 238 M290 252 h20',
+  tires: [[72, 258], [284, 258]],
+  ground: 290,
 };
-// estilo: 'silhueta' | 'cantos' | 'linha'
+// estilo: 'guia' | 'silhueta' | 'cantos' | 'linha'
 function drawCar(car, style, mirror = false) {
   const [, , w, h] = car.viewBox.split(' ').map(Number);
-  const wheels = (car.wheels || []).map(([x, y]) => `<circle cx="${x}" cy="${y}" r="34"/><circle cx="${x}" cy="${y}" r="13"/>`).join('');
-  const tires = (car.tires || []).map(([x, y]) => `<rect x="${x}" y="${y}" width="54" height="26" rx="8"/>`).join('');
+  const r = car.wheels && w > 600 ? 38 : 34;
+  const wheels = (car.wheels || []).map(([x, y]) => `<circle cx="${x}" cy="${y}" r="${r}"/><circle cx="${x}" cy="${y}" r="${Math.round(r * 0.62)}"/>`).join('');
+  const tires = (car.tires || []).map(([x, y]) => `<rect x="${x}" y="${y}" width="44" height="28" rx="8"/>`).join('');
   const flip = mirror ? ` transform="translate(${w} 0) scale(-1 1)"` : '';
   if (style === 'cantos') {
     const m = 14, L = 46;
     const c = `M${m} ${m + L} V${m} H${m + L} M${w - m - L} ${m} H${w - m} V${m + L} M${w - m} ${h - m - L} V${h - m} H${w - m - L} M${m + L} ${h - m} H${m} V${h - m - L}`;
     return `<svg viewBox="${car.viewBox}" class="g cantos"><path class="corner" d="${c}"/><g${flip} class="ghost"><path d="${car.body}"/>${wheels}${tires}</g><path class="groundline" d="M${w * 0.12} ${car.ground} H${w * 0.88}"/></svg>`;
   }
-  return `<svg viewBox="${car.viewBox}" class="g ${style}"><g${flip}><path class="body" d="${car.body}"/><path class="det" d="${car.details}"/>${wheels}${tires}</g></svg>`;
+  // Moldura tracejada em volta do carro: o carro inteiro tem que caber dentro dela.
+  const top = w > 600 ? 26 : 50;
+  const box = style === 'guia' ? `<rect class="box" x="18" y="${top}" width="${w - 36}" height="${car.ground - top}"/>` : '';
+  return `<svg viewBox="${car.viewBox}" class="g ${style}">${box}<g${flip}><path class="body" d="${car.body}"/><path class="det" d="${car.details}"/>${wheels}${tires}</g></svg>`;
 }
 function carDrawing(angle, style = FRAME_STYLE) {
   if (angle === 'frente') return drawCar(CAR_FRONT, style);
