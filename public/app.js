@@ -57,6 +57,11 @@ async function api(path, { method = 'GET', body, raw, type, withTotal } = {}) {
     opts.headers['Content-Type'] = 'application/json';
   }
   const res = await fetch('/api' + path, opts);
+  // Servidor fora do ar por alguns minutos (atualização): mostra o aviso de manutenção e volta sozinho.
+  if (res.status >= 502 && res.status <= 504) {
+    location.replace('/manutencao.html?volta=' + encodeURIComponent('/' + location.hash));
+    throw new Error('Sistema em manutenção.');
+  }
   const data = res.headers.get('content-type')?.includes('json') ? await res.json() : null;
   if (res.status === 401 && path !== '/login') {
     state.me = null;

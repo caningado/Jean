@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>Towing J&amp;J · Manutenção</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <style>
+    :root { --bg: #f7f7f7; --card: #fff; --text: #1c1917; --muted: #78716c; --line: #e7e5e4; --brand: #d4102c; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #0c0a09; --card: #1c1917; --text: #f5f5f4; --muted: #a8a29e; --line: #292524; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; background: var(--bg); color: var(--text);
+      font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    .card { width: 100%; max-width: 440px; background: var(--card); border: 1px solid var(--line); border-top: 4px solid var(--brand);
+      border-radius: 14px; padding: 32px 24px; text-align: center; box-shadow: 0 8px 30px rgba(0,0,0,.06); }
+    img { width: 84px; height: 84px; border-radius: 18px; }
+    h1 { font-size: 22px; margin: 18px 0 8px; }
+    p { margin: 0 0 12px; color: var(--muted); }
+    .en { font-size: 14px; border-top: 1px solid var(--line); padding-top: 14px; margin-top: 18px; }
+    .status { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); margin-top: 6px; }
+    .dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--brand); animation: pulse 1.4s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity: .25; } }
+    button { margin-top: 18px; border: 0; border-radius: 10px; padding: 12px 22px; font: inherit; font-weight: 600; background: var(--brand); color: #fff; cursor: pointer; }
+    footer { margin-top: 22px; font-size: 13px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <img src="/icon-192.png" alt="Towing J&amp;J">
+    <h1>Sistema em manutenção</h1>
+    <p>Estamos atualizando o sistema para atender você ainda melhor. Voltamos em poucos minutos.</p>
+    <span class="status"><span class="dot"></span><span id="msg">O sistema abre sozinho quando voltar.</span></span>
+    <p class="en">Our system is under scheduled maintenance. We'll be back shortly. Thank you for your patience.</p>
+    <button id="retry">Tentar agora</button>
+    <footer>Towing J&amp;J LLC</footer>
+  </main>
+  <script>
+    // Volta para onde a pessoa estava assim que o servidor responder de novo.
+    const back = new URLSearchParams(location.search).get('volta') || '/';
+    async function check() {
+      try {
+        const res = await fetch('/api/me', { cache: 'no-store' });
+        if (res.status < 500) return location.replace(back.startsWith('/') ? back : '/');
+      } catch {}
+      setTimeout(check, 10000);
+    }
+    document.getElementById('retry').onclick = () => {
+      document.getElementById('msg').textContent = 'Verificando...';
+      check();
+    };
+    setTimeout(check, 10000);
+  </script>
+</body>
+</html>

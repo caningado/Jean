@@ -1,7 +1,7 @@
 // Guarda a "casca" do app para abrir rápido, mesmo com sinal fraco.
 // Os dados (/api) sempre vêm do servidor.
-const CACHE = 'guincho-v87';
-const SHELL = ['/', '/index.html', '/app.js', '/style.css', '/icon.svg', '/manifest.webmanifest'];
+const CACHE = 'guincho-v88';
+const SHELL = ['/', '/index.html', '/manutencao.html', '/app.js', '/style.css', '/icon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -16,12 +16,21 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api') || url.pathname.startsWith('/webhook') || url.pathname.startsWith('/arquivo')) return;
-  // Rede primeiro; se cair, usa o que está guardado.
+  // Rede primeiro; se cair, usa o que está guardado. Servidor fora do ar (502/503/504, ex.: durante
+  // uma atualização): a página aberta vira o aviso de manutenção, e o resto vem do que está guardado.
+  const down = (res) => res.status >= 502 && res.status <= 504;
+  const fallback = () =>
+    event.request.mode === 'navigate'
+      ? caches.match('/manutencao.html').then((hit) => hit || caches.match('/index.html'))
+      : caches.match(event.request).then((hit) => hit || caches.match('/index.html'));
   event.respondWith(
     fetch(event.request)
       .then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(event.request, copy));
+        if (down(res)) return fallback().then((hit) => hit || res);
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(event.request, copy));
+        }
         return res;
       })
       .catch(() => caches.match(event.request).then((hit) => hit || caches.match('/index.html')))
