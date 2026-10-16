@@ -550,7 +550,7 @@ const commands = [
     help: '*fila* – serviços esperando (motorista: a sua fila; ADM: os sem motorista)',
     run({ ctx, user }) {
       if (user.role !== 'dono') {
-        const mine = ctx.data.services.list({ status: 'pendente', driverId: user.id, limit: 20 });
+        const mine = ctx.data.services.list({ status: 'pendente', driverId: user.id, limit: 20 }).sort((a, b) => (b.driver_ref_day || '').localeCompare(a.driver_ref_day || '') || (a.driver_seq || 1e9) - (b.driver_seq || 1e9));
         if (!mine.length) return 'Sua fila está vazia. 👍';
         const rows = mine.map((s) => `• *#${ctx.data.services.ref(s, user)}* ${s.contact_name || 'Sem cliente'} – ${String(s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa')}${s.vehicle ? ` (${s.vehicle})` : ''}`);
         return [`📋 *Sua fila* (${mine.length})`, ...rows, '', `Para começar um, mande *abrir* e o número (no máximo ${maxActive(ctx)} em andamento).`].join('\n');
