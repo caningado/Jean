@@ -188,6 +188,11 @@ function routes(api, ctx) {
   // Recebe a foto (corpo da requisição é a imagem) e devolve o VIN lido.
   api.post('/vin/read', express.raw({ type: 'image/*', limit: '15mb' }), async (req, res) => {
     if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(400, 'Mande uma foto.');
+    // Fotos automáticas do escaner: só o código de barras (rápido) e sem erro quando não acha.
+    if (req.query.so === 'codigo') {
+      const vin = await readVinBarcode(req.body).catch(() => null);
+      return res.json(vin ? validateVin(vin) : { vin: null });
+    }
     const result = await readVinFromImage(ctx, req.body, req.headers['content-type']);
     if (!result.vin) {
       const msg =
