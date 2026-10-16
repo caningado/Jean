@@ -173,6 +173,25 @@ pre.msg { white-space: pre-wrap; background: var(--bg); border-radius: 10px; pad
 .shutter { flex: 0 0 72px !important; width: 72px; height: 72px; border-radius: 50%; padding: 0; background: #fff; border: 6px solid #9aa0a6; box-shadow: 0 0 0 3px #fff; }
 .shutter:disabled { opacity: .5; }
 .camera.flash .scanner-view { filter: brightness(2.5); }
+/* Aviso para virar o celular: deitado nas laterais, em pé na frente e na traseira */
+.turn-hint { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: rgba(0, 0, 0, .72); color: #fff; text-align: center; padding: 24px; }
+.turn-hint[hidden] { display: none; }
+.turn-hint strong { font-size: 20px; max-width: 320px; }
+.turn-phone { font-size: 64px; line-height: 1; }
+.turn-hint.to-landscape .turn-phone { animation: turn-l 1.6s ease-in-out infinite; }
+.turn-hint.to-portrait .turn-phone { animation: turn-p 1.6s ease-in-out infinite; }
+@keyframes turn-l { 0%, 25% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
+@keyframes turn-p { 0%, 25% { transform: rotate(-90deg); } 60%, 100% { transform: rotate(0); } }
+.shutter.waiting { opacity: .4; }
+/* Celular deitado: botões do lado direito, para a foto usar a tela toda */
+@media (orientation: landscape) and (max-height: 600px) {
+  .scanner.camera { flex-direction: row; }
+  .camera .camera-side { width: 190px; display: flex; flex-direction: column; justify-content: center; padding-right: env(safe-area-inset-right); }
+  .camera .scanner-tip { display: none; }
+  .camera .scanner-actions { flex-direction: column; align-items: center; padding: 8px 12px; }
+  .camera .scanner-actions button { flex: 0 0 auto; width: 100%; }
+  .camera .scanner-actions .shutter { width: 72px; order: -1; }
+}
 .card h3 { margin: 14px 0 6px; font-size: 15px; color: var(--muted); }
 .photos figure.missing button { width: 100%; aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 2px dashed var(--muted); border-radius: 10px; background: transparent; color: var(--muted); padding: 6px; font-size: 12px; }
 .photos figure.missing .g { width: 85%; height: auto; filter: none; }
