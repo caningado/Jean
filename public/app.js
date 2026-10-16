@@ -1051,7 +1051,7 @@ screens.editar = async (params, id) => {
   const drivers = state.me.role === 'dono' ? await api('/users') : [];
   view.innerHTML = `
     <form class="card" id="f">
-      <label>Cliente (quem pediu o serviço)</label>
+      <label>Cliente</label>
       <div class="select-tap"><select name="contact_id" tabindex="-1"><option value="${s.contact_id || ''}">${esc(s.contact_name || 'Nenhum')}</option></select><button type="button" id="contactPick" aria-label="Trocar cliente"></button></div>
       <label>Retirada</label><input name="pickup" value="${esc(s.pickup)}">
       <label>Destino</label><input name="dropoff" value="${esc(s.dropoff)}">
@@ -1075,7 +1075,7 @@ screens.editar = async (params, id) => {
   const setContact = (c) => (contactSel.innerHTML = `<option value="${c.id}">${esc(c.name)}</option>`);
   view.querySelector('#contactPick').onclick = async () => {
     const c = await pickDialog({
-      title: 'Cliente (quem pediu)',
+      title: 'Cliente',
       placeholder: 'Buscar nome ou telefone',
       none: '➕ Cadastrar cliente novo',
       items: async (q) =>
