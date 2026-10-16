@@ -456,6 +456,11 @@ screens.servicos = async (params) => {
     view.innerHTML = `<div class="card"><h2>🚫 Lista suspensa</h2><p>${esc(err.message)}</p><a class="btn block" href="#/caminhoes">📏 Mandar a milhagem</a></div>`;
     return;
   }
+  // Motorista: os dele em ordem do número do dia (dia mais recente primeiro, depois 1, 2, 3...).
+  if (state.me.role !== 'dono') {
+    const day = (s) => (s.driver_seq ? s.driver_ref_day : '') || '';
+    list.sort((a, b) => day(b).localeCompare(day(a)) || (a.driver_seq || 1e9) - (b.driver_seq || 1e9) || b.id - a.id);
+  }
   const empty = status === 'pendente' ? 'Nenhum serviço na fila. 👍' : (status === 'concluido'
         ? { dia: 'Nenhum serviço entregue hoje.', semana: 'Nenhum serviço entregue nesta semana.', mes: 'Nenhum serviço entregue neste mês.' }
         : { dia: 'Nenhum serviço hoje.', semana: 'Nenhum serviço nesta semana.', mes: 'Nenhum serviço neste mês.' })[periodo] || 'Nenhum serviço aqui.';
