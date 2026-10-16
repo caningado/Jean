@@ -5,7 +5,7 @@ import { repairEncodedNames } from './data.js';
 import { hashPin, verifyPin, signToken } from '../lib/auth.js';
 import { collectAlerts, servicesBlocked } from '../lib/daily.js';
 import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkMoney, isMapReference } from '../lib/validate.js';
-import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfWeekIso, startOfMonthIso, startOfYearIso, formatPhone } from '../lib/util.js';
+import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfWeekIso, startOfMonthIso, startOfYearIso, formatPhone, dayFormatter } from '../lib/util.js';
 
 const migrations = [
   `CREATE TABLE users (
@@ -84,6 +84,20 @@ const migrations = [
    );`,
   // Empresa do motorista: Towing J&J (jj) ou Towing VIP (vip). Os serviços dele contam para ela.
   `ALTER TABLE users ADD COLUMN firm TEXT NOT NULL DEFAULT 'jj';`,
+  // Número do serviço para o motorista: 1, 2, 3... recomeçando todo dia, contado na ordem em que
+  // o serviço foi dado para ele. Os serviços antigos ganham o número pelo dia em que foram criados.
+  (db) => {
+    db.exec('ALTER TABLE services ADD COLUMN driver_ref INTEGER; ALTER TABLE services ADD COLUMN driver_ref_day TEXT;');
+    const day = dayFormatter(process.env.TIME_ZONE || 'America/New_York');
+    const count = new Map();
+    const set = db.prepare('UPDATE services SET driver_ref = ?, driver_ref_day = ? WHERE id = ?');
+    for (const s of db.prepare('SELECT id, driver_id, created_at FROM services WHERE driver_id IS NOT NULL ORDER BY id').all()) {
+      const d = day(s.created_at);
+      const key = `${s.driver_id}:${d}`;
+      count.set(key, (count.get(key) || 0) + 1);
+      set.run(count.get(key), d, s.id);
+    }
+  },
 ];
 
 // As duas empresas do dono. O nome da J&J vem dos dados da invoice.
@@ -155,7 +169,7 @@ async function notifyAssigned(ctx, service, byUser) {
   const driver = ctx.data.users.get(service.driver_id);
   if (!driver) return;
   try {
-    await ctx.send(driver.phone, [`🚚 ${byUser.name} passou um serviço para a sua fila.`, ctx.data.services.describe(service), `Para começar, mande *abrir ${service.id}* (ou toque em Começar no painel).`].join('\n\n'));
+    await ctx.send(driver.phone, [`🚚 ${byUser.name} passou um serviço para a sua fila.`, ctx.data.services.describe(service, driver), `Para começar, mande *abrir ${ctx.data.services.ref(service, driver)}* (ou toque em Começar no painel).`].join('\n\n'));
   } catch (err) {
     ctx.log(`Não consegui avisar ${driver.name} do serviço #${service.id}`, err);
   }
@@ -462,7 +476,7 @@ const flows = {
       });
       ctx.data.services.setActive(user.id, service.id);
       const hints = ctx.serviceHints.length ? '\n\n' + ctx.serviceHints.join('\n') : '';
-      return `✅ Serviço #${service.id} criado.\n\n${ctx.data.services.describe(service)}${hints}\nQuando entregar, mande *entregue*.`;
+      return `✅ Serviço #${ctx.data.services.ref(service, user)} criado.\n\n${ctx.data.services.describe(service, user)}${hints}\nQuando entregar, mande *entregue*.`;
     },
   },
 };
@@ -504,7 +518,7 @@ const commands = [
     help: '*atual* – ver o serviço em andamento',
     run({ ctx, user }) {
       const service = ctx.data.services.active(user);
-      return service ? ctx.data.services.describe(service) : 'Nenhum serviço em andamento. Mande *novo* para começar.';
+      return service ? ctx.data.services.describe(service, user) : 'Nenhum serviço em andamento. Mande *novo* para começar.';
     },
   },
   {
@@ -519,7 +533,7 @@ const commands = [
       ctx.data.services.setActive(user.id, null);
       const done = ctx.data.services.get(service.id);
       const pending = ctx.loaded.flatMap((m) => [...(m.afterDone?.({ ctx, service: done, user }) || []), ...(m.onServiceDone?.({ ctx, service }) || [])]);
-      return [`🏁 Serviço #${service.id} entregue.`, ...pending].join('\n');
+      return [`🏁 Serviço #${ctx.data.services.ref(service, user)} entregue.`, ...pending].join('\n');
     },
   },
   {
@@ -538,7 +552,7 @@ const commands = [
       if (user.role !== 'dono') {
         const mine = ctx.data.services.list({ status: 'pendente', driverId: user.id, limit: 20 });
         if (!mine.length) return 'Sua fila está vazia. 👍';
-        const rows = mine.map((s) => `• *#${s.id}* ${s.contact_name || 'Sem cliente'} – ${String(s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa')}${s.vehicle ? ` (${s.vehicle})` : ''}`);
+        const rows = mine.map((s) => `• *#${ctx.data.services.ref(s, user)}* ${s.contact_name || 'Sem cliente'} – ${String(s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa')}${s.vehicle ? ` (${s.vehicle})` : ''}`);
         return [`📋 *Sua fila* (${mine.length})`, ...rows, '', `Para começar um, mande *abrir* e o número (no máximo ${maxActive(ctx)} em andamento).`].join('\n');
       }
       const list = ctx.data.services.list({ status: 'pendente', limit: 50 }).filter((s) => !s.driver_id).slice(0, 20);
@@ -553,7 +567,7 @@ const commands = [
     help: '*abrir 12* – voltar a mexer no serviço #12',
     run({ ctx, user, args }) {
       const id = Number(String(args[0] || '').replace('#', ''));
-      const service = id && ctx.data.services.get(id);
+      const service = id && ctx.data.services.byRef(user, id);
       if (!canSee(user, service)) return 'Não achei esse serviço.';
       try {
         if (service.status === 'pendente') takeService(ctx, service, service.driver_id || user.id);
@@ -565,7 +579,7 @@ const commands = [
         return err.message;
       }
       ctx.data.services.setActive(user.id, service.id);
-      return `Ok, agora estou no serviço #${service.id}.`;
+      return `Ok, agora estou no serviço #${ctx.data.services.ref(service, user)}.`;
     },
   },
   {

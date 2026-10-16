@@ -289,6 +289,11 @@ function markSide(tab) {
   sideEl.querySelectorAll('a').forEach((a) => a.classList.toggle('active', a.dataset.side === key));
 }
 
+// Número do serviço: o motorista vê o número do dia dele (1, 2, 3... recomeça todo dia); o ADM vê o número geral.
+function num(s) {
+  return state.me?.role !== 'dono' && s.driver_id === state.me?.id && s.driver_ref ? s.driver_ref : s.id;
+}
+
 function setScreen(title, { tab = null, back = null } = {}) {
   titleEl.textContent = title;
   document.title = `${title} · ${state.company}`;
@@ -516,7 +521,7 @@ screens.servicos = async (params) => {
     ? list
         .map(
           (s) => `<li${payClass(s)}><a href="#/servico/${s.id}">
-            <div><strong>#${s.id} ${esc(s.contact_name || 'Sem cliente')}</strong>
+            <div><strong>#${num(s)} ${esc(s.contact_name || 'Sem cliente')}</strong>
               <div class="sub">${esc([s.vehicle, s.plate].filter(Boolean).join(' · ') || (s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa'))}</div>
               <div class="sub">${when(s.created_at)}${state.me.role === 'dono' && s.driver_name ? ' · ' + esc(s.driver_name) : ''}</div></div>
             <div class="right">${s.price_cents != null ? money(s.price_cents) : ''}<br>${badge(s)}</div>
@@ -772,7 +777,7 @@ screens.novo = async () => {
         location.hash = `#/servico/${service.id}`;
         return;
       }
-      toast(queued(service) ? `Serviço #${service.id} na fila de ${service.driver_name || 'motorista'}` : service.status === 'pendente' ? `Serviço #${service.id} na fila` : `Serviço #${service.id} criado`);
+      toast(queued(service) ? `Serviço #${num(service)} na fila de ${service.driver_name || 'motorista'}` : service.status === 'pendente' ? `Serviço #${num(service)} na fila` : `Serviço #${num(service)} criado`);
       location.hash = `#/servico/${service.id}`;
     } catch (err) {
       toast(err.message);
@@ -784,8 +789,9 @@ screens.novo = async () => {
 };
 
 screens.servico = async (params, id) => {
-  setScreen(`Serviço #${id}`, { tab: 'servicos', back: '#/servicos' });
+  setScreen('Serviço', { tab: 'servicos', back: '#/servicos' });
   const s = await api(`/services/${id}`);
+  setScreen(`Serviço #${num(s)}`, { tab: 'servicos', back: '#/servicos' });
   const owner = state.me.role === 'dono';
   const drivers = owner && s.status === 'pendente' ? await api('/users') : [];
   const vehicleInfo = s.vin_info ? [s.vin_info.year, s.vin_info.make, s.vin_info.model, s.vin_info.body].filter(Boolean).join(' · ') : '';
@@ -802,7 +808,7 @@ screens.servico = async (params, id) => {
       <p>🚗 ${esc([s.vehicle, s.plate].filter(Boolean).join(' · ') || 'Veículo não informado')}</p>
       ${s.miles != null ? `<p class="sub">${s.miles} milhas</p>` : ''}
       <p class="big">${s.price_cents != null ? money(s.price_cents) : 'Sem valor'}</p>
-      <p class="sub">${when(s.created_at)}${s.driver_name ? ' · ' + esc(s.driver_name) : ''}</p>
+      <p class="sub">${when(s.created_at)}${s.driver_name ? ' · ' + esc(s.driver_name) + (owner && s.driver_ref ? ` (nº ${s.driver_ref} do dia ${s.driver_ref_day.slice(8)}/${s.driver_ref_day.slice(5, 7)})` : '') : ''}</p>
       ${s.notes ? `<p>${esc(s.notes)}</p>` : ''}
       <div class="actions">
         ${s.status === 'pendente' ? (queued(s) && (owner || s.driver_id === state.me.id) ? '<button id="start">▶ Começar</button>' : '') : s.status === 'aberto' ? '<button id="done">✅ Entregue</button>' : '<button class="secondary" id="reopen">Reabrir</button>'}
@@ -942,7 +948,7 @@ screens.servico = async (params, id) => {
   });
   on('#cancel', async () => {
     const motivo = await dialog({
-      title: `Cancelar o serviço #${id}?`,
+      title: `Cancelar o serviço #${num(s)}?`,
       text: 'Escreva o motivo, se quiser (ex.: cliente desistiu).',
       input: { multiline: true, placeholder: 'Motivo (opcional)' },
       ok: 'Cancelar serviço',
@@ -1061,8 +1067,9 @@ screens.servico = async (params, id) => {
 };
 
 screens.editar = async (params, id) => {
-  setScreen(`Editar #${id}`, { tab: 'servicos', back: `#/servico/${id}` });
+  setScreen('Editar', { tab: 'servicos', back: `#/servico/${id}` });
   const s = await api(`/services/${id}`);
+  setScreen(`Editar #${num(s)}`, { tab: 'servicos', back: `#/servico/${id}` });
   const drivers = state.me.role === 'dono' ? await api('/users') : [];
   view.innerHTML = `
     <form class="card" id="f">
@@ -1285,7 +1292,7 @@ screens.contato = async (params, id) => {
     </form>
     ${!isNew ? `<div class="card"><h2>Histórico</h2><ul class="list">${
       c.services.length
-        ? c.services.map((s) => `<li><a href="#/servico/${s.id}"><div>#${s.id} ${esc(s.vehicle || s.pickup || '')}<div class="sub">${when(s.created_at)}</div></div><div class="right">${s.price_cents != null ? money(s.price_cents) : ''}</div></a></li>`).join('')
+        ? c.services.map((s) => `<li><a href="#/servico/${s.id}"><div>#${num(s)} ${esc(s.vehicle || s.pickup || '')}<div class="sub">${when(s.created_at)}</div></div><div class="right">${s.price_cents != null ? money(s.price_cents) : ''}</div></a></li>`).join('')
         : '<li class="empty">Nenhum serviço ainda.</li>'
     }</ul></div>` : ''}`;
   // Tocar em Empresa abre uma janela com busca e as 5 empresas mais novas (no lugar da lista com todas).
@@ -1472,7 +1479,7 @@ screens.pendentes = async () => {
   const age = (d) => (d === 0 ? 'hoje' : d === 1 ? 'há 1 dia' : `há ${d} dias`);
   view.innerHTML = `${late ? `<div class="card alerts"><strong>⚠️ ${late === 1 ? '1 atrasado' : `${late} atrasados`}</strong><div class="sub">Abra o serviço e toque em <strong>Cobrar cliente</strong> para mandar a mensagem com o Zelle.</div></div>` : ''}<div class="card"><ul class="list">${
     list.length
-      ? list.map((s) => `<li${s.overdue ? ' class="late"' : ''}><a href="#/servico/${s.id}"><div><strong>${s.overdue ? '⚠️ ' : ''}#${s.id} ${esc(s.contact_name || '')}</strong><div class="sub">${when(s.completed_at || s.created_at)} · ${age(s.days)}</div></div>
+      ? list.map((s) => `<li${s.overdue ? ' class="late"' : ''}><a href="#/servico/${s.id}"><div><strong>${s.overdue ? '⚠️ ' : ''}#${num(s)} ${esc(s.contact_name || '')}</strong><div class="sub">${when(s.completed_at || s.created_at)} · ${age(s.days)}</div></div>
           <div class="right">${s.open_cents ? 'Cliente ' + money(s.open_cents) : ''}${s.to_receive_cents ? '<br>Seguradora ' + money(s.to_receive_cents) : ''}</div></a></li>`).join('')
       : '<li class="empty">Nada pendente 👍</li>'
   }</ul></div>`;

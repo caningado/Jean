@@ -1,8 +1,9 @@
 // Acesso aos dados do núcleo: equipe, contatos e serviços.
-import { normalizePhone, nowIso, formatPhone, formatMoney } from '../lib/util.js';
+import { normalizePhone, nowIso, formatPhone, formatMoney, dayFormatter } from '../lib/util.js';
 import { mapLink } from '../lib/validate.js';
 
-export function createCoreData(db) {
+export function createCoreData(db, timeZone = 'America/New_York') {
+  const today = dayFormatter(timeZone);
   const contacts = {
     get(id) {
       return db.prepare('SELECT * FROM contacts WHERE id = ?').get(id);
@@ -82,6 +83,13 @@ export function createCoreData(db) {
     LEFT JOIN contacts c ON c.id = s.contact_id
     LEFT JOIN users u ON u.id = s.driver_id`;
 
+  // Dá ao serviço o próximo número do dia do motorista.
+  function giveRef(id, driverId) {
+    const day = today();
+    const { n } = db.prepare('SELECT COALESCE(MAX(driver_ref), 0) + 1 AS n FROM services WHERE driver_id = ? AND driver_ref_day = ?').get(driverId, day);
+    db.prepare('UPDATE services SET driver_ref = ?, driver_ref_day = ? WHERE id = ?').run(n, day, id);
+  }
+
   const services = {
     get(id) {
       return db.prepare(`${SERVICE_SELECT} WHERE s.id = ?`).get(id);
@@ -136,16 +144,23 @@ export function createCoreData(db) {
           fields.status || 'aberto',
           nowIso()
         );
-      return services.get(Number(info.lastInsertRowid));
+      const id = Number(info.lastInsertRowid);
+      if (fields.driver_id) giveRef(id, fields.driver_id);
+      return services.get(id);
     },
     update(id, fields) {
       const allowed = ['driver_id', 'contact_id', 'pickup', 'dropoff', 'vehicle', 'plate', 'vin', 'vin_info', 'miles', 'price_cents', 'notes', 'status'];
       const keys = Object.keys(fields).filter((k) => allowed.includes(k));
+      const before = keys.includes('driver_id') ? services.get(id) : null;
       if (keys.length) {
         db.prepare(`UPDATE services SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(
           ...keys.map((k) => fields[k] ?? null),
           id
         );
+      }
+      if (before && (Number(fields.driver_id) || null) !== before.driver_id) {
+        if (fields.driver_id) giveRef(id, Number(fields.driver_id));
+        else db.prepare('UPDATE services SET driver_ref = NULL, driver_ref_day = NULL WHERE id = ?').run(id);
       }
       if (fields.status === 'concluido') {
         db.prepare('UPDATE services SET completed_at = COALESCE(completed_at, ?) WHERE id = ?').run(nowIso(), id);
@@ -162,8 +177,18 @@ export function createCoreData(db) {
     setActive(userId, serviceId) {
       db.prepare('UPDATE users SET active_service_id = ? WHERE id = ?').run(serviceId, userId);
     },
-    describe(s) {
-      const lines = [`*Serviço #${s.id}*`];
+    // Número que a pessoa vê: o motorista vê o número do dia dele (1, 2, 3...); o ADM vê o número geral.
+    ref(s, user) {
+      return user && user.role !== 'dono' && s.driver_id === user.id && s.driver_ref ? s.driver_ref : s.id;
+    },
+    // O motorista fala "abrir 3": é o 3 dele mais recente (de hoje, se houver).
+    byRef(user, n) {
+      if (user.role === 'dono') return services.get(n);
+      const row = db.prepare('SELECT id FROM services WHERE driver_id = ? AND driver_ref = ? ORDER BY driver_ref_day DESC, id DESC LIMIT 1').get(user.id, n);
+      return row ? services.get(row.id) : undefined;
+    },
+    describe(s, user) {
+      const lines = [`*Serviço #${services.ref(s, user)}*`];
       if (s.contact_name) lines.push(`Cliente: ${s.contact_name}${s.contact_phone ? ' ' + formatPhone(s.contact_phone) : ''}`);
       // Com o link, o motorista toca e abre o mapa para navegar.
       if (s.pickup) lines.push(`Retirada: ${s.pickup}`, `🗺️ ${mapLink(s.pickup)}`);

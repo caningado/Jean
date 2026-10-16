@@ -75,7 +75,7 @@ export function createContext(config) {
   };
 
   for (const mod of loaded) migrate(db, mod.name, mod.migrations);
-  ctx.data = createCoreData(db);
+  ctx.data = createCoreData(db, ctx.config.timeZone);
 
   for (const mod of loaded) {
     if (mod.commands) ctx.commands.push(...mod.commands);

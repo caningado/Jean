@@ -44,6 +44,12 @@ export function simplify(text) {
     .trim();
 }
 
+// Dia (AAAA-MM-DD) no fuso da empresa; sem data = hoje.
+export function dayFormatter(timeZone) {
+  const f = new Intl.DateTimeFormat('en-CA', { timeZone });
+  return (iso) => f.format(iso ? new Date(iso) : new Date());
+}
+
 export function nowIso() {
   return new Date().toISOString();
 }

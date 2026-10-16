@@ -172,7 +172,7 @@ async function onMedia({ ctx, user, media, caption }) {
   if (kind === 'outro') {
     return ctx.bot.startFlow(user, 'foto_tipo', { serviceId: service.id, since: new Date(Date.now() - 60000).toISOString() });
   }
-  return `📷 Foto de *${KIND_LABEL[kind]}* (${ANGLE_LABEL[angle]}) salva no serviço #${service.id} (${countPhotos(ctx, service.id, kind)} no total). ${angleTip(ctx, service.id, kind)}`;
+  return `📷 Foto de *${KIND_LABEL[kind]}* (${ANGLE_LABEL[angle]}) salva no serviço #${ctx.data.services.ref(service, user)} (${countPhotos(ctx, service.id, kind)} no total). ${angleTip(ctx, service.id, kind)}`;
 }
 
 const flows = {
@@ -203,7 +203,7 @@ const flows = {
       const n = Number(result.changes);
       const what = `${n} foto${n === 1 ? '' : 's'} de *${KIND_LABEL[data.kind]}*`;
       const tip = data.kind === 'vin' ? '\nPara salvar o número, mande *vin* seguido dele.' : '';
-      return `📷 ${what} no serviço #${data.serviceId}. As próximas fotos também vão entrar como ${KIND_LABEL[data.kind]}.${tip}`;
+      return `📷 ${what} no serviço #${ctx.data.services.ref(ctx.data.services.get(data.serviceId) || { id: data.serviceId }, user)}. As próximas fotos também vão entrar como ${KIND_LABEL[data.kind]}.${tip}`;
     },
   },
 };
@@ -218,7 +218,7 @@ const commands = [
       const kind = kindFromText(text);
       setMode(ctx, user.id, kind);
       return (
-        `Ok, pode mandar as fotos de *${KIND_LABEL[kind]}* do serviço #${service.id}, dando a volta no carro:\n` +
+        `Ok, pode mandar as fotos de *${KIND_LABEL[kind]}* do serviço #${ctx.data.services.ref(service, user)}, dando a volta no carro:\n` +
         ANGLES.map((a, i) => `${i + 1}. ${ANGLE_LABEL[a]}`).join('\n') +
         '\nFotos a mais entram como detalhe. Se quiser, escreva o lado na legenda (ex: *traseira*).'
       );
