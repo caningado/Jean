@@ -203,8 +203,8 @@ const commands = [
       const b = balance(ctx, service);
       const what =
         payment.status === 'a_receber'
-          ? `🧾 ${formatMoney(amountCents)} a receber de ${payer || 'seguradora'} no serviço #${service.id}.`
-          : `💵 ${formatMoney(amountCents)} recebido por ${METHODS[payment.method]} no serviço #${service.id}.`;
+          ? `🧾 ${formatMoney(amountCents)} a receber de ${payer || 'seguradora'} no serviço #${ctx.data.services.ref(service, user)}.`
+          : `💵 ${formatMoney(amountCents)} recebido por ${METHODS[payment.method]} no serviço #${ctx.data.services.ref(service, user)}.`;
       const left = b.open_cents > 0 ? `\nAinda falta ${formatMoney(b.open_cents)}.` : service.price_cents ? '\nServiço quitado ✅' : '';
       return what + left;
     },

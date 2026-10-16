@@ -122,9 +122,9 @@ async function saveVin(ctx, service, vin) {
   return { service: ctx.data.services.update(service.id, fields), info };
 }
 
-function savedMessage(service, info) {
+function savedMessage(ctx, service, info, user) {
   const vehicle = describeVehicle(info);
-  return `✅ VIN ${service.vin} salvo no serviço #${service.id}.${vehicle ? `\nVeículo: ${vehicle}` : ''}`;
+  return `✅ VIN ${service.vin} salvo no serviço #${ctx.data.services.ref(service, user)}.${vehicle ? `\nVeículo: ${vehicle}` : ''}`;
 }
 
 const flows = {
@@ -146,7 +146,7 @@ const flows = {
       const service = ctx.data.services.get(data.serviceId);
       if (!service) return 'O serviço não existe mais.';
       const saved = await saveVin(ctx, service, data.confirmed);
-      return savedMessage(saved.service, saved.info);
+      return savedMessage(ctx, saved.service, saved.info, user);
     },
   },
 };
@@ -162,7 +162,7 @@ const commands = [
       const check = validateVin(rawArgs);
       if (!check.valid) return `${check.reason}\nSe tiver certeza do número, mande a foto da etiqueta com a legenda *vin*.`;
       const saved = await saveVin(ctx, service, check.vin);
-      return savedMessage(saved.service, saved.info);
+      return savedMessage(ctx, saved.service, saved.info, user);
     },
   },
 ];
