@@ -2949,7 +2949,7 @@ async function scanBarcode() {
         for (const code of codes) {
           const vin = vinFromCode(code.rawValue);
           if (vin) return finish(vin);
-          status.textContent = 'Achei um código, mas não é o VIN. Procure o código com 17 letras e números.';
+          status.textContent = `Achei o código "${String(code.rawValue || '').slice(0, 24)}", que não é o VIN. Coloque só o código do VIN (17 letras e números) dentro do retângulo.`;
         }
         await new Promise((r) => setTimeout(r, 120));
       }
