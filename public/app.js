@@ -826,7 +826,7 @@ screens.servico = async (params, id) => {
         <button>Salvar</button>
       </form>
       <div class="actions">
-        <button class="secondary" id="scanVin">📷 Escanear código</button>
+        <button class="secondary" id="scanVin">📷 Escanear VIN</button>
         <button class="secondary" id="photoVin">🖼️ Ler da foto</button>
       </div>
     </div>` : ''}
@@ -2765,11 +2765,11 @@ async function scanBarcode() {
       <div class="scanner-mask"><div class="scanner-box"><i></i><i></i><i></i><i></i><div class="scanner-line"></div></div></div>
       <button class="scanner-close" data-act="close" aria-label="Fechar">✕</button>
     </div>
-    <p class="scanner-tip">Coloque o código de barras do VIN <strong>dentro do retângulo</strong>, deitado, bem de perto.</p>
+    <p class="scanner-tip">Código de barras do VIN <strong>dentro do retângulo</strong>, deitado e de perto. Se for só o VIN escrito (etiqueta ou para-brisa), toque em <strong>📸 Ler as letras</strong>.</p>
     <p class="scanner-status">Abrindo a câmera…</p>
     <div class="scanner-actions">
       <button class="secondary" data-act="torch" hidden>🔦 Lanterna</button>
-      <button class="secondary" data-act="photo">📸 Tirar foto</button>
+      <button class="secondary" data-act="photo">📸 Ler as letras</button>
       <button class="secondary" data-act="cancel">Cancelar</button>
     </div>`;
   document.body.appendChild(overlay);
@@ -2807,7 +2807,7 @@ async function scanBarcode() {
 
   button('photo').onclick = async () => {
     if (!video.videoWidth) return;
-    status.textContent = 'Lendo a foto…';
+    status.textContent = 'Lendo o VIN da foto… (pode levar alguns segundos)';
     const image = await new Promise((r) => frame().toBlob(r, 'image/jpeg', 0.92));
     try {
       const read = await api('/vin/read', { method: 'POST', raw: image, type: 'image/jpeg' });
@@ -2845,12 +2845,15 @@ async function scanBarcode() {
       status.textContent = 'Preparando o leitor…';
       detector = await barcodeDetector();
     } catch (err) {
-      status.textContent = 'Leitor indisponível. Use 📸 Tirar foto.';
+      status.textContent = 'Leitor indisponível. Use 📸 Ler as letras.';
       return await result;
     }
     status.textContent = 'Procurando o código de barras…';
+    const started = Date.now();
     (async () => {
       for (let i = 0; !done; i++) {
+        // Sem código de barras depois de uns segundos: lembra do botão que lê as letras.
+        if (Date.now() - started > 6000 && /^Procurando/.test(status.textContent)) status.textContent = 'Não achei código de barras. Para ler o VIN escrito, toque em 📸 Ler as letras.';
         const codes = await detector.detect(frame(i % 3 === 2 ? null : boxCrop())).catch(() => []);
         for (const code of codes) {
           const vin = vinFromCode(code.rawValue);
