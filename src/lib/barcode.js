@@ -30,10 +30,14 @@ export function vinFromCode(text) {
 // Devolve o VIN encontrado nos códigos de barras da imagem, ou null.
 export async function readVinBarcode(buffer) {
   await load();
-  const codes = await readBarcodes(new Uint8Array(buffer), { formats: VIN_FORMATS, tryHarder: true, maxNumberOfSymbols: 4 });
-  for (const code of codes) {
-    const vin = vinFromCode(code.text);
-    if (vin) return vin;
+  const image = new Uint8Array(buffer);
+  // Primeiro o modo normal; depois preto e branco fixo, que lê etiqueta pequena ou meio borrada.
+  for (const binarizer of ['LocalAverage', 'FixedThreshold']) {
+    const codes = await readBarcodes(image, { formats: VIN_FORMATS, tryHarder: true, maxNumberOfSymbols: 4, binarizer });
+    for (const code of codes) {
+      const vin = vinFromCode(code.text);
+      if (vin) return vin;
+    }
   }
   return null;
 }

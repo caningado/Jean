@@ -2771,6 +2771,14 @@ function barcodeDetector() {
       const supported = await BarcodeDetector.getSupportedFormats().catch(() => []);
       if (VIN_FORMATS.every((f) => supported.includes(f))) return new BarcodeDetector({ formats: VIN_FORMATS });
     }
+    return zxingDetector();
+  })();
+  detectorPromise.catch(() => (detectorPromise = null));
+  return detectorPromise;
+}
+let zxingPromise;
+function zxingDetector() {
+  zxingPromise ??= (async () => {
     await new Promise((resolve, reject) => {
       const script = document.createElement('script');
       script.src = '/vendor/barcode-detector.js';
@@ -2782,8 +2790,8 @@ function barcodeDetector() {
     prepareZXingModule({ overrides: { locateFile: (file) => `/vendor/${file}` } });
     return new Detector({ formats: VIN_FORMATS });
   })();
-  detectorPromise.catch(() => (detectorPromise = null));
-  return detectorPromise;
+  zxingPromise.catch(() => (zxingPromise = null));
+  return zxingPromise;
 }
 
 // Etiquetas às vezes trazem um "I" na frente do VIN (Code 39 de importados).
@@ -2838,18 +2846,50 @@ async function scanBarcode() {
     const x = Math.max(0, (b.left - v.left - offX) / scale), y = Math.max(0, (b.top - v.top - offY) / scale);
     return { x, y, w: Math.min(vw - x, b.width / scale), h: Math.min(vh - y, b.height / scale) };
   };
-  const frame = (crop) => {
+  // Faixa da largura toda do vídeo em volta da moldura: o código comprido não fica cortado
+  // quando a tela em pé mostra só o meio da imagem da câmera.
+  const band = () => {
+    const b = boxCrop(), vh = video.videoHeight;
+    const h = Math.min(vh, b.h * 2.2);
+    return { x: 0, y: Math.max(0, Math.min(vh - h, b.y + b.h / 2 - h / 2)), w: video.videoWidth, h };
+  };
+  const ctx2d = canvas.getContext('2d', { willReadFrequently: true });
+  // contrast: deixa a imagem só preto e branco (ajuda com etiqueta gasta, reflexo ou pouca luz).
+  const frame = (crop, { contrast = false } = {}) => {
     const c = crop || { x: 0, y: 0, w: video.videoWidth, h: video.videoHeight };
     canvas.width = Math.round(c.w);
     canvas.height = Math.round(c.h);
-    canvas.getContext('2d').drawImage(video, c.x, c.y, c.w, c.h, 0, 0, canvas.width, canvas.height);
+    ctx2d.drawImage(video, c.x, c.y, c.w, c.h, 0, 0, canvas.width, canvas.height);
+    if (contrast) {
+      const img = ctx2d.getImageData(0, 0, canvas.width, canvas.height);
+      const d = img.data;
+      let sum = 0;
+      for (let i = 0; i < d.length; i += 4) sum += d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11;
+      const mid = sum / (d.length / 4);
+      for (let i = 0; i < d.length; i += 4) d[i] = d[i + 1] = d[i + 2] = d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11 < mid ? 0 : 255;
+      ctx2d.putImageData(img, 0, 0);
+    }
     return canvas;
+  };
+  // Foto em resolução cheia (bem maior que o vídeo em muitos celulares), reduzida para no máximo 2400 px.
+  const stillPhoto = async () => {
+    let source = null;
+    try {
+      if ('ImageCapture' in window) source = await createImageBitmap(await new ImageCapture(stream.getVideoTracks()[0]).takePhoto());
+    } catch {}
+    if (!source || source.width < video.videoWidth) return new Promise((r) => frame().toBlob(r, 'image/jpeg', 0.92));
+    const k = Math.min(1, 2400 / Math.max(source.width, source.height));
+    const out = document.createElement('canvas');
+    out.width = Math.round(source.width * k);
+    out.height = Math.round(source.height * k);
+    out.getContext('2d').drawImage(source, 0, 0, out.width, out.height);
+    return new Promise((r) => out.toBlob(r, 'image/jpeg', 0.92));
   };
 
   button('photo').onclick = async () => {
     if (!video.videoWidth) return;
     status.textContent = 'Lendo o VIN da foto… (pode levar alguns segundos)';
-    const image = await new Promise((r) => frame().toBlob(r, 'image/jpeg', 0.92));
+    const image = await stillPhoto();
     try {
       const read = await api('/vin/read', { method: 'POST', raw: image, type: 'image/jpeg' });
       finish(read.vin);
@@ -2889,13 +2929,23 @@ async function scanBarcode() {
       status.textContent = 'Leitor indisponível. Use 📸 Ler as letras.';
       return await result;
     }
+    // Leitor reserva (o nosso) quando o principal é o do celular.
+    let backup = null;
+    if ('BarcodeDetector' in window && detector instanceof window.BarcodeDetector) {
+      zxingDetector().then((d) => (backup = d)).catch(() => {});
+    }
     status.textContent = 'Procurando o código de barras…';
     const started = Date.now();
     (async () => {
       for (let i = 0; !done; i++) {
         // Sem código de barras depois de uns segundos: lembra do botão que lê as letras.
         if (Date.now() - started > 6000 && /^Procurando/.test(status.textContent)) status.textContent = 'Não achei código de barras. Para ler o VIN escrito, toque em 📸 Ler as letras.';
-        const codes = await detector.detect(frame(i % 3 === 2 ? null : boxCrop())).catch(() => []);
+        // Revezando: moldura, faixa larga, imagem toda, e as mesmas em preto e branco.
+        // No Android, o leitor do celular e o nosso se revezam (um lê o que o outro perde).
+        const step = i % 6;
+        const image = frame([boxCrop, band, () => null][step % 3](), { contrast: step >= 3 });
+        const reader = backup && i % 2 ? backup : detector;
+        const codes = await reader.detect(image).catch(() => []);
         for (const code of codes) {
           const vin = vinFromCode(code.rawValue);
           if (vin) return finish(vin);
