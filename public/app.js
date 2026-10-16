@@ -1873,9 +1873,10 @@ screens.invoice = async (params, id) => {
     ${invoices.length ? `<div class="card"><h2>Invoices deste serviço</h2><ul class="list">${invoices
       .map(
         (i) => `<li><div class="row"><div><strong>Nº ${i.number}</strong> · ${money(i.total_cents)}<div class="sub">${dayFmt(i.issue_date)} · ${esc((i.bill_to || '').split('\n')[0])}</div></div></div>
-        <div class="actions"><a class="btn secondary" href="/api/invoices/${i.id}/pdf" target="_blank" rel="noopener">Ver PDF</a>
+        <div class="actions"><a class="btn secondary" href="/api/invoices/${i.id}/pdf" target="_blank" rel="noopener" data-view="${i.id}">Ver PDF</a>
           <button data-share="${i.id}">📤 Mandar</button>
-          <a class="btn secondary" href="#/invoice/${id}?editar=${i.id}">Editar</a></div></li>`
+          <a class="btn secondary" href="#/invoice/${id}?editar=${i.id}">Editar</a>
+          ${state.me.role === 'dono' ? `<button class="danger" data-del="${i.id}">🗑 Apagar</button>` : ''}</div></li>`
       )
       .join('')}</ul>${showForm ? '' : `<a class="btn secondary block" href="#/invoice/${id}?novo=1">Fazer outro invoice</a>`}</div>` : ''}
     ${showForm ? `<form class="card" id="f">
@@ -1927,6 +1928,28 @@ screens.invoice = async (params, id) => {
   }
   view.querySelectorAll('[data-share]').forEach((b) => {
     b.onclick = () => shareInvoice(invoices.find((i) => String(i.id) === b.dataset.share));
+  });
+  // Ver PDF abre aqui dentro do app, com Voltar (no celular, a aba do PDF não tinha como voltar).
+  view.querySelectorAll('[data-view]').forEach((a) => {
+    a.onclick = (e) => {
+      if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+      e.preventDefault();
+      const i = invoices.find((x) => String(x.id) === a.dataset.view);
+      openDoc({ url: `/api/invoices/${i.id}/pdf`, name: `Invoice ${i.number}.pdf`, mime: 'application/pdf' });
+    };
+  });
+  view.querySelectorAll('[data-del]').forEach((b) => {
+    b.onclick = async () => {
+      const i = invoices.find((x) => String(x.id) === b.dataset.del);
+      if (!(await ask(`Apagar o invoice nº ${i.number}? Não dá para desfazer.`, { ok: 'Apagar', cancel: 'Voltar', danger: true }))) return;
+      try {
+        await api(`/invoices/${i.id}`, { method: 'DELETE' });
+        toast(`Invoice nº ${i.number} apagado`);
+        screens.invoice(new URLSearchParams(), id);
+      } catch (err) {
+        toast(err.message);
+      }
+    };
   });
 };
 
@@ -2718,7 +2741,7 @@ async function openDoc(doc) {
   const overlay = document.createElement('div');
   overlay.className = 'viewer';
   overlay.innerHTML = `
-    <div class="viewer-bar"><strong>${esc(name)}</strong><button class="secondary" data-act="share" disabled>Compartilhar</button><button class="secondary" data-act="close" aria-label="Fechar">✕</button></div>
+    <div class="viewer-bar"><strong>${esc(name)}</strong><button class="secondary" data-act="share" disabled>Compartilhar</button><button class="secondary" data-act="close" aria-label="Voltar">← Voltar</button></div>
     <div class="viewer-body"><p class="sub">Abrindo…</p></div>`;
   document.body.appendChild(overlay);
   const body = overlay.querySelector('.viewer-body');
