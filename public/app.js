@@ -255,7 +255,7 @@ function renderSide() {
         has('pagamentos') ? item('pendentes', '#/pendentes', 'Pendências') : '',
         has('comissao') ? item('comissao', owner ? '#/comissao' : `#/motorista/${state.me.id}`, owner ? 'Pagar motoristas' : 'Meus ganhos') : '',
         has('despesas') ? item('despesas', '#/despesas', 'Despesas') : '',
-        has('planilha') ? item('planilha', '#/planilha', 'Planilha do Excel') : '',
+        has('planilha') ? item('planilha', '#/planilha', state.me.role === 'dono' ? 'Planilha do Excel' : 'Relatório do mês') : '',
       ],
     ],
     [
@@ -1352,7 +1352,7 @@ screens.resumo = async (params) => {
     ${s.open_cents || s.to_receive_cents ? `<div class="card"><h2>Pendências (todas)</h2><p>Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
     ${s.expenses_by_category && Object.keys(s.expenses_by_category).length ? `<div class="card"><h2>Despesas</h2><ul class="list">${Object.entries(s.expenses_by_category).map(([k, v]) => `<li><div class="row"><span>${CATEGORIES[k] || k}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}
     ${state.me.role === 'dono' ? '<a class="card linkcard" href="#/relatorio"><span>🖨 Relatório do dia para imprimir</span><span>›</span></a>' : ''}
-    ${has('planilha') ? `<a class="card linkcard" href="#/planilha"><span>📊 Planilha do Excel</span><span>›</span></a>` : ''}`;
+    ${has('planilha') ? `<a class="card linkcard" href="#/planilha"><span>${state.me.role === 'dono' ? '📊 Planilha do Excel' : '📄 Relatório do mês (PDF)'}</span><span>›</span></a>` : ''}`;
   view.querySelectorAll('.segmented button').forEach((b) => {
     b.classList.toggle('active', b.dataset.p === period);
     b.onclick = () => (location.hash = `#/resumo?p=${b.dataset.p}`);
@@ -1379,7 +1379,28 @@ screens.planilha = async () => {
   const owner = state.me.role === 'dono';
   const link = owner ? await api('/planilha/link') : null;
   const formula = (url) => `=IMPORTDATA("${url}")`;
+  const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  const verRelatorio = (mes) =>
+    openDoc({ url: `/api/planilha.pdf?mes=${mes}`, name: `Relatório ${MESES[Number(mes.slice(5, 7)) - 1]} ${mes.slice(0, 4)}.pdf`, mime: 'application/pdf' });
+  // Motorista: só o relatório do mês em PDF, que abre aqui mesmo no app.
+  if (!owner) {
+    setScreen('Relatório do mês', { tab: 'resumo', back: '#/resumo' });
+    view.innerHTML = `
+      <div class="card">
+        <h2>📄 Relatório do mês</h2>
+        <p class="sub">Os seus serviços${has('despesas') ? ' e despesas' : ''} do mês, em PDF. Abre aqui no app; para guardar ou mandar, toque em Compartilhar.</p>
+        <label>Mês</label><input type="month" id="mes" value="${thisMonth}">
+        <button class="block" id="ver">Ver relatório</button>
+      </div>`;
+    view.querySelector('#ver').onclick = () => verRelatorio(view.querySelector('#mes').value || thisMonth);
+    return;
+  }
   view.innerHTML = `
+    <div class="card">
+      <h2>📄 Relatório do mês (PDF)</h2>
+      <p class="sub">O mesmo conteúdo da planilha, fácil de ler no celular.</p>
+      <button class="block secondary" id="ver">Ver relatório do mês</button>
+    </div>
     <div class="card">
       <h2>📥 Baixar planilha</h2>
       <p class="sub">Serviços${has('pagamentos') ? ', pagamentos' : ''}${has('despesas') ? ' e despesas' : ''}, cada um numa aba. Abre no Excel, no Google Planilhas e no Numbers.</p>
@@ -1415,6 +1436,7 @@ screens.planilha = async () => {
         <button class="block" id="criar">Criar link</button>`}
     </div>` : ''}`;
   const mes = view.querySelector('#mes');
+  view.querySelector('#ver').onclick = () => verRelatorio(mes.value || thisMonth);
   mes.onchange = () => {
     view.querySelector('#baixarMes').href = `/api/planilha.xlsx?mes=${mes.value}`;
     const fotos = view.querySelector('#fotosMes');

@@ -1,6 +1,7 @@
 // Módulo planilha: baixa os dados em Excel (.xlsx) e oferece um link privado
 // que o Google Planilhas ou o Excel leem sozinhos para ficar sempre atualizados.
 // Cada módulo coloca suas abas (exportSheets) e colunas extras de serviço (exportColumns).
+import { renderReport } from './relatorio.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { once } from 'node:events';
@@ -97,6 +98,26 @@ function routes(api, ctx) {
     res.attachment(`${company}-${range.label}.xlsx`);
     res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(file);
+  });
+
+  // Relatório do mês em PDF: abre no visualizador do app (é o que o motorista usa no lugar do Excel).
+  api.get('/planilha.pdf', async (req, res) => {
+    const range = monthRange(req.query.mes, ctx.config.timeZone);
+    const owner = req.user.role === 'dono';
+    const buf = await renderReport({
+      company: ctx.api.invoice?.getCompany() || { name: ctx.config.companyName },
+      logo: ctx.api.invoice ? ctx.api.invoice.logo() : null,
+      sheets: collectSheets(ctx, { ...range, userId: owner ? null : req.user.id }),
+      label: range.label,
+      person: owner ? null : req.user.name,
+      skip: owner ? [] : ['Motorista', 'Quem gastou'],
+      timeZone: ctx.config.timeZone,
+    });
+    const name = `Relatorio ${range.label}${owner ? '' : ' ' + req.user.name}.pdf`.replace(/[^\w &.-]/g, '');
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="${name}"`);
+    res.set('Cache-Control', 'no-store');
+    res.send(buf);
   });
 
   // Planilha + fotos num .zip, uma pasta por serviço. Vai mandando aos pedaços
