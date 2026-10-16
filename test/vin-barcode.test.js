@@ -71,6 +71,14 @@ test('painel: "Ler da foto" lê o código de barras e o leitor do iPhone é serv
   assert.equal(res.status, 422);
   assert.match((await res.json()).error, /Não consegui ler o VIN/);
 
+  // Fotos automáticas do escaner: só código de barras, sem erro quando não acha.
+  const auto = (body) => fetch(`${base}/api/vin/read?so=codigo`, { method: 'POST', headers: { 'Content-Type': 'image/jpeg', Cookie: cookie }, body });
+  res = await auto(readFileSync(new URL('./fixtures/vin-toyota-porta.jpg', import.meta.url)));
+  assert.equal((await res.json()).vin, 'JTDKBRFUXJ3063205');
+  res = await auto(await barcodePng('HELLO', 'Code39'));
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).vin, null);
+
   for (const file of ['/vendor/barcode-detector.js', '/vendor/zxing_reader.wasm']) {
     res = await fetch(base + file);
     assert.equal(res.status, 200, file);
