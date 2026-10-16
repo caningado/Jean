@@ -555,7 +555,7 @@ screens.novo = async () => {
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal"></div>
       </div>
       ${priced ? `<p class="sub">Tabela: ${money(pricing.baseCents)} + ${money(pricing.perMileCents)} por milha.</p>` : ''}
-      ${drivers.length ? `<label>Motorista</label><select name="driver_id"><option value="fila" selected>⏳ Ninguém ainda (Pendente)</option>${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select><p class="sub">O serviço entra como Pendente. Escolha o motorista agora ou depois, na tela do serviço.</p>` : ''}
+      ${drivers.length ? `<label>Motorista</label><select name="driver_id"><option value="fila" selected>⏳ Ninguém ainda (Pendente)</option>${drivers.filter((d) => d.active && d.role === 'motorista').map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select><p class="sub">O serviço entra como Pendente. Escolha o motorista agora ou depois, na tela do serviço.</p>` : ''}
       <label>Observações</label><textarea name="notes" rows="2"></textarea>
       <button class="block">Criar serviço</button>
     </form>`;
@@ -803,7 +803,7 @@ screens.servico = async (params, id) => {
         ${s.status === 'pendente' ? (queued(s) && (owner || s.driver_id === state.me.id) ? '<button id="start">▶ Começar</button>' : '') : s.status === 'aberto' ? '<button id="done">✅ Entregue</button>' : '<button class="secondary" id="reopen">Reabrir</button>'}
         ${s.status !== 'pendente' || owner || s.driver_id === state.me.id ? '<button class="secondary" id="edit">Editar</button>' : ''}
       </div>
-      ${s.status === 'pendente' ? `<p class="sub">${queued(s) ? `⏳ Aguardando: na fila de ${esc(s.driver_name || 'motorista')}. Toque em Começar quando for fazer este.` : '⏳ Na fila: ainda sem motorista.'}</p>${owner ? `<label>Escolher o motorista</label><div class="actions"><select id="assign" aria-label="Escolher o motorista"><option value="">${queued(s) ? 'Passar para outro motorista?' : 'Quem vai fazer?'}</option>${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}">${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select></div>` : ''}` : ''}
+      ${s.status === 'pendente' ? `<p class="sub">${queued(s) ? `⏳ Aguardando: na fila de ${esc(s.driver_name || 'motorista')}. Toque em Começar quando for fazer este.` : '⏳ Na fila: ainda sem motorista.'}</p>${owner ? `<label>Escolher o motorista</label><div class="actions"><select id="assign" aria-label="Escolher o motorista"><option value="">${queued(s) ? 'Passar para outro motorista?' : 'Quem vai fazer?'}</option>${drivers.filter((d) => d.active && d.role === 'motorista').map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></div>` : ''}` : ''}
       ${s.status === 'aberto' && owner ? '<div class="actions"><button class="secondary" id="queue">⏳ Voltar para a fila</button></div>' : ''}
       ${(['aberto', 'pendente'].includes(s.status) && (owner || s.driver_id === state.me.id)) ? '<div class="actions"><button class="danger" id="cancel">✖ Cancelar serviço</button></div>' : ''}
     </div>
@@ -1073,7 +1073,7 @@ screens.editar = async (params, id) => {
         <div><label>Milhas</label><input name="miles" type="number" step="0.1" value="${s.miles ?? ''}"></div>
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal" value="${s.price_cents != null ? (s.price_cents / 100).toFixed(2) : ''}"></div>
       </div>
-      ${drivers.length ? `<label>Motorista</label><select name="driver_id">${s.driver_id ? '' : '<option value="" selected>Ninguém ainda (fila)</option>'}${drivers.map((d) => `<option value="${d.id}" ${d.id === s.driver_id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>` : ''}
+      ${drivers.length ? `<label>Motorista</label><select name="driver_id">${s.driver_id ? '' : '<option value="" selected>Ninguém ainda (fila)</option>'}${drivers.filter((d) => d.id === s.driver_id || (d.active && d.role === 'motorista')).map((d) => `<option value="${d.id}" ${d.id === s.driver_id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>` : ''}
       <label>Situação</label><select name="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === s.status ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <label>Observações</label><textarea name="notes" rows="3">${esc(s.notes)}</textarea>
       <button class="block">Salvar</button>
@@ -2355,7 +2355,14 @@ screens.equipe = async () => {
     <div class="card"><ul class="list">${users
       .map((u) => `<li><div class="row"><div><strong>${esc(u.name)}</strong> ${u.active ? '' : '<span class="badge cancelado">desativado</span>'}<div class="sub">${phoneFmt(u.phone)} · ${u.role === 'dono' ? 'ADM' : 'Motorista'}</div>
         <select class="firm-pick" data-firm="${u.id}" aria-label="Empresa de ${esc(u.name)}">${firmOptions(u.firm)}</select></div>
-        ${u.id !== state.me.id ? `<button class="secondary" data-toggle="${u.id}" data-active="${u.active}">${u.active ? 'Desativar' : 'Ativar'}</button>` : ''}</div></li>`)
+        <div class="actions"><button class="secondary" data-edit="${u.id}">✏️ Editar</button>${u.id !== state.me.id ? `<button class="secondary" data-toggle="${u.id}" data-active="${u.active}">${u.active ? 'Desativar' : 'Ativar'}</button>` : ''}</div></div>
+        <form class="team-edit" data-form="${u.id}" hidden>
+          <label>Nome</label><input name="name" value="${esc(u.name)}" required>
+          <label>Telefone (WhatsApp)</label><input name="phone" type="tel" value="${phoneFmt(u.phone)}" required>
+          <label>Novo PIN (deixe vazio para não mudar)</label><input name="pin" inputmode="numeric" pattern="[0-9]{4,8}">
+          ${u.id !== state.me.id ? `<label>Função</label><select name="role"><option value="motorista"${u.role === 'motorista' ? ' selected' : ''}>Motorista</option><option value="dono"${u.role === 'dono' ? ' selected' : ''}>ADM (administrador)</option></select>` : ''}
+          <div class="actions"><button>Salvar</button><button type="button" class="secondary" data-cancel>Cancelar</button></div>
+        </form></li>`)
       .join('')}</ul></div>
     <form class="card" id="f">
       <h2>Adicionar pessoa</h2>
@@ -2377,6 +2384,25 @@ screens.equipe = async () => {
       toast(err.message);
     }
   };
+  view.querySelectorAll('[data-edit]').forEach((b) => {
+    const form = view.querySelector(`[data-form="${b.dataset.edit}"]`);
+    b.onclick = () => {
+      form.hidden = !form.hidden;
+    };
+    form.querySelector('[data-cancel]').onclick = () => {
+      form.hidden = true;
+    };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        await api(`/users/${b.dataset.edit}`, { method: 'PATCH', body: formData(form) });
+        toast('Salvo');
+        screens.equipe();
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+  });
   view.querySelectorAll('[data-toggle]').forEach((b) => {
     b.onclick = async () => {
       await api(`/users/${b.dataset.toggle}`, { method: 'PATCH', body: { active: b.dataset.active !== 'true' } });

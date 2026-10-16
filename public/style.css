@@ -464,3 +464,4 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 /* Na lista de fotos que faltam, o desenho fica cinza */
 .photos figure.missing .g.carro { width: 85%; padding: 0; border: 0; filter: none; }
 .photos figure.missing .g.carro img { filter: invert(1) opacity(.55); }
+.team-edit { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line, #ddd); }

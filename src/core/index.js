@@ -689,10 +689,15 @@ function routes(api, ctx) {
     if (!user) throw new HttpError(404, 'Pessoa não encontrada.');
     const { name, phone, pin, active } = req.body || {};
     if (user.id === req.user.id && active === false) throw new HttpError(400, 'Você não pode desativar a si mesmo.');
-    db.prepare('UPDATE users SET name = ?, phone = ?, active = ? WHERE id = ?').run(
+    const role = req.body?.role === 'dono' || req.body?.role === 'motorista' ? req.body.role : user.role;
+    if (role !== user.role && user.id === req.user.id) throw new HttpError(400, 'Você não pode tirar o seu próprio ADM.');
+    if (!blank(phone) && checkPhone(phone) !== user.phone && db.prepare('SELECT 1 FROM users WHERE phone = ? AND id <> ?').get(checkPhone(phone), user.id))
+      throw new HttpError(409, 'Esse telefone já está na equipe.');
+    db.prepare('UPDATE users SET name = ?, phone = ?, active = ?, role = ? WHERE id = ?').run(
       blank(name) ? user.name : checkName(name),
       blank(phone) ? user.phone : checkPhone(phone),
       active === undefined ? user.active : active ? 1 : 0,
+      role,
       user.id
     );
     if (!blank(pin)) db.prepare('UPDATE users SET pin_hash = ? WHERE id = ?').run(hashPin(checkPin(pin)), user.id);
