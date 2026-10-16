@@ -54,6 +54,8 @@ export function loadConfig(overrides = {}) {
     // Hora do aviso da manhã para o dono (pelo WhatsApp), no fuso da empresa. AVISO_HORA=off desliga.
     dailyHour: env.AVISO_HORA === 'off' ? null : Number.isInteger(Number(env.AVISO_HORA)) && env.AVISO_HORA !== '' && env.AVISO_HORA != null ? Number(env.AVISO_HORA) : 8,
     anthropicApiKey: env.ANTHROPIC_API_KEY || '',
+    // Leitura grátis das letras do VIN na foto (Tesseract). VIN_OCR=off desliga.
+    vinOcr: env.VIN_OCR !== 'off',
     // Conferir endereços no mapa (Census + OpenStreetMap, grátis). GEOCODER=off desliga.
     geocoder: env.GEOCODER !== 'off',
   };

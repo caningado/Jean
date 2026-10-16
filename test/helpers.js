@@ -21,6 +21,7 @@ export function makeContext(overrides = {}) {
     WHATSAPP_PHONE_NUMBER_ID: '',
     ANTHROPIC_API_KEY: '',
     GEOCODER: 'off',
+    VIN_OCR: 'off',
     ...overrides,
   });
   const ctx = createContext(config);
