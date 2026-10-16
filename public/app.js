@@ -2518,15 +2518,18 @@ async function guidedPhotos(serviceId, kind, doneAngles = [], onlyAngle = null) 
     <div class="scanner-view">
       <video playsinline muted autoplay></video>
       <div class="car-frame"></div>
+      <div class="turn-hint" hidden><span class="turn-phone" aria-hidden="true">📱</span><strong></strong></div>
       <p class="camera-step"></p>
       <button class="scanner-close" data-act="close" aria-label="Fechar">✕</button>
     </div>
-    <p class="scanner-tip">Encaixe o carro no desenho. Dica: deite o celular para caber o carro todo.</p>
-    <p class="scanner-status"></p>
-    <div class="scanner-actions">
-      <button class="secondary" data-act="skip">Pular</button>
-      <button class="shutter" data-act="shoot" aria-label="Tirar foto"></button>
-      <button class="secondary" data-act="close2">Terminar</button>
+    <div class="camera-side">
+      <p class="scanner-tip">Encaixe o carro no desenho.</p>
+      <p class="scanner-status"></p>
+      <div class="scanner-actions">
+        <button class="secondary" data-act="skip">Pular</button>
+        <button class="shutter" data-act="shoot" aria-label="Tirar foto"></button>
+        <button class="secondary" data-act="close2">Terminar</button>
+      </div>
     </div>`;
   document.body.appendChild(overlay);
   const video = overlay.querySelector('video');
@@ -2542,6 +2545,38 @@ async function guidedPhotos(serviceId, kind, doneAngles = [], onlyAngle = null) 
   history.pushState({ scanner: true }, '');
   window.addEventListener('popstate', finish);
 
+  // Laterais com o celular deitado; frente e traseira em pé. No Android a tela gira
+  // sozinha (precisa de tela cheia); no iPhone aparece o aviso e o botão espera.
+  const turnHint = overlay.querySelector('.turn-hint');
+  const landscapeQuery = matchMedia('(orientation: landscape)');
+  const wanted = () => {
+    const angle = queue[index];
+    return angle?.startsWith('lateral') ? 'landscape' : angle === 'frente' || angle === 'traseira' ? 'portrait' : null;
+  };
+  let fullscreen = false;
+  const lockOrientation = async () => {
+    const want = wanted();
+    try {
+      if (!want) return screen.orientation?.unlock?.();
+      if (!document.fullscreenElement && overlay.requestFullscreen) {
+        await overlay.requestFullscreen({ navigationUI: 'hide' });
+        fullscreen = true;
+      }
+      await screen.orientation?.lock?.(want);
+    } catch {
+      // Sem suporte (iPhone): o aviso na tela pede para virar o celular.
+    }
+  };
+  const checkTurn = () => {
+    const want = wanted();
+    const wrong = want && (want === 'landscape') !== landscapeQuery.matches;
+    turnHint.hidden = !wrong;
+    turnHint.className = `turn-hint ${want === 'landscape' ? 'to-landscape' : 'to-portrait'}`;
+    turnHint.querySelector('strong').textContent = want === 'landscape' ? 'Deite o celular para fotografar a lateral' : 'Coloque o celular em pé para fotografar';
+    button('shoot').classList.toggle('waiting', Boolean(wrong));
+  };
+  landscapeQuery.addEventListener('change', checkTurn);
+
   const show = () => {
     if (index >= queue.length) {
       // Terminou a volta: pode continuar tirando fotos de detalhe.
@@ -2551,6 +2586,8 @@ async function guidedPhotos(serviceId, kind, doneAngles = [], onlyAngle = null) 
     frame.innerHTML = carDrawing(angle);
     stepEl.textContent = angle === 'detalhe' ? `${PHOTO_KINDS[kind]} · Detalhe / dano (opcional)` : `${PHOTO_KINDS[kind]} · ${ANGLES.indexOf(angle) + 1}/4 · ${ANGLE_LABEL[angle]}`;
     button('skip').hidden = angle === 'detalhe';
+    lockOrientation().then(checkTurn);
+    checkTurn();
   };
   show();
 
@@ -2563,6 +2600,7 @@ async function guidedPhotos(serviceId, kind, doneAngles = [], onlyAngle = null) 
   };
   button('shoot').onclick = async () => {
     if (!video.videoWidth || button('shoot').disabled) return;
+    if (!turnHint.hidden) return toast(turnHint.textContent.trim().replace('📱', '').trim());
     const angle = queue[index];
     const canvas = document.createElement('canvas');
     const scale = Math.min(1, 1600 / Math.max(video.videoWidth, video.videoHeight));
@@ -2588,6 +2626,11 @@ async function guidedPhotos(serviceId, kind, doneAngles = [], onlyAngle = null) 
   };
 
   await result;
+  landscapeQuery.removeEventListener('change', checkTurn);
+  try {
+    screen.orientation?.unlock?.();
+    if (fullscreen && document.fullscreenElement) await document.exitFullscreen();
+  } catch {}
   window.removeEventListener('popstate', finish);
   if (history.state?.scanner) history.back();
   stream.getTracks().forEach((t) => t.stop());
