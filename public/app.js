@@ -2875,18 +2875,20 @@ async function scanBarcode() {
     return canvas;
   };
   // Foto em resolução cheia (bem maior que o vídeo em muitos celulares), reduzida para no máximo 2400 px.
-  const stillPhoto = async () => {
+  const stillPhoto = async ({ max = 2400, quality = 0.92, quiet = false } = {}) => {
     let source = null;
     try {
-      if ('ImageCapture' in window) source = await createImageBitmap(await new ImageCapture(stream.getVideoTracks()[0]).takePhoto());
+      if ('ImageCapture' in window) {
+        source = await createImageBitmap(await new ImageCapture(stream.getVideoTracks()[0]).takePhoto(quiet ? { fillLightMode: 'off' } : undefined));
+      }
     } catch {}
-    if (!source || source.width < video.videoWidth) return new Promise((r) => frame().toBlob(r, 'image/jpeg', 0.92));
-    const k = Math.min(1, 2400 / Math.max(source.width, source.height));
+    if (!source || source.width < video.videoWidth) return new Promise((r) => frame().toBlob(r, 'image/jpeg', quality));
+    const k = Math.min(1, max / Math.max(source.width, source.height));
     const out = document.createElement('canvas');
     out.width = Math.round(source.width * k);
     out.height = Math.round(source.height * k);
     out.getContext('2d').drawImage(source, 0, 0, out.width, out.height);
-    return new Promise((r) => out.toBlob(r, 'image/jpeg', 0.92));
+    return new Promise((r) => out.toBlob(r, 'image/jpeg', quality));
   };
 
   button('photo').onclick = async () => {
@@ -2924,6 +2926,18 @@ async function scanBarcode() {
       };
     }
 
+    // Ao mesmo tempo, tira fotos sozinho (com foco e resolução de foto) e manda para o
+    // servidor ler o código de barras, como o botão 📸 faz. Para depois de umas 10 fotos.
+    (async () => {
+      await new Promise((r) => setTimeout(r, 2000));
+      for (let n = 0; n < 10 && !done; n++) {
+        const image = await stillPhoto({ max: 2000, quality: 0.85, quiet: true });
+        if (done || !image) break;
+        const read = await api('/vin/read?so=codigo', { method: 'POST', raw: image, type: 'image/jpeg' }).catch(() => null);
+        if (read?.vin && !done) return finish(read.vin);
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    })();
     let detector;
     try {
       status.textContent = 'Preparando o leitor…';
