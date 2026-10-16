@@ -1,6 +1,6 @@
 // Guarda a "casca" do app para abrir rápido, mesmo com sinal fraco.
 // Os dados (/api) sempre vêm do servidor.
-const CACHE = 'guincho-v92';
+const CACHE = 'guincho-v93';
 const SHELL = ['/', '/index.html', '/manutencao.html', '/app.js', '/style.css', '/icon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
@@ -15,12 +15,25 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  if (event.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api') || url.pathname.startsWith('/webhook') || url.pathname.startsWith('/arquivo')) return;
+  if (event.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/webhook')) return;
+  const navigate = event.request.mode === 'navigate';
+  // Downloads e PDFs abertos direto (planilha, backup, invoice, gate pass): nunca vêm do cache,
+  // mas com o servidor fora do ar mostram o aviso de manutenção no lugar do erro da Render.
+  if (url.pathname.startsWith('/api') || url.pathname.startsWith('/arquivo')) {
+    if (!navigate) return;
+    const maintenance = () => caches.match('/manutencao.html');
+    event.respondWith(
+      fetch(event.request)
+        .then((res) => (res.status >= 502 && res.status <= 504 ? maintenance().then((hit) => hit || res) : res))
+        .catch(() => maintenance().then((hit) => hit || Response.error()))
+    );
+    return;
+  }
   // Rede primeiro; se cair, usa o que está guardado. Servidor fora do ar (502/503/504, ex.: durante
   // uma atualização): a página aberta vira o aviso de manutenção, e o resto vem do que está guardado.
   const down = (res) => res.status >= 502 && res.status <= 504;
   const fallback = () =>
-    event.request.mode === 'navigate'
+    navigate
       ? caches.match('/manutencao.html').then((hit) => hit || caches.match('/index.html'))
       : caches.match(event.request).then((hit) => hit || caches.match('/index.html'));
   event.respondWith(
