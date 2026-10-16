@@ -291,7 +291,7 @@ function markSide(tab) {
 
 // Número do serviço: o motorista vê o número do dia dele (1, 2, 3... recomeça todo dia); o ADM vê o número geral.
 function num(s) {
-  return state.me?.role !== 'dono' && s.driver_id === state.me?.id && s.driver_ref ? s.driver_ref : s.id;
+  return state.me?.role !== 'dono' && s.driver_id === state.me?.id && s.driver_seq ? s.driver_seq : s.id;
 }
 
 function setScreen(title, { tab = null, back = null } = {}) {
@@ -808,7 +808,7 @@ screens.servico = async (params, id) => {
       <p>🚗 ${esc([s.vehicle, s.plate].filter(Boolean).join(' · ') || 'Veículo não informado')}</p>
       ${s.miles != null ? `<p class="sub">${s.miles} milhas</p>` : ''}
       <p class="big">${s.price_cents != null ? money(s.price_cents) : 'Sem valor'}</p>
-      <p class="sub">${when(s.created_at)}${s.driver_name ? ' · ' + esc(s.driver_name) + (owner && s.driver_ref ? ` (nº ${s.driver_ref} do dia ${s.driver_ref_day.slice(8)}/${s.driver_ref_day.slice(5, 7)})` : '') : ''}</p>
+      <p class="sub">${when(s.created_at)}${s.driver_name ? ' · ' + esc(s.driver_name) + (owner && s.driver_seq ? ` (nº ${s.driver_seq} do dia ${s.driver_ref_day.slice(8)}/${s.driver_ref_day.slice(5, 7)})` : '') : ''}</p>
       ${s.notes ? `<p>${esc(s.notes)}</p>` : ''}
       <div class="actions">
         ${s.status === 'pendente' ? (queued(s) && (owner || s.driver_id === state.me.id) ? '<button id="start">▶ Começar</button>' : '') : s.status === 'aberto' ? '<button id="done">✅ Entregue</button>' : '<button class="secondary" id="reopen">Reabrir</button>'}

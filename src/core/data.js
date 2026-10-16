@@ -77,8 +77,14 @@ export function createCoreData(db, timeZone = 'America/New_York') {
     },
   };
 
+  // Número do dia do motorista, sempre em sequência (1, 2, 3...): a posição do serviço entre os dele
+  // daquele dia, na ordem em que foram passados para ele. Cancelado não conta, então quem vinha
+  // depois sobe um número; serviço tirado dele também sai da conta (vai para o outro motorista).
+  const DRIVER_SEQ = `CASE WHEN s.driver_ref IS NOT NULL AND s.status <> 'cancelado' THEN (
+      SELECT COUNT(*) FROM services t WHERE t.driver_id = s.driver_id AND t.driver_ref_day = s.driver_ref_day AND t.status <> 'cancelado'
+        AND (t.driver_ref < s.driver_ref OR (t.driver_ref = s.driver_ref AND t.id <= s.id))) END`;
   const SERVICE_SELECT = `
-    SELECT s.*, c.name AS contact_name, c.phone AS contact_phone, u.name AS driver_name
+    SELECT s.*, ${DRIVER_SEQ} AS driver_seq, c.name AS contact_name, c.phone AS contact_phone, u.name AS driver_name
     FROM services s
     LEFT JOIN contacts c ON c.id = s.contact_id
     LEFT JOIN users u ON u.id = s.driver_id`;
@@ -179,12 +185,14 @@ export function createCoreData(db, timeZone = 'America/New_York') {
     },
     // Número que a pessoa vê: o motorista vê o número do dia dele (1, 2, 3...); o ADM vê o número geral.
     ref(s, user) {
-      return user && user.role !== 'dono' && s.driver_id === user.id && s.driver_ref ? s.driver_ref : s.id;
+      return user && user.role !== 'dono' && s.driver_id === user.id && s.driver_seq ? s.driver_seq : s.id;
     },
     // O motorista fala "abrir 3": é o 3 dele mais recente (de hoje, se houver).
     byRef(user, n) {
       if (user.role === 'dono') return services.get(n);
-      const row = db.prepare('SELECT id FROM services WHERE driver_id = ? AND driver_ref = ? ORDER BY driver_ref_day DESC, id DESC LIMIT 1').get(user.id, n);
+      const row = db
+        .prepare(`SELECT s.id FROM services s WHERE s.driver_id = ? AND ${DRIVER_SEQ} = ? ORDER BY s.driver_ref_day DESC, s.id DESC LIMIT 1`)
+        .get(user.id, n);
       return row ? services.get(row.id) : undefined;
     },
     describe(s, user) {
