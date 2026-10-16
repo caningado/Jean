@@ -32,6 +32,11 @@ test('lê o VIN do código de barras da porta (Code 39) e do para-brisa (Data Ma
   assert.equal(await readVinBarcode(await barcodePng('HELLO', 'Code39')), null);
 });
 
+test('lê o código de barras de uma etiqueta Toyota de verdade (foto do Caningado, de lado, com I na frente)', async () => {
+  const foto = readFileSync(new URL('./fixtures/vin-toyota-porta.jpg', import.meta.url));
+  assert.equal(await readVinBarcode(foto), 'JTDKBRFUXJ3063205');
+});
+
 test('foto do VIN pelo WhatsApp é lida sem chave do Claude', async () => {
   const ctx = makeContext();
   await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'pular', 'sim');
