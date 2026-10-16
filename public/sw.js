@@ -1,6 +1,6 @@
 // Guarda a "casca" do app para abrir rápido, mesmo com sinal fraco.
 // Os dados (/api) sempre vêm do servidor.
-const CACHE = 'guincho-v78';
+const CACHE = 'guincho-v79';
 const SHELL = ['/', '/index.html', '/app.js', '/style.css', '/icon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
@@ -15,7 +15,7 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  if (event.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api') || url.pathname.startsWith('/webhook')) return;
+  if (event.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api') || url.pathname.startsWith('/webhook') || url.pathname.startsWith('/arquivo')) return;
   // Rede primeiro; se cair, usa o que está guardado.
   event.respondWith(
     fetch(event.request)
