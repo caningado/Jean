@@ -64,7 +64,7 @@ test('painel: "Ler da foto" lê o código de barras e o leitor do iPhone é serv
 
   res = await read(await barcodePng('HELLO', 'Code39'));
   assert.equal(res.status, 422);
-  assert.match((await res.json()).error, /Não achei o código de barras/);
+  assert.match((await res.json()).error, /Não consegui ler o VIN/);
 
   for (const file of ['/vendor/barcode-detector.js', '/vendor/zxing_reader.wasm']) {
     res = await fetch(base + file);
