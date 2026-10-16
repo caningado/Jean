@@ -964,6 +964,12 @@ function routes(api, ctx) {
     const body = serviceFields(req.body || {}, { partial: true });
     await checkPlaces(ctx, body, req.body || {}, service);
     if (body.pickup === null) delete body.pickup; // retirada não pode ficar vazia
+    // Trocar o cliente (quem pediu o serviço).
+    if (req.body?.contact_id !== undefined) {
+      const contactId = Number(req.body.contact_id) || null;
+      if (contactId && !data.contacts.get(contactId)) throw new HttpError(400, 'Cliente não encontrado.');
+      body.contact_id = contactId;
+    }
     if (req.user.role !== 'dono') delete body.driver_id;
     // Fila: só o dono põe e tira serviço dela (é ele quem escolhe o motorista).
     // O motorista mexe nos da fila dele (e começa um), mas não põe nada na fila geral.

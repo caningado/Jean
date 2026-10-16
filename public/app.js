@@ -1051,6 +1051,8 @@ screens.editar = async (params, id) => {
   const drivers = state.me.role === 'dono' ? await api('/users') : [];
   view.innerHTML = `
     <form class="card" id="f">
+      <label>Cliente (quem pediu o serviço)</label>
+      <div class="select-tap"><select name="contact_id" tabindex="-1"><option value="${s.contact_id || ''}">${esc(s.contact_name || 'Nenhum')}</option></select><button type="button" id="contactPick" aria-label="Trocar cliente"></button></div>
       <label>Retirada</label><input name="pickup" value="${esc(s.pickup)}">
       <label>Destino</label><input name="dropoff" value="${esc(s.dropoff)}">
       <div class="row2">
@@ -1068,9 +1070,33 @@ screens.editar = async (params, id) => {
     </form>`;
   placeSuggestions(view.querySelector('#f').pickup);
   placeSuggestions(view.querySelector('#f').dropoff);
+  // Trocar o cliente: janela com os 5 mais novos e busca; dá para cadastrar um novo ali mesmo.
+  const contactSel = view.querySelector('#f').contact_id;
+  const setContact = (c) => (contactSel.innerHTML = `<option value="${c.id}">${esc(c.name)}</option>`);
+  view.querySelector('#contactPick').onclick = async () => {
+    const c = await pickDialog({
+      title: 'Cliente (quem pediu)',
+      placeholder: 'Buscar nome ou telefone',
+      none: '➕ Cadastrar cliente novo',
+      items: async (q) =>
+        (await api(q ? `/contacts?q=${encodeURIComponent(q)}&limit=20` : '/contacts?recent=1&limit=5')).map((x) => ({ id: x.id, name: x.name, sub: x.phone ? phoneFmt(x.phone) : '' })),
+    });
+    if (c) return setContact(c);
+    if (c !== null) return;
+    const name = await dialog({ title: 'Cliente novo', text: 'Nome de quem pediu o serviço', input: { placeholder: 'Nome' }, ok: 'Continuar' });
+    if (!name?.trim()) return;
+    const phone = await dialog({ title: 'Cliente novo', text: 'Telefone (pode deixar em branco)', input: { placeholder: '(407) 555-0123', numeric: true }, ok: 'Salvar' });
+    if (phone === null) return;
+    try {
+      setContact(await api('/contacts', { method: 'POST', body: { name: name.trim(), phone: phone.trim() } }));
+    } catch (err) {
+      toast(err.message);
+    }
+  };
   view.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
     const body = formData(e.target);
+    if (String(body.contact_id || '') === String(s.contact_id || '')) delete body.contact_id;
     body.miles = body.miles === '' ? null : Number(body.miles);
     if (body.driver_id) body.driver_id = Number(body.driver_id);
     try {
