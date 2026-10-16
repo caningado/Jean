@@ -1083,7 +1083,7 @@ screens.editar = async (params, id) => {
     });
     if (c) return setContact(c);
     if (c !== null) return;
-    const name = await dialog({ title: 'Cliente novo', text: 'Nome de quem pediu o serviço', input: { placeholder: 'Nome' }, ok: 'Continuar' });
+    const name = await dialog({ title: 'Cliente novo', text: 'Nome do cliente', input: { placeholder: 'Nome' }, ok: 'Continuar' });
     if (!name?.trim()) return;
     const phone = await dialog({ title: 'Cliente novo', text: 'Telefone (pode deixar em branco)', input: { placeholder: '(407) 555-0123', numeric: true }, ok: 'Salvar' });
     if (phone === null) return;
