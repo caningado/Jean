@@ -273,7 +273,7 @@ function renderSide() {
       .join('')}</nav>
     <div class="side-foot">
       ${item('mais', '#/mais', 'Configurações')}
-      <div class="side-me"><strong>${esc(state.me.name)}</strong><span>${owner ? 'Dono' : 'Motorista'}</span></div>
+      <div class="side-me"><strong>${esc(state.me.name)}</strong><span>${owner ? 'ADM' : 'Motorista'}</span></div>
       ${item('sair', '#/sair', 'Sair')}
     </div>`;
 }
@@ -365,7 +365,7 @@ screens.login = async () => {
     view.innerHTML = `
       <div class="card">
         <h2>Primeiro acesso</h2>
-        <p class="sub">Cadastre o dono da empresa. Use o mesmo número do seu WhatsApp.</p>
+        <p class="sub">Cadastre o ADM da empresa. Use o mesmo número do seu WhatsApp.</p>
         <form id="f">
           <label>Seu nome</label><input name="name" required autocomplete="name">
           <label>Telefone (WhatsApp)</label><input name="phone" type="tel" required placeholder="(508) 555-0100">
@@ -1484,7 +1484,7 @@ const setTheme = (t) => {
 screens.mais = async () => {
   setScreen('Mais', { tab: 'mais' });
   view.innerHTML = `
-    <div class="card"><p><strong>${esc(state.me.name)}</strong><br><span class="sub">${phoneFmt(state.me.phone)} · ${state.me.role === 'dono' ? 'Dono' : 'Motorista'}</span></p></div>
+    <div class="card"><p><strong>${esc(state.me.name)}</strong><br><span class="sub">${phoneFmt(state.me.phone)} · ${state.me.role === 'dono' ? 'ADM' : 'Motorista'}</span></p></div>
     <div class="card"><ul class="list">
       ${has('despesas') ? '<li><a href="#/despesas"><span>🧾 Despesas</span><span>›</span></a></li>' : ''}
       ${has('manutencao') ? '<li><a href="#/caminhoes"><span>🔧 Caminhões e manutenção</span><span>›</span></a></li>' : ''}
@@ -1671,7 +1671,7 @@ screens.caminhoes = async () => {
       </div>`
     )
     .join('')}
-    ${!trucks.length ? `<div class="card empty">${owner ? 'Cadastre seu caminhão abaixo. Ele já vem com troca de óleo, pneus, freios, inspeção e registro.' : 'Nenhum caminhão cadastrado. Peça para o dono cadastrar.'}</div>` : ''}
+    ${!trucks.length ? `<div class="card empty">${owner ? 'Cadastre seu caminhão abaixo. Ele já vem com troca de óleo, pneus, freios, inspeção e registro.' : 'Nenhum caminhão cadastrado. Peça para o ADM cadastrar.'}</div>` : ''}
     ${owner ? `<form class="card" id="novo"><h2>Cadastrar caminhão</h2>
       <div class="row2"><div><label>Nome</label><input name="name" placeholder="F-550" required></div><div><label>Placa</label><input name="plate"></div></div>
       <label>Milhas agora</label><input name="odometer" inputmode="numeric" required placeholder="123456">
@@ -2353,7 +2353,7 @@ screens.equipe = async () => {
   const users = await api('/users');
   view.innerHTML = `
     <div class="card"><ul class="list">${users
-      .map((u) => `<li><div class="row"><div><strong>${esc(u.name)}</strong> ${u.active ? '' : '<span class="badge cancelado">desativado</span>'}<div class="sub">${phoneFmt(u.phone)} · ${u.role === 'dono' ? 'Dono' : 'Motorista'}</div>
+      .map((u) => `<li><div class="row"><div><strong>${esc(u.name)}</strong> ${u.active ? '' : '<span class="badge cancelado">desativado</span>'}<div class="sub">${phoneFmt(u.phone)} · ${u.role === 'dono' ? 'ADM' : 'Motorista'}</div>
         <select class="firm-pick" data-firm="${u.id}" aria-label="Empresa de ${esc(u.name)}">${firmOptions(u.firm)}</select></div>
         ${u.id !== state.me.id ? `<button class="secondary" data-toggle="${u.id}" data-active="${u.active}">${u.active ? 'Desativar' : 'Ativar'}</button>` : ''}</div></li>`)
       .join('')}</ul></div>
@@ -2363,7 +2363,7 @@ screens.equipe = async () => {
       <label>Nome</label><input name="name" required>
       <label>Telefone (WhatsApp)</label><input name="phone" type="tel" required>
       <label>PIN para entrar no painel (opcional)</label><input name="pin" inputmode="numeric" pattern="[0-9]{4,8}">
-      <label>Função</label><select name="role"><option value="motorista">Motorista</option><option value="dono">Dono / sócio</option></select>
+      <label>Função</label><select name="role"><option value="motorista">Motorista</option><option value="dono">ADM (administrador)</option></select>
       <label>Empresa</label><select name="firm">${firmOptions('jj')}</select>
       <button class="block">Adicionar</button>
     </form>`;

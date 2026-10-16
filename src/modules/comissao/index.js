@@ -148,7 +148,7 @@ function findDriver(ctx, user, text) {
 const commands = [
   {
     names: ['comissao', 'semana', 'ganhos'],
-    help: '*comissao* – faturamento e quanto o motorista recebe na semana e no mês (dono: *comissao Jorge*)',
+    help: '*comissao* – faturamento e quanto o motorista recebe na semana e no mês (ADM: *comissao Jorge*)',
     run({ ctx, user, rawArgs }) {
       const driver = findDriver(ctx, user, rawArgs);
       if (!driver) {
@@ -177,7 +177,7 @@ function routes(api, ctx) {
     return d;
   };
   const owner = (req) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono faz isso.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM faz isso.');
   };
   const mesOf = (req) => (/^\d{4}-\d{2}$/.test(String(req.query.mes || req.body?.mes)) ? String(req.query.mes || req.body.mes) : thisMonth(ctx));
 

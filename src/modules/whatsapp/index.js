@@ -117,7 +117,7 @@ export async function handleOutsider(ctx, client, msg) {
     // Se o aviso falhar (ex.: o dono usa o próprio número do robô), a resposta ao cliente sai mesmo assim.
     await client
       .sendText(owner.phone, `📩 Mensagem de ${contact.name} (${formatPhone(contact.phone)}):\n${text}`)
-      .catch((err) => ctx.log('Não consegui avisar o dono no WhatsApp', err));
+      .catch((err) => ctx.log('Não consegui avisar o ADM no WhatsApp', err));
   }
   await client.sendText(
     msg.from,

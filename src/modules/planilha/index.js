@@ -84,7 +84,7 @@ function linkInfo(req, link, ctx) {
 }
 
 const onlyOwner = (req) => {
-  if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode fazer isso.');
+  if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode fazer isso.');
 };
 
 function routes(api, ctx) {

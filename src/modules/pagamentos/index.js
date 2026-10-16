@@ -254,9 +254,9 @@ const commands = [
   },
   {
     names: ['recolhi', 'recolher'],
-    help: '*recolhi Jorge* – (dono) pegou o dinheiro do motorista: zera o que ele tem em mãos',
+    help: '*recolhi Jorge* – (ADM) pegou o dinheiro do motorista: zera o que ele tem em mãos',
     run({ ctx, user, args }) {
-      if (user.role !== 'dono') return 'Só o dono registra o recolhimento. Mande *caixa* para ver quanto está com você.';
+      if (user.role !== 'dono') return 'Só o ADM registra o recolhimento. Mande *caixa* para ver quanto está com você.';
       let amountCents = null;
       const words = [];
       for (const arg of args) {
@@ -318,7 +318,7 @@ function routes(api, ctx) {
   });
 
   api.delete('/payments/:id', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode apagar pagamentos.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode apagar pagamentos.');
     ctx.db.prepare('DELETE FROM payments WHERE id = ?').run(Number(req.params.id));
     res.json({ ok: true });
   });
@@ -334,7 +334,7 @@ function routes(api, ctx) {
 
   // Dono pegou o dinheiro: sem valor, recolhe tudo (zera).
   api.post('/caixa/:driverId/recolher', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode fazer isso.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode fazer isso.');
     const [driver] = cashInHand(ctx, Number(req.params.driverId));
     if (!driver) throw new HttpError(404, 'Motorista não encontrado.');
     const raw = req.body?.amount;

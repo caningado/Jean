@@ -26,7 +26,7 @@ test('dinheiro e cheque acumulam em mãos até o dono recolher', async () => {
   const [mine] = await chat(ctx, DRIVER_PHONE, 'caixa');
   assert.match(mine, /Jorge: \$180\.00/);
   const [denied] = await chat(ctx, DRIVER_PHONE, 'recolhi jorge');
-  assert.match(denied, /Só o dono/);
+  assert.match(denied, /Só o ADM/);
 
   const [partial] = await chat(ctx, OWNER_PHONE, 'recolhi 50 jorge');
   assert.match(partial, /Recolhido \$50\.00 de Jorge/);

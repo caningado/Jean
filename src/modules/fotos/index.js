@@ -288,7 +288,7 @@ function routes(api, ctx) {
     const doc = ctx.db.prepare('SELECT * FROM service_docs WHERE id = ?').get(Number(req.params.id));
     if (!doc) throw new HttpError(404, 'Documento não encontrado.');
     findServiceFor(ctx, req.user, doc.service_id);
-    if (req.user.role !== 'dono' && doc.uploaded_by !== req.user.id) throw new HttpError(403, 'Só o dono pode apagar este documento.');
+    if (req.user.role !== 'dono' && doc.uploaded_by !== req.user.id) throw new HttpError(403, 'Só o ADM pode apagar este documento.');
     ctx.db.prepare('DELETE FROM service_docs WHERE id = ?').run(doc.id);
     fs.rmSync(path.join(ctx.config.uploadsDir, doc.file), { force: true });
     res.json({ ok: true });
@@ -318,7 +318,7 @@ function routes(api, ctx) {
     // O motorista apaga as fotos do serviço dele enquanto trabalha; depois de entregue, só o dono.
     const service = findServiceFor(ctx, req.user, photo.service_id);
     if (req.user.role !== 'dono' && (service.status === 'concluido' || service.status === 'cancelado')) {
-      throw new HttpError(403, 'Serviço já entregue: só o dono pode apagar fotos.');
+      throw new HttpError(403, 'Serviço já entregue: só o ADM pode apagar fotos.');
     }
     ctx.db.prepare('DELETE FROM photos WHERE id = ?').run(photo.id);
     fs.rmSync(path.join(ctx.config.uploadsDir, photo.file), { force: true });
