@@ -1003,6 +1003,13 @@ screens.servico = async (params, id) => {
       if (saved) reload();
     };
   });
+  view.querySelectorAll('[data-view]').forEach((btn) => {
+    btn.onclick = async () => {
+      const photo = (s.photos || []).find((p) => String(p.id) === btn.dataset.view);
+      const canDelete = owner || (s.status !== 'concluido' && s.status !== 'cancelado');
+      if (photo && (await viewPhoto(photo, btn.dataset.label, canDelete))) reload();
+    };
+  });
   view.querySelectorAll('[data-retake]').forEach((btn) => {
     btn.onclick = async () => {
       const [kind, angle] = btn.dataset.retake.split(':');
@@ -2462,7 +2469,7 @@ function carDrawing(angle, style = FRAME_STYLE) {
 function photoGroups(photos) {
   if (!photos.length) return '<p class="sub">Nenhuma foto. São opcionais.</p>';
   const figure = (p, label) =>
-    `<figure><a href="${p.url}" target="_blank"><img src="${p.url}" loading="lazy" alt="${esc(label)}"></a><figcaption>${esc(label)}</figcaption></figure>`;
+    `<figure><button type="button" class="photo-open" data-view="${p.id}" data-label="${esc(label)}"><img src="${p.url}" loading="lazy" alt="${esc(label)}"></button><figcaption>${esc(label)}</figcaption></figure>`;
   const groups = ['antes', 'depois'].map((kind) => {
     const list = photos.filter((p) => p.kind === kind);
     if (!list.length) return '';
@@ -2478,6 +2485,40 @@ function photoGroups(photos) {
   const others = photos.filter((p) => p.kind !== 'antes' && p.kind !== 'depois');
   if (others.length) groups.push(`<h3>Outras</h3><div class="photos">${others.map((p) => figure(p, PHOTO_KINDS[p.kind])).join('')}</div>`);
   return groups.join('');
+}
+
+// Foto em tela cheia, com Apagar (motorista só até entregar; o dono sempre). Devolve true se apagou.
+function viewPhoto(photo, label, canDelete) {
+  return new Promise((resolve) => {
+    const back = document.createElement('div');
+    back.className = 'photo-view';
+    back.innerHTML = `<div class="photo-view-top"><span>${esc(label || '')}</span><button type="button" class="secondary" data-act="close">✕ Fechar</button></div>
+      <img src="${photo.url}" alt="${esc(label || '')}">
+      ${canDelete ? '<div class="photo-view-actions"><button type="button" class="danger" data-act="delete">🗑 Apagar foto</button></div>' : ''}`;
+    const done = (value) => {
+      back.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(value);
+    };
+    const onKey = (e) => e.key === 'Escape' && done(false);
+    back.querySelector('[data-act="close"]').onclick = () => done(false);
+    back.onclick = (e) => e.target === back && done(false);
+    const del = back.querySelector('[data-act="delete"]');
+    if (del) {
+      del.onclick = async () => {
+        if (!(await ask('Apagar esta foto? Não dá para desfazer.', { ok: 'Apagar', cancel: 'Voltar', danger: true }))) return;
+        try {
+          await api(`/photos/${photo.id}`, { method: 'DELETE' });
+          toast('Foto apagada.');
+          done(true);
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+    }
+    document.addEventListener('keydown', onKey);
+    document.body.append(back);
+  });
 }
 
 // Câmera guiada: mostra o desenho do carro em cada ângulo e salva cada foto na hora.
