@@ -91,7 +91,7 @@ test('robô: empresa e extrato', async () => {
   const [, linked] = await chat(ctx, DRIVER_PHONE, `abrir ${s.id}`, 'empresa usave');
   assert.match(linked, /Mike agora é solicitante da USAVE Motors/);
   const [denied] = await chat(ctx, DRIVER_PHONE, 'extrato usave');
-  assert.match(denied, /Só o dono/);
+  assert.match(denied, /Só o ADM/);
   const [ext] = await chat(ctx, OWNER_PHONE, 'extrato usave');
   assert.match(ext, /USAVE Motors\* – deve \$150\.00/);
   assert.match(ext, /• Mike: \$150\.00/);

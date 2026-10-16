@@ -273,7 +273,7 @@ function statusText(trucks) {
     .join('\n\n');
 }
 
-const NO_TRUCK = 'Nenhum caminhão cadastrado. O dono cadastra no painel, em *Mais → 🔧 Caminhões*.';
+const NO_TRUCK = 'Nenhum caminhão cadastrado. O ADM cadastra no painel, em *Mais → 🔧 Caminhões*.';
 
 const commands = [
   {
@@ -387,7 +387,7 @@ function routes(api, ctx) {
   });
 
   api.post('/trucks', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono cadastra caminhões.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM cadastra caminhões.');
     const { name, plate, odometer, driver_id } = req.body || {};
     if (!String(name || '').trim()) throw new HttpError(400, 'Dê um nome ao caminhão (ex.: F-550).');
     res.status(201).json(
@@ -419,13 +419,13 @@ function routes(api, ctx) {
   });
 
   api.delete('/trucks/:id', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode apagar caminhões.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode apagar caminhões.');
     ctx.db.prepare('UPDATE trucks SET active = 0 WHERE id = ?').run(Number(req.params.id));
     res.json({ ok: true });
   });
 
   api.post('/trucks/:id/items', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode mudar os itens.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode mudar os itens.');
     const truck = getTruck(ctx, req.params.id);
     if (!truck) throw new HttpError(404, 'Caminhão não encontrado.');
     const { name, every_miles, every_days } = req.body || {};
@@ -441,7 +441,7 @@ function routes(api, ctx) {
   });
 
   api.patch('/maintenance/:id', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode mudar os intervalos.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode mudar os intervalos.');
     const item = ctx.db.prepare('SELECT * FROM maintenance_items WHERE id = ?').get(Number(req.params.id));
     if (!item) throw new HttpError(404, 'Item não encontrado.');
     const body = req.body || {};
@@ -456,7 +456,7 @@ function routes(api, ctx) {
   });
 
   api.delete('/maintenance/:id', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode apagar itens.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode apagar itens.');
     ctx.db.prepare('DELETE FROM maintenance_items WHERE id = ?').run(Number(req.params.id));
     res.json({ ok: true });
   });
@@ -510,7 +510,7 @@ function routes(api, ctx) {
   });
 
   api.delete('/maintenance-log/:id', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode apagar.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode apagar.');
     const log = ctx.db.prepare('SELECT * FROM maintenance_log WHERE id = ?').get(Number(req.params.id));
     if (!log) throw new HttpError(404, 'Serviço não encontrado.');
     removeLog(ctx, log);
@@ -519,12 +519,12 @@ function routes(api, ctx) {
 
   // Relatório da semana (segunda a domingo) de todos os caminhões.
   api.get('/frota/semana', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono vê o relatório.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM vê o relatório.');
     res.json(weekReport(ctx, String(req.query.dia || '')));
   });
 
   api.get('/frota/semana.pdf', async (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono vê o relatório.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM vê o relatório.');
     await sendWeekPdf(ctx, res, String(req.query.dia || ''), req.query.download === '1');
   });
 
@@ -536,7 +536,7 @@ function routes(api, ctx) {
   });
 
   api.get('/trucks/:id/extrato.pdf', async (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono vê o extrato do caminhão.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM vê o extrato do caminhão.');
     const truck = getTruck(ctx, req.params.id);
     if (!truck) throw new HttpError(404, 'Caminhão não encontrado.');
     const data = truckMonth(ctx, truck, String(req.query.mes || ''));

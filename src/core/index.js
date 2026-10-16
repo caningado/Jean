@@ -105,7 +105,7 @@ function publicUser(u) {
 }
 
 function requireOwner(req) {
-  if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode fazer isso.');
+  if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode fazer isso.');
 }
 
 // O motorista só vê os próprios serviços; o dono vê todos (inclusive a fila).
@@ -527,13 +527,13 @@ const commands = [
     help: '*endereços* – endereços com apelido (oficinas, lojas...)',
     run({ ctx }) {
       const list = ctx.db.prepare('SELECT * FROM saved_places ORDER BY nickname COLLATE NOCASE').all();
-      if (!list.length) return 'Nenhum endereço com apelido ainda. O dono cadastra no painel, em Mais › 📍 Endereços com apelido.';
+      if (!list.length) return 'Nenhum endereço com apelido ainda. O ADM cadastra no painel, em Mais › 📍 Endereços com apelido.';
       return ['📍 *Endereços com apelido*', ...list.map((p) => `• *${p.nickname}* – ${p.address}`), '', 'Na retirada ou no destino, é só mandar o apelido.'].join('\n');
     },
   },
   {
     names: ['fila'],
-    help: '*fila* – serviços esperando (motorista: a sua fila; dono: os sem motorista)',
+    help: '*fila* – serviços esperando (motorista: a sua fila; ADM: os sem motorista)',
     run({ ctx, user }) {
       if (user.role !== 'dono') {
         const mine = ctx.data.services.list({ status: 'pendente', driverId: user.id, limit: 20 });
@@ -689,10 +689,15 @@ function routes(api, ctx) {
     if (!user) throw new HttpError(404, 'Pessoa não encontrada.');
     const { name, phone, pin, active } = req.body || {};
     if (user.id === req.user.id && active === false) throw new HttpError(400, 'Você não pode desativar a si mesmo.');
-    db.prepare('UPDATE users SET name = ?, phone = ?, active = ? WHERE id = ?').run(
+    const role = req.body?.role === 'dono' || req.body?.role === 'motorista' ? req.body.role : user.role;
+    if (role !== user.role && user.id === req.user.id) throw new HttpError(400, 'Você não pode tirar o seu próprio ADM.');
+    if (!blank(phone) && checkPhone(phone) !== user.phone && db.prepare('SELECT 1 FROM users WHERE phone = ? AND id <> ?').get(checkPhone(phone), user.id))
+      throw new HttpError(409, 'Esse telefone já está na equipe.');
+    db.prepare('UPDATE users SET name = ?, phone = ?, active = ?, role = ? WHERE id = ?').run(
       blank(name) ? user.name : checkName(name),
       blank(phone) ? user.phone : checkPhone(phone),
       active === undefined ? user.active : active ? 1 : 0,
+      role,
       user.id
     );
     if (!blank(pin)) db.prepare('UPDATE users SET pin_hash = ? WHERE id = ?').run(hashPin(checkPin(pin)), user.id);
@@ -865,7 +870,7 @@ function routes(api, ctx) {
     res.json(db.prepare('SELECT * FROM saved_places ORDER BY nickname COLLATE NOCASE').all());
   });
   api.post('/saved-places', async (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono cadastra endereços.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM cadastra endereços.');
     const nickname = checkName(req.body?.nickname, 'O apelido');
     const key = simplify(nickname).replace(/\s+/g, ' ').trim();
     let address = checkLocation(req.body?.address, 'O endereço');
@@ -879,7 +884,7 @@ function routes(api, ctx) {
     res.status(201).json(db.prepare('SELECT * FROM saved_places WHERE id = ?').get(Number(info.lastInsertRowid)));
   });
   api.delete('/saved-places/:id', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono apaga endereços.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM apaga endereços.');
     db.prepare('DELETE FROM saved_places WHERE id = ?').run(Number(req.params.id));
     res.json({ ok: true });
   });
@@ -973,7 +978,7 @@ function routes(api, ctx) {
     if (req.user.role !== 'dono') delete body.driver_id;
     // Fila: só o dono põe e tira serviço dela (é ele quem escolhe o motorista).
     // O motorista mexe nos da fila dele (e começa um), mas não põe nada na fila geral.
-    if (req.user.role !== 'dono' && (body.status === 'pendente' || (service.status === 'pendente' && service.driver_id !== req.user.id))) throw new HttpError(403, 'Só o dono escolhe o motorista do serviço.');
+    if (req.user.role !== 'dono' && (body.status === 'pendente' || (service.status === 'pendente' && service.driver_id !== req.user.id))) throw new HttpError(403, 'Só o ADM escolhe o motorista do serviço.');
     if (service.status === 'pendente' && body.status === 'aberto' && !body.driver_id) body.driver_id = service.driver_id || req.user.id;
     // Volta para a fila geral: sem motorista (só o dono).
     if (body.status === 'pendente' && body.driver_id === undefined) body.driver_id = null;
@@ -1013,7 +1018,7 @@ function routes(api, ctx) {
 
   // Passar um serviço da fila para um motorista. Só o dono escolhe.
   api.post('/services/:id/passar', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono escolhe o motorista do serviço.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM escolhe o motorista do serviço.');
     const service = data.services.get(Number(req.params.id));
     if (!service) throw new HttpError(404, 'Serviço não encontrado.');
     if (service.status !== 'pendente') throw new HttpError(409, service.driver_name ? `Esse serviço já está com ${service.driver_name}.` : 'Esse serviço não está mais na fila.');

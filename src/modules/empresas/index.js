@@ -226,9 +226,9 @@ const money = (c) => '$' + ((c || 0) / 100).toLocaleString('en-US', { minimumFra
 const commands = [
   {
     names: ['extrato', 'statement'],
-    help: '*extrato usave* – (dono) quanto a empresa deve, separado por solicitante, com o PDF para mandar',
+    help: '*extrato usave* – (ADM) quanto a empresa deve, separado por solicitante, com o PDF para mandar',
     run({ ctx, user, rawArgs }) {
-      if (user.role !== 'dono') return 'Só o dono vê o extrato das empresas.';
+      if (user.role !== 'dono') return 'Só o ADM vê o extrato das empresas.';
       const found = findCompanies(ctx, rawArgs);
       if (found.length !== 1) {
         const names = ctx.db.prepare('SELECT name FROM companies ORDER BY name COLLATE NOCASE').all().map((c) => c.name);
@@ -266,7 +266,7 @@ const commands = [
 
 function routes(api, ctx) {
   const owner = (req) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono mexe nas empresas.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM mexe nas empresas.');
   };
   const company = (req) => {
     const c = getCompany(ctx, req.params.id);

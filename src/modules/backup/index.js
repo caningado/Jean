@@ -135,7 +135,7 @@ function validToken(ctx, token) {
 
 function routes(api, ctx) {
   const ownerOnly = (req) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono faz backup.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM faz backup.');
   };
   api.get('/backup', (req, res) => {
     ownerOnly(req);

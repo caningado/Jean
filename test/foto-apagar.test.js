@@ -31,6 +31,6 @@ test('Apagar foto: motorista só enquanto o serviço não foi entregue; dono sem
   ctx.db.prepare("UPDATE services SET status = 'concluido' WHERE id = ?").run(s.id);
   const negado = await call(jorge, 'DELETE', `/photos/${b}`);
   assert.equal(negado.status, 403);
-  assert.match((await negado.json()).error, /só o dono/);
+  assert.match((await negado.json()).error, /só o ADM/);
   assert.equal((await call(dono, 'DELETE', `/photos/${b}`)).status, 200);
 });

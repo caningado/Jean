@@ -253,7 +253,7 @@ function routes(api, ctx) {
   });
 
   api.put('/company', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono muda os dados da empresa.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM muda os dados da empresa.');
     const body = req.body || {};
     const current = getCompany(ctx);
     const next = { ...current };
@@ -276,7 +276,7 @@ function routes(api, ctx) {
   });
 
   api.post('/company/logo', express.raw({ type: 'image/*', limit: '5mb' }), (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono muda o logo.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM muda o logo.');
     const buf = req.body;
     const isPng = Buffer.isBuffer(buf) && buf.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     const isJpg = Buffer.isBuffer(buf) && buf[0] === 0xff && buf[1] === 0xd8;
@@ -314,7 +314,7 @@ function routes(api, ctx) {
   });
 
   api.delete('/invoices/:id', (req, res) => {
-    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o dono pode apagar invoices.');
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode apagar invoices.');
     ctx.db.prepare('DELETE FROM invoices WHERE id = ?').run(Number(req.params.id));
     res.json({ ok: true });
   });
