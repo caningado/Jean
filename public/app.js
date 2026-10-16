@@ -811,7 +811,7 @@ screens.servico = async (params, id) => {
     ${has('fotos') ? `
     <div class="card docs-card" id="docs-zone">
       <h2>📄 Gate pass</h2>
-      ${s.docs?.length ? `<ul class="list">${s.docs.map((d) => `<li><div class="row"><a href="${d.url}" target="_blank" rel="noopener" data-opendoc="${d.id}">${d.mime === 'application/pdf' ? '📄' : '🖼️'} ${esc(d.name || 'gate pass')}</a>${owner || d.uploaded_by === state.me.id ? `<button class="danger" data-deldoc="${d.id}" aria-label="Apagar">✕</button>` : ''}</div></li>`).join('')}</ul>` : '<p class="sub">Nenhum gate pass anexado.</p>'}
+      ${s.docs?.length ? `<ul class="list">${s.docs.map((d) => `<li><div class="row"><a href="${d.mime === 'application/pdf' && d.open_url ? d.open_url : d.url}" target="_blank" rel="noopener" data-opendoc="${d.id}">${d.mime === 'application/pdf' ? '📄' : '🖼️'} ${esc(d.name || 'gate pass')}</a>${owner || d.uploaded_by === state.me.id ? `<button class="danger" data-deldoc="${d.id}" aria-label="Apagar">✕</button>` : ''}</div></li>`).join('')}</ul>` : '<p class="sub">Nenhum gate pass anexado.</p>'}
       <div class="actions"><button class="secondary" id="docs-add">📎 Anexar PDF ou foto</button></div>
       ${isDesk() ? '<p class="sub">Também dá para colar (Ctrl+V) ou arrastar o arquivo aqui.</p>' : ''}
     </div>` : ''}
@@ -878,8 +878,11 @@ screens.servico = async (params, id) => {
     view.querySelectorAll('[data-opendoc]').forEach((a) => {
       a.onclick = (e) => {
         if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+        const doc = s.docs.find((d) => String(d.id) === a.dataset.opendoc);
+        // PDF abre o arquivo original no leitor de PDF do celular; foto abre aqui no app.
+        if (doc?.mime === 'application/pdf' && doc.open_url) return;
         e.preventDefault();
-        openDoc(s.docs.find((d) => String(d.id) === a.dataset.opendoc));
+        openDoc(doc);
       };
     });
     view.querySelectorAll('[data-deldoc]').forEach((b) => {

@@ -34,6 +34,17 @@ test('gate pass: PDF ou foto no serviço; motorista do serviço abre, outros tip
   assert.equal(file.headers.get('content-type'), 'application/pdf');
   assert.deepEqual(Buffer.from(await file.arrayBuffer()), pdf);
 
+  // Link para abrir o PDF original no leitor do celular, sem login; link mexido não abre.
+  const open = detail.docs[0].open_url;
+  assert.match(open, /^\/arquivo\/\d+\/\d+\.[\w-]+\/gate%20pass%20123\.pdf$/);
+  const semLogin = await fetch(`${base}${open}`);
+  assert.equal(semLogin.status, 200);
+  assert.equal(semLogin.headers.get('content-type'), 'application/pdf');
+  assert.deepEqual(Buffer.from(await semLogin.arrayBuffer()), pdf);
+  assert.equal((await fetch(`${base}${open.replace(/\.([\w-])/, '.x')}`)).status, 404);
+  const [, id, exp] = open.match(/^\/arquivo\/(\d+)\/(\d+)\./);
+  assert.equal((await fetch(`${base}/arquivo/${id}/${Number(exp) + 60}.${open.split('.')[1].split('/')[0]}/x.pdf`)).status, 404);
+
   // Motorista não apaga o que o dono anexou; o dono apaga.
   assert.equal((await fetch(`${base}/api/docs/${doc.id}`, { method: 'DELETE', headers: { Cookie: drv } })).status, 403);
   assert.equal((await fetch(`${base}/api/docs/${doc.id}`, { method: 'DELETE', headers: { Cookie: owner } })).status, 200);

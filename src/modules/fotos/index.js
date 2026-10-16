@@ -55,11 +55,37 @@ const migrations = [
 
 const DOC_TYPES = { 'application/pdf': '.pdf', 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/heic': '.heic', 'image/heif': '.heic', 'image/gif': '.gif' };
 
+// Link que abre o arquivo original sem login, por 1 hora: o leitor de PDF do celular
+// (fora do app) não tem o login do app, principalmente no iPhone.
+const LINK_HOURS = 1;
+const docSig = (ctx, id, exp) => crypto.createHmac('sha256', ctx.config.secret).update(`doc:${id}:${exp}`).digest('base64url');
+function docLink(ctx, doc) {
+  const exp = Math.floor(Date.now() / 1000) + LINK_HOURS * 3600;
+  const name = encodeURIComponent((doc.name || 'gatepass').replace(/[\\/]/g, ' '));
+  return `/arquivo/${doc.id}/${exp}.${docSig(ctx, doc.id, exp)}/${name}`;
+}
+
 function listDocs(ctx, serviceId) {
   return ctx.db
     .prepare('SELECT id, kind, name, mime, uploaded_by, created_at FROM service_docs WHERE service_id = ? ORDER BY id')
     .all(serviceId)
-    .map((d) => ({ ...d, url: `/api/docs/${d.id}/file` }));
+    .map((d) => ({ ...d, url: `/api/docs/${d.id}/file`, open_url: docLink(ctx, d) }));
+}
+
+function publicRoutes(app, ctx) {
+  app.get('/arquivo/:id/:token/:name', (req, res) => {
+    const id = Number(req.params.id);
+    const [exp, sig] = String(req.params.token).split('.');
+    const expected = Buffer.from(docSig(ctx, id, exp));
+    const given = Buffer.from(sig || '');
+    const doc = ctx.db.prepare('SELECT * FROM service_docs WHERE id = ?').get(id);
+    if (!doc || given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return res.status(404).send('Arquivo não encontrado.');
+    if (!(Number(exp) * 1000 > Date.now())) return res.status(410).send('Este link expirou. Abra o arquivo de novo pelo app.');
+    res.type(doc.mime);
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(doc.name || 'gatepass')}`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.sendFile(path.join(ctx.config.uploadsDir, doc.file));
+  });
 }
 
 // Entende o ângulo escrito na legenda: "antes frente", "traseira", "lado direito"...
@@ -345,6 +371,7 @@ export default {
   commands,
   flows,
   routes,
+  publicRoutes,
   onMedia,
   serviceHint: '📷 Fotos: mande *antes* ou *depois* e em seguida as fotos da volta no carro (frente, lateral esquerda, traseira, lateral direita).',
   serviceDetail: ({ ctx, service }) => ({ photos: listPhotos(ctx, service.id), docs: listDocs(ctx, service.id) }),
