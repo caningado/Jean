@@ -47,6 +47,24 @@ function toast(message) {
   toast.timer = setTimeout(() => toastEl.classList.add('hidden'), 3000);
 }
 
+// Todo pedido ao servidor passa por aqui. Servidor fora do ar por alguns minutos (atualização):
+// mostra o aviso de manutenção, que volta sozinho para a mesma tela quando o sistema responder.
+function maintenance() {
+  location.replace('/manutencao.html?volta=' + encodeURIComponent('/' + location.hash));
+  return new Error('Sistema em manutenção.');
+}
+async function net(url, opts) {
+  let res;
+  try {
+    res = await fetch(url, opts);
+  } catch {
+    // Nenhuma resposta: é o sinal do celular (com o servidor reiniciando a Render responde 502).
+    throw new Error('Sem conexão. Confira o sinal e tente de novo.');
+  }
+  if (res.status >= 502 && res.status <= 504) throw maintenance();
+  return res;
+}
+
 async function api(path, { method = 'GET', body, raw, type, withTotal } = {}) {
   const opts = { method, headers: {} };
   if (raw) {
@@ -56,12 +74,7 @@ async function api(path, { method = 'GET', body, raw, type, withTotal } = {}) {
     opts.body = JSON.stringify(body);
     opts.headers['Content-Type'] = 'application/json';
   }
-  const res = await fetch('/api' + path, opts);
-  // Servidor fora do ar por alguns minutos (atualização): mostra o aviso de manutenção e volta sozinho.
-  if (res.status >= 502 && res.status <= 504) {
-    location.replace('/manutencao.html?volta=' + encodeURIComponent('/' + location.hash));
-    throw new Error('Sistema em manutenção.');
-  }
+  const res = await net('/api' + path, opts);
   const data = res.headers.get('content-type')?.includes('json') ? await res.json() : null;
   if (res.status === 401 && path !== '/login') {
     state.me = null;
@@ -1878,7 +1891,7 @@ const dayFmt = (day) => (day ? day.split('-').reverse().join('/') : '');
 async function shareInvoice(inv) {
   const name = `Invoice ${inv.number}.pdf`;
   try {
-    const res = await fetch(`/api/invoices/${inv.id}/pdf`);
+    const res = await net(`/api/invoices/${inv.id}/pdf`);
     const file = new File([await res.blob()], name, { type: 'application/pdf' });
     if (navigator.canShare?.({ files: [file] })) {
       await navigator.share({ files: [file], title: name, text: `Invoice #${inv.number}` });
@@ -2143,7 +2156,7 @@ screens.cliente = async (params, id) => {
   view.querySelector('#share').onclick = async () => {
     const name = `Statement ${c.name}.pdf`;
     try {
-      const file = new File([await (await fetch(pdfUrl)).blob()], name, { type: 'application/pdf' });
+      const file = new File([await (await net(pdfUrl)).blob()], name, { type: 'application/pdf' });
       if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: name });
     } catch (err) {
       if (err.name === 'AbortError') return;
@@ -2272,7 +2285,7 @@ screens.comissao = async (params) => {
 
 async function sharePdf(url, name) {
   try {
-    const file = new File([await (await fetch(url)).blob()], name, { type: 'application/pdf' });
+    const file = new File([await (await net(url)).blob()], name, { type: 'application/pdf' });
     if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: name });
   } catch (err) {
     if (err.name === 'AbortError') return;
@@ -2824,7 +2837,7 @@ async function openDoc(doc) {
   overlay.querySelector('[data-act=close]').onclick = () => (history.state?.viewer ? history.back() : close());
 
   try {
-    const res = await fetch(doc.url);
+    const res = await net(doc.url);
     if (!res.ok) throw new Error(res.status === 404 ? 'Arquivo não encontrado.' : 'Não consegui abrir o arquivo.');
     const blob = await res.blob();
     if (!overlay.isConnected) return;
