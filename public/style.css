@@ -455,3 +455,12 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .photo-view-actions { padding: 12px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
 .photo-view-actions button { width: 100%; padding: 14px; }
 .photo-view button.danger { background: var(--bad); color: #fff; }
+
+/* Guia da câmera com o desenho do modelo: moldura tracejada em volta do carro */
+.car-frame .g.carro { width: 86%; max-width: 680px; max-height: 70%; display: flex; align-items: center; justify-content: center; padding: 10px; border: 1.5px dashed rgba(255, 255, 255, .8); filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .9)); }
+.g.carro img { display: block; max-width: 100%; max-height: 100%; width: 100%; height: auto; object-fit: contain; }
+.car-frame .g.carro img { max-height: calc(72vh - 20px); }
+.g.carro.espelho img { transform: scaleX(-1); }
+/* Na lista de fotos que faltam, o desenho fica cinza */
+.photos figure.missing .g.carro { width: 85%; padding: 0; border: 0; filter: none; }
+.photos figure.missing .g.carro img { filter: invert(1) opacity(.55); }

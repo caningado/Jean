@@ -2465,7 +2465,18 @@ function drawCar(car, style, mirror = false) {
   const box = style === 'guia' ? `<rect class="box" x="18" y="${top}" width="${w - 36}" height="${car.ground - top}"/>` : '';
   return `<svg viewBox="${car.viewBox}" class="g ${style}">${box}<g${flip}><path class="body" d="${car.body}"/><path class="det" d="${car.details}"/>${wheels}${tires}</g></svg>`;
 }
+// Desenhos do modelo que o Caningado mandou (linha branca, fundo transparente).
+const CAR_IMAGES = {
+  frente: ['frente', false],
+  traseira: ['traseira', false],
+  lateral_esquerda: ['lateral', false],
+  lateral_direita: ['lateral', true],
+};
 function carDrawing(angle, style = FRAME_STYLE) {
+  const img = CAR_IMAGES[angle];
+  if (img && style !== 'cantos' && style !== 'silhueta') {
+    return `<div class="g carro ${style}${img[1] ? ' espelho' : ''}"><img src="/carros/carro-${img[0]}.png" alt=""></div>`;
+  }
   if (angle === 'frente') return drawCar(CAR_FRONT, style);
   if (angle === 'traseira') return drawCar(CAR_REAR, style);
   if (angle === 'lateral_esquerda') return drawCar(CAR_SIDE, style);
