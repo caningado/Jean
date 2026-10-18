@@ -78,7 +78,7 @@ export function driverMonth(ctx, driver, mes, today = localDay(ctx, nowIso())) {
   const tiers = getTiers(ctx);
   const services = ctx.db
     .prepare(
-      `SELECT s.id, s.price_cents, s.vehicle, s.completed_at, s.created_at, c.name AS contact_name
+      `SELECT s.id, s.price_cents, s.vehicle, s.completed_at, s.created_at, c.name AS contact_name, c.phone AS contact_phone
        FROM services s LEFT JOIN contacts c ON c.id = s.contact_id
        WHERE s.driver_id = ? AND s.status = 'concluido' AND s.price_cents > 0
          AND COALESCE(s.completed_at, s.created_at) >= ? AND COALESCE(s.completed_at, s.created_at) < ?
