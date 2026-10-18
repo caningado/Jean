@@ -1310,7 +1310,7 @@ screens.contato = async (params, id) => {
     </form>
     ${!isNew ? `<div class="card"><h2>Histórico</h2><ul class="list">${
       c.services.length
-        ? c.services.map((s) => `<li><a href="#/servico/${s.id}"><div>#${num(s)} ${esc(s.vehicle || s.pickup || '')}<div class="sub">${when(s.created_at)}</div></div><div class="right">${s.price_cents != null ? money(s.price_cents) : ''}</div></a></li>`).join('')
+        ? c.services.map((s) => `<li><a href="#/servico/${s.id}"><div>${esc(s.vehicle || s.pickup || 'Serviço')}<div class="sub">${when(s.created_at)}</div></div><div class="right">${s.price_cents != null ? money(s.price_cents) : ''}</div></a></li>`).join('')
         : '<li class="empty">Nenhum serviço ainda.</li>'
     }</ul></div>` : ''}`;
   // Tocar em Empresa abre uma janela com busca e as 5 empresas mais novas (no lugar da lista com todas).
@@ -1519,7 +1519,7 @@ screens.pendentes = async () => {
   const age = (d) => (d === 0 ? 'hoje' : d === 1 ? 'há 1 dia' : `há ${d} dias`);
   view.innerHTML = `${late ? `<div class="card alerts"><strong>⚠️ ${late === 1 ? '1 atrasado' : `${late} atrasados`}</strong><div class="sub">Abra o serviço e toque em <strong>Cobrar cliente</strong> para mandar a mensagem com o Zelle.</div></div>` : ''}<div class="card"><ul class="list">${
     list.length
-      ? list.map((s) => `<li${s.overdue ? ' class="late"' : ''}><a href="#/servico/${s.id}"><div><strong>${s.overdue ? '⚠️ ' : ''}#${num(s)} ${esc(s.contact_name || '')}</strong><div class="sub">${when(s.completed_at || s.created_at)} · ${age(s.days)}</div></div>
+      ? list.map((s) => `<li${s.overdue ? ' class="late"' : ''}><a href="#/servico/${s.id}"><div><strong>${s.overdue ? '⚠️ ' : ''}${esc(s.contact_name || s.vehicle || 'Serviço')}</strong><div class="sub">${when(s.completed_at || s.created_at)} · ${age(s.days)}</div></div>
           <div class="right">${s.open_cents ? 'Cliente ' + money(s.open_cents) : ''}${s.to_receive_cents ? '<br>Seguradora ' + money(s.to_receive_cents) : ''}</div></a></li>`).join('')
       : '<li class="empty">Nada pendente 👍</li>'
   }</ul></div>`;
