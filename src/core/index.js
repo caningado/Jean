@@ -149,14 +149,14 @@ function checkCanStart(ctx, driverId, serviceId = 0) {
 }
 
 // O dono passa um serviço para um motorista: entra na fila dele (ainda não começa).
-function assignService(ctx, service, driverId) {
-  return ctx.data.services.update(service.id, { status: 'pendente', driver_id: driverId });
+function assignService(ctx, service, driverId, by = null) {
+  return ctx.data.services.update(service.id, { status: 'pendente', driver_id: driverId }, by);
 }
 
 // O motorista começa um serviço da fila dele: vira "em andamento" (respeitando o limite).
 function takeService(ctx, service, driverId) {
   checkCanStart(ctx, driverId, service.id);
-  const updated = ctx.data.services.update(service.id, { status: 'aberto', driver_id: driverId });
+  const updated = ctx.data.services.update(service.id, { status: 'aberto', driver_id: driverId }, driverId);
   // Vira o serviço "em mãos" do motorista, se ele não está com outro.
   const current = ctx.data.services.active({ id: driverId });
   if (!current) ctx.data.services.setActive(driverId, service.id);
@@ -473,7 +473,7 @@ const flows = {
         miles: data.miles,
         price_cents: data.price_cents,
         driver_id: user.id,
-      });
+      }, user.id);
       ctx.data.services.setActive(user.id, service.id);
       const hints = ctx.serviceHints.length ? '\n\n' + ctx.serviceHints.join('\n') : '';
       return `✅ Serviço #${ctx.data.services.ref(service, user)} criado.\n\n${ctx.data.services.describe(service, user)}${hints}\nQuando entregar, mande *entregue*.`;
@@ -961,12 +961,12 @@ function routes(api, ctx) {
     // Sem motorista escolhido, o serviço do dono também começa Pendente.
     const noDriver = body.driver_id == null || body.driver_id === '';
     if (req.user.role === 'dono' && (noDriver || body.fila === true || body.fila === '1' || body.driver_id === 'fila' || body.status === 'pendente')) {
-      const service = data.services.create({ ...fields, driver_id: null, contact_id: contactId, status: 'pendente' });
+      const service = data.services.create({ ...fields, driver_id: null, contact_id: contactId, status: 'pendente' }, req.user.id);
       return res.status(201).json(service);
     }
     const driverId = req.user.role === 'dono' ? fields.driver_id || req.user.id : req.user.id;
     // Serviço novo nunca começa sozinho: entra na fila do motorista e ele toca em Começar.
-    const service = data.services.create({ ...fields, status: 'pendente', contact_id: contactId, driver_id: driverId });
+    const service = data.services.create({ ...fields, status: 'pendente', contact_id: contactId, driver_id: driverId }, req.user.id);
     if (driverId !== req.user.id) notifyAssigned(ctx, service, req.user);
     res.status(201).json(service);
   });
@@ -1020,7 +1020,7 @@ function routes(api, ctx) {
     const cancelling = body.status === 'cancelado' && service.status !== 'cancelado';
     const motivo = cancelling ? String(req.body?.motivo || '').trim().slice(0, 300) : '';
     if (motivo) body.notes = [body.notes ?? service.notes, `Cancelado: ${motivo}`].filter(Boolean).join('\n');
-    let updated = data.services.update(service.id, body);
+    let updated = data.services.update(service.id, body, req.user.id);
     let notices = [];
     if (finishing) {
       notices = ctx.loaded.flatMap((mod) => mod.afterDone?.({ ctx, service: updated, user: req.user }) || []);
@@ -1050,7 +1050,7 @@ function routes(api, ctx) {
     const driver = data.users.get(Number(req.body?.driver_id) || req.user.id);
     if (!driver || !driver.active) throw new HttpError(400, 'Motorista não encontrado.');
     // Entra na fila do motorista; ele escolhe quando começar.
-    const updated = assignService(ctx, service, driver.id);
+    const updated = assignService(ctx, service, driver.id, req.user.id);
     if (driver.id !== service.driver_id) notifyAssigned(ctx, updated, req.user);
     res.json(updated);
   });

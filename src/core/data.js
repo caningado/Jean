@@ -96,7 +96,22 @@ export function createCoreData(db, timeZone = 'America/New_York') {
     db.prepare('UPDATE services SET driver_ref = ?, driver_ref_day = ? WHERE id = ?').run(n, day, id);
   }
 
+  // Avisos de serviço: 'novo' (criado) e 'dado' (passou a ter este motorista). by = quem fez.
+  const listeners = [];
+  function emit(type, service, by) {
+    for (const fn of listeners) {
+      try {
+        fn({ type, service, by });
+      } catch (err) {
+        console.error('Aviso de serviço:', err.message);
+      }
+    }
+  }
+
   const services = {
+    onEvent(fn) {
+      listeners.push(fn);
+    },
     get(id) {
       return db.prepare(`${SERVICE_SELECT} WHERE s.id = ?`).get(id);
     },
@@ -131,7 +146,7 @@ export function createCoreData(db, timeZone = 'America/New_York') {
       const sql = `${SERVICE_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY s.id DESC LIMIT ?`;
       return db.prepare(sql).all(...params, limit);
     },
-    create(fields) {
+    create(fields, by = null) {
       const info = db
         .prepare(
           `INSERT INTO services (driver_id, contact_id, pickup, dropoff, vehicle, plate, miles, price_cents, notes, status, created_at)
@@ -152,9 +167,11 @@ export function createCoreData(db, timeZone = 'America/New_York') {
         );
       const id = Number(info.lastInsertRowid);
       if (fields.driver_id) giveRef(id, fields.driver_id);
-      return services.get(id);
+      const created = services.get(id);
+      emit('novo', created, by);
+      return created;
     },
-    update(id, fields) {
+    update(id, fields, by = null) {
       const allowed = ['driver_id', 'contact_id', 'pickup', 'dropoff', 'vehicle', 'plate', 'vin', 'vin_info', 'miles', 'price_cents', 'notes', 'status'];
       const keys = Object.keys(fields).filter((k) => allowed.includes(k));
       const before = keys.includes('driver_id') ? services.get(id) : null;
@@ -164,14 +181,17 @@ export function createCoreData(db, timeZone = 'America/New_York') {
           id
         );
       }
-      if (before && (Number(fields.driver_id) || null) !== before.driver_id) {
+      const newDriver = before && (Number(fields.driver_id) || null) !== before.driver_id;
+      if (newDriver) {
         if (fields.driver_id) giveRef(id, Number(fields.driver_id));
         else db.prepare('UPDATE services SET driver_ref = NULL, driver_ref_day = NULL WHERE id = ?').run(id);
       }
       if (fields.status === 'concluido') {
         db.prepare('UPDATE services SET completed_at = COALESCE(completed_at, ?) WHERE id = ?').run(nowIso(), id);
       }
-      return services.get(id);
+      const updated = services.get(id);
+      if (newDriver && fields.driver_id) emit('dado', updated, by);
+      return updated;
     },
     // O serviço "em mãos" do motorista: é nele que entram fotos, VIN e pagamentos mandados pelo WhatsApp.
     active(user) {
