@@ -168,13 +168,13 @@ export function renderDriverStatement({ company, logo, data, week = null }) {
   } else {
     const cols = [
       { title: 'DATA', x: L + 10, w: 40 },
-      { title: 'Nº', x: L + 55, w: 35 },
-      { title: 'CLIENTE', x: L + 95, w: 150 },
-      { title: 'VEÍCULO', x: L + 250, w: 150 },
+      { title: 'CLIENTE', x: L + 55, w: 170 },
+      { title: 'CELULAR', x: L + 230, w: 60 },
+      { title: 'VEÍCULO', x: L + 295, w: 145 },
       { title: 'VALOR', x: R - 80, w: 70, align: 'right' },
     ];
-    rows(cols, list, (s) => [dm(s.day), `#${s.id}`, s.contact_name || '', s.vehicle || '', amount(s.price_cents)]);
-    doc.font('Helvetica-Bold').fontSize(10).fillColor(DARK).text('Total faturado', L + 250, y + 8, { width: 150, lineBreak: false });
+    rows(cols, list, (s) => [dm(s.day), s.contact_name || '', s.contact_phone ? '••• ' + String(s.contact_phone).slice(-4) : '', s.vehicle || '', amount(s.price_cents)]);
+    doc.font('Helvetica-Bold').fontSize(10).fillColor(DARK).text('Total faturado', L + 295, y + 8, { width: 145, lineBreak: false });
     doc.text(usd(list.reduce((t, s) => t + s.price_cents, 0)), R - 100, y + 8, { width: 90, align: 'right', lineBreak: false });
     y += 30;
   }
