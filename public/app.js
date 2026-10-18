@@ -3182,11 +3182,21 @@ async function loadMe() {
     state.company = me.company;
     state.firms = me.firms;
     state.pricing = me.pricing;
+    state.meAt = Date.now();
     renderSide();
     if (has('notificacoes')) syncPush();
   } catch {
     state.me = null;
   }
+}
+
+// Confere o perfil de novo (o cargo pode ter mudado). Sem sinal, fica com o que já tem.
+async function refreshMe() {
+  try {
+    const me = await api('/me');
+    Object.assign(state, { me: me.user, modules: me.modules, company: me.company, firms: me.firms, pricing: me.pricing, meAt: Date.now() });
+    renderSide();
+  } catch {}
 }
 
 async function route() {
@@ -3196,6 +3206,11 @@ async function route() {
   if (!state.me && name !== 'login') {
     location.hash = '#/login';
     return;
+  }
+  // O ADM pode mudar o cargo de alguém com o app já aberto: confere o perfil de novo a cada minuto.
+  if (name !== 'login' && Date.now() - (state.meAt || 0) > 60000) {
+    await refreshMe();
+    if (!state.me) return;
   }
   const nav = (state.nav = (state.nav || 0) + 1);
   const screen = screens[name] || screens.servicos;
@@ -3277,6 +3292,13 @@ setInterval(checkNew, 20000);
 document.addEventListener('visibilitychange', checkNew);
 
 window.addEventListener('hashchange', route);
+// Voltou para o app (outra aba, celular desbloqueado): se o cargo mudou, redesenha a tela com as permissões novas.
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible' || !state.me || Date.now() - (state.meAt || 0) < 60000) return;
+  const role = state.me.role;
+  await refreshMe();
+  if (state.me && state.me.role !== role) route();
+});
 // Virou a tela (ou mudou o tamanho da janela): desenha de novo no formato certo.
 deskQuery.addEventListener('change', () => state.me && route());
 await loadMe();
