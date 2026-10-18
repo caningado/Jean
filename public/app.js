@@ -2403,6 +2403,24 @@ screens.despesas = async () => {
   });
 };
 
+// ADM que também faz serviço: a caixinha só aparece quando a função é ADM.
+const alsoDriver = (show, checked) =>
+  `<label class="check also-driver"${show ? '' : ' hidden'}><input type="checkbox" name="drives"${checked ? ' checked' : ''}> Também é motorista (aparece na lista para receber serviços)</label>`;
+// Função + caixinha viram um valor só para o servidor: motorista, dono ou dono_motorista.
+function teamBody(form) {
+  const body = formData(form);
+  if (body.role === 'dono' && body.drives) body.role = 'dono_motorista';
+  delete body.drives;
+  return body;
+}
+function wireRole(form) {
+  const role = form.querySelector('[name=role]');
+  const box = form.querySelector('.also-driver');
+  role.onchange = () => {
+    box.hidden = role.value !== 'dono';
+  };
+}
+
 screens.equipe = async () => {
   setScreen('Equipe', { tab: 'mais', back: '#/mais' });
   const users = await api('/users');
@@ -2415,7 +2433,8 @@ screens.equipe = async () => {
           <label>Nome</label><input name="name" value="${esc(u.name)}" required>
           <label>Telefone (WhatsApp)</label><input name="phone" type="tel" value="${phoneFmt(u.phone)}" required>
           <label>Novo PIN (deixe vazio para não mudar)</label><input name="pin" inputmode="numeric" pattern="[0-9]{4,8}">
-          <label>Função</label><select name="role">${u.id !== state.me.id ? `<option value="motorista"${u.role === 'motorista' ? ' selected' : ''}>Motorista</option>` : ''}<option value="dono"${u.role === 'dono' && !u.drives ? ' selected' : ''}>ADM (administrador)</option><option value="dono_motorista"${u.drives ? ' selected' : ''}>ADM e motorista (também faz serviço)</option></select>
+          <label>Função</label><select name="role">${u.id !== state.me.id ? `<option value="motorista"${u.role === 'motorista' ? ' selected' : ''}>Motorista</option>` : ''}<option value="dono"${u.role === 'dono' ? ' selected' : ''}>ADM (administrador)</option></select>
+          ${alsoDriver(u.role === 'dono', u.drives)}
           <div class="actions"><button>Salvar</button><button type="button" class="secondary" data-cancel>Cancelar</button></div>
           ${u.id !== state.me.id ? `<div class="actions"><button type="button" class="${u.active ? 'danger' : 'secondary'}" data-toggle="${u.id}" data-active="${u.active}">${u.active ? 'Desativar' : 'Ativar'} ${esc(u.name)}</button></div>` : ''}
         </form></li>`)
@@ -2426,14 +2445,16 @@ screens.equipe = async () => {
       <label>Nome</label><input name="name" required>
       <label>Telefone (WhatsApp)</label><input name="phone" type="tel" required>
       <label>PIN para entrar no painel (opcional)</label><input name="pin" inputmode="numeric" pattern="[0-9]{4,8}">
-      <label>Função</label><select name="role"><option value="motorista">Motorista</option><option value="dono">ADM (administrador)</option><option value="dono_motorista">ADM e motorista (também faz serviço)</option></select>
+      <label>Função</label><select name="role"><option value="motorista">Motorista</option><option value="dono">ADM (administrador)</option></select>
+      ${alsoDriver(false, false)}
       <label>Empresa</label><select name="firm">${firmOptions('jj')}</select>
       <button class="block">Adicionar</button>
     </form>`;
+  view.querySelectorAll('form.team-edit, #f').forEach(wireRole);
   view.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
     try {
-      await api('/users', { method: 'POST', body: formData(e.target) });
+      await api('/users', { method: 'POST', body: teamBody(e.target) });
       toast('Pessoa adicionada');
       screens.equipe();
     } catch (err) {
@@ -2451,7 +2472,7 @@ screens.equipe = async () => {
     form.onsubmit = async (e) => {
       e.preventDefault();
       try {
-        await api(`/users/${b.dataset.edit}`, { method: 'PATCH', body: formData(form) });
+        await api(`/users/${b.dataset.edit}`, { method: 'PATCH', body: teamBody(form) });
         toast('Salvo');
         screens.equipe();
       } catch (err) {
