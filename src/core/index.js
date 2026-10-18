@@ -841,6 +841,16 @@ function routes(api, ctx) {
     if (!contact) throw new HttpError(404, 'Contato não encontrado.');
     res.json(contact);
   });
+  // Apagar cliente: só o ADM, e só quem não tem serviço (o histórico e as invoices precisam do cliente).
+  api.delete('/contacts/:id', (req, res) => {
+    requireOwner(req);
+    const contact = data.contacts.get(Number(req.params.id));
+    if (!contact) throw new HttpError(404, 'Contato não encontrado.');
+    const { n } = db.prepare('SELECT COUNT(*) AS n FROM services WHERE contact_id = ?').get(contact.id);
+    if (n) throw new HttpError(409, `${contact.name} tem ${n === 1 ? '1 serviço' : `${n} serviços`} no histórico e não pode ser apagado.`);
+    db.prepare('DELETE FROM contacts WHERE id = ?').run(contact.id);
+    res.json({ ok: true });
+  });
   api.post('/contacts/import', express.text({ type: '*/*', limit: '20mb' }), (req, res) => {
     requireOwner(req);
     if (!req.body || !String(req.body).includes('BEGIN:VCARD')) throw new HttpError(400, 'Mande um arquivo de contatos .vcf.');
