@@ -303,6 +303,9 @@ function markSide(tab) {
 }
 
 // Número do serviço: o motorista vê o número do dia dele (1, 2, 3... recomeça todo dia); o ADM vê o número geral.
+// Aparece nas listas de motorista: motorista, ou ADM marcado como "ADM e motorista".
+const drives = (u) => u.role === 'motorista' || u.drives;
+
 function num(s) {
   return state.me?.role !== 'dono' && s.driver_id === state.me?.id && s.driver_seq ? s.driver_seq : s.id;
 }
@@ -440,8 +443,8 @@ screens.servicos = async (params) => {
   // "Todos" (só dono/sócio): também por período, de todos os motoristas.
   const comPeriodo = status === 'concluido' || (status === '' && state.me.role === 'dono');
   const periodo = comPeriodo ? (['semana', 'mes'].includes(params.get('periodo')) ? params.get('periodo') : 'dia') : '';
-  // O dono pode ver só os serviços de um motorista (inclusive os dele mesmo).
-  const drivers = state.me.role === 'dono' ? await api('/users') : [];
+  // O ADM pode ver só os serviços de um motorista. A lista tem só quem tem cargo de motorista.
+  const drivers = state.me.role === 'dono' ? (await api('/users')).filter((d) => drives(d) || String(d.id) === driver) : [];
   const query = (s, d, p = '') => `#/servicos?status=${s}${d ? `&driver=${d}` : ''}${p ? `&periodo=${p}` : ''}`;
   // Fila: serviços pendentes, que ainda não têm motorista trabalhando.
   // Só o dono vê a fila: é ele quem escolhe o motorista.
@@ -583,7 +586,7 @@ screens.novo = async () => {
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal"></div>
       </div>
       ${priced ? `<p class="sub">Tabela: ${money(pricing.baseCents)} + ${money(pricing.perMileCents)} por milha.</p>` : ''}
-      ${drivers.length ? `<label>Motorista</label><select name="driver_id"><option value="fila" selected>⏳ Ninguém ainda (Pendente)</option>${drivers.filter((d) => d.active && d.role === 'motorista').map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select><p class="sub">O serviço entra como Pendente. Escolha o motorista agora ou depois, na tela do serviço.</p>` : ''}
+      ${drivers.length ? `<label>Motorista</label><select name="driver_id"><option value="fila" selected>⏳ Ninguém ainda (Pendente)</option>${drivers.filter((d) => d.active && drives(d)).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select><p class="sub">O serviço entra como Pendente. Escolha o motorista agora ou depois, na tela do serviço.</p>` : ''}
       <label>Observações</label><textarea name="notes" rows="2"></textarea>
       <button class="block">Criar serviço</button>
     </form>`;
@@ -833,7 +836,7 @@ screens.servico = async (params, id) => {
         ${s.status === 'pendente' ? (queued(s) && (owner || s.driver_id === state.me.id) ? '<button id="start">▶ Começar</button>' : '') : s.status === 'aberto' ? '<button id="done">✅ Entregue</button>' : '<button class="secondary" id="reopen">Reabrir</button>'}
         ${s.status !== 'pendente' || owner || s.driver_id === state.me.id ? '<button class="secondary" id="edit">Editar</button>' : ''}
       </div>
-      ${s.status === 'pendente' ? `<p class="sub">${queued(s) ? `⏳ Aguardando: na fila de ${esc(s.driver_name || 'motorista')}. Toque em Começar quando for fazer este.` : '⏳ Na fila: ainda sem motorista.'}</p>${owner ? `<label>Escolher o motorista</label><div class="actions"><select id="assign" aria-label="Escolher o motorista"><option value="">${queued(s) ? 'Passar para outro motorista?' : 'Quem vai fazer?'}</option>${drivers.filter((d) => d.active && d.role === 'motorista').map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></div>` : ''}` : ''}
+      ${s.status === 'pendente' ? `<p class="sub">${queued(s) ? `⏳ Aguardando: na fila de ${esc(s.driver_name || 'motorista')}. Toque em Começar quando for fazer este.` : '⏳ Na fila: ainda sem motorista.'}</p>${owner ? `<label>Escolher o motorista</label><div class="actions"><select id="assign" aria-label="Escolher o motorista"><option value="">${queued(s) ? 'Passar para outro motorista?' : 'Quem vai fazer?'}</option>${drivers.filter((d) => d.active && drives(d)).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></div>` : ''}` : ''}
       ${s.status === 'aberto' && owner ? '<div class="actions"><button class="secondary" id="queue">⏳ Voltar para a fila</button></div>' : ''}
       ${(['aberto', 'pendente'].includes(s.status) && (owner || s.driver_id === state.me.id)) ? '<div class="actions"><button class="danger" id="cancel">✖ Cancelar serviço</button></div>' : ''}
     </div>
@@ -1104,7 +1107,7 @@ screens.editar = async (params, id) => {
         <div><label>Milhas</label><input name="miles" type="number" step="0.1" value="${s.miles ?? ''}"></div>
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal" value="${s.price_cents != null ? (s.price_cents / 100).toFixed(2) : ''}"></div>
       </div>
-      ${drivers.length ? `<label>Motorista</label><select name="driver_id">${s.driver_id ? '' : '<option value="" selected>Ninguém ainda (fila)</option>'}${drivers.filter((d) => d.id === s.driver_id || (d.active && d.role === 'motorista')).map((d) => `<option value="${d.id}" ${d.id === s.driver_id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>` : ''}
+      ${drivers.length ? `<label>Motorista</label><select name="driver_id">${s.driver_id ? '' : '<option value="" selected>Ninguém ainda (fila)</option>'}${drivers.filter((d) => d.id === s.driver_id || (d.active && drives(d))).map((d) => `<option value="${d.id}" ${d.id === s.driver_id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>` : ''}
       <label>Situação</label><select name="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === s.status ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <label>Observações</label><textarea name="notes" rows="3">${esc(s.notes)}</textarea>
       <button class="block">Salvar</button>
@@ -1763,9 +1766,9 @@ screens.caminhoes = async () => {
   const [trucks, users] = await Promise.all([api('/trucks'), owner ? api('/users') : []]);
   const miles = (n) => `${Number(n || 0).toLocaleString('en-US')} mi`;
   const ICON = { ok: '✅', perto: '🟡', vencido: '🔴' };
-  const drivers = users.filter((u) => u.active);
+  const drivers = users.filter((u) => u.active && drives(u));
   const driverSelect = (selected) =>
-    `<select name="driver_id"><option value="">Sem motorista fixo</option>${drivers.map((u) => `<option value="${u.id}"${u.id === selected ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}</select>`;
+    `<select name="driver_id"><option value="">Sem motorista fixo</option>${[...drivers, ...users.filter((u) => u.id === selected && !drivers.includes(u))].map((u) => `<option value="${u.id}"${u.id === selected ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}</select>`;
   const every = (i) => [i.every_miles ? `a cada ${miles(i.every_miles)}` : '', i.every_days ? `a cada ${i.every_days} dias` : ''].filter(Boolean).join(' ou ');
   const today = new Intl.DateTimeFormat('en-CA').format(new Date());
   view.innerHTML = `${owner && trucks.length ? `<div class="card" id="semana"><h2>📊 Relatório da semana</h2>
@@ -2475,20 +2478,40 @@ screens.despesas = async () => {
   });
 };
 
+// ADM que também faz serviço: a caixinha só aparece quando a função é ADM.
+const alsoDriver = (show, checked) =>
+  `<label class="check also-driver"${show ? '' : ' hidden'}><input type="checkbox" name="drives"${checked ? ' checked' : ''}> Também é motorista (aparece na lista para receber serviços)</label>`;
+// Função + caixinha viram um valor só para o servidor: motorista, dono ou dono_motorista.
+function teamBody(form) {
+  const body = formData(form);
+  if (body.role === 'dono' && body.drives) body.role = 'dono_motorista';
+  delete body.drives;
+  return body;
+}
+function wireRole(form) {
+  const role = form.querySelector('[name=role]');
+  const box = form.querySelector('.also-driver');
+  role.onchange = () => {
+    box.hidden = role.value !== 'dono';
+  };
+}
+
 screens.equipe = async () => {
   setScreen('Equipe', { tab: 'mais', back: '#/mais' });
   const users = await api('/users');
   view.innerHTML = `
     <div class="card"><ul class="list">${users
-      .map((u) => `<li><div class="row"><div><strong>${esc(u.name)}</strong> ${u.active ? '' : '<span class="badge cancelado">desativado</span>'}<div class="sub">${phoneFmt(u.phone)} · ${u.role === 'dono' ? 'ADM' : 'Motorista'}</div>
+      .map((u) => `<li><div class="row"><div><strong>${esc(u.name)}</strong> ${u.active ? '' : '<span class="badge cancelado">desativado</span>'}<div class="sub">${phoneFmt(u.phone)} · ${u.role === 'dono' ? (u.drives ? 'ADM e motorista' : 'ADM') : 'Motorista'}</div>
         <select class="firm-pick" data-firm="${u.id}" aria-label="Empresa de ${esc(u.name)}">${firmOptions(u.firm)}</select></div>
-        <div class="actions"><button class="secondary" data-edit="${u.id}">✏️ Editar</button>${u.id !== state.me.id ? `<button class="secondary" data-toggle="${u.id}" data-active="${u.active}">${u.active ? 'Desativar' : 'Ativar'}</button>` : ''}</div></div>
+        <div class="actions"><button class="secondary" data-edit="${u.id}">✏️ Editar</button></div></div>
         <form class="team-edit" data-form="${u.id}" hidden>
           <label>Nome</label><input name="name" value="${esc(u.name)}" required>
           <label>Telefone (WhatsApp)</label><input name="phone" type="tel" value="${phoneFmt(u.phone)}" required>
           <label>Novo PIN (deixe vazio para não mudar)</label><input name="pin" inputmode="numeric" pattern="[0-9]{4,8}">
-          ${u.id !== state.me.id ? `<label>Função</label><select name="role"><option value="motorista"${u.role === 'motorista' ? ' selected' : ''}>Motorista</option><option value="dono"${u.role === 'dono' ? ' selected' : ''}>ADM (administrador)</option></select>` : ''}
+          <label>Função</label><select name="role">${u.id !== state.me.id ? `<option value="motorista"${u.role === 'motorista' ? ' selected' : ''}>Motorista</option>` : ''}<option value="dono"${u.role === 'dono' ? ' selected' : ''}>ADM (administrador)</option></select>
+          ${alsoDriver(u.role === 'dono', u.drives)}
           <div class="actions"><button>Salvar</button><button type="button" class="secondary" data-cancel>Cancelar</button></div>
+          ${u.id !== state.me.id ? `<div class="actions"><button type="button" class="${u.active ? 'danger' : 'secondary'}" data-toggle="${u.id}" data-active="${u.active}">${u.active ? 'Desativar' : 'Ativar'} ${esc(u.name)}</button></div>` : ''}
         </form></li>`)
       .join('')}</ul></div>
     <form class="card" id="f">
@@ -2498,13 +2521,15 @@ screens.equipe = async () => {
       <label>Telefone (WhatsApp)</label><input name="phone" type="tel" required>
       <label>PIN para entrar no painel (opcional)</label><input name="pin" inputmode="numeric" pattern="[0-9]{4,8}">
       <label>Função</label><select name="role"><option value="motorista">Motorista</option><option value="dono">ADM (administrador)</option></select>
+      ${alsoDriver(false, false)}
       <label>Empresa</label><select name="firm">${firmOptions('jj')}</select>
       <button class="block">Adicionar</button>
     </form>`;
+  view.querySelectorAll('form.team-edit, #f').forEach(wireRole);
   view.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
     try {
-      await api('/users', { method: 'POST', body: formData(e.target) });
+      await api('/users', { method: 'POST', body: teamBody(e.target) });
       toast('Pessoa adicionada');
       screens.equipe();
     } catch (err) {
@@ -2522,7 +2547,7 @@ screens.equipe = async () => {
     form.onsubmit = async (e) => {
       e.preventDefault();
       try {
-        await api(`/users/${b.dataset.edit}`, { method: 'PATCH', body: formData(form) });
+        await api(`/users/${b.dataset.edit}`, { method: 'PATCH', body: teamBody(form) });
         toast('Salvo');
         screens.equipe();
       } catch (err) {
@@ -2532,7 +2557,10 @@ screens.equipe = async () => {
   });
   view.querySelectorAll('[data-toggle]').forEach((b) => {
     b.onclick = async () => {
-      await api(`/users/${b.dataset.toggle}`, { method: 'PATCH', body: { active: b.dataset.active !== 'true' } });
+      const off = b.dataset.active === 'true';
+      if (off && !(await ask(`Desativar ${b.textContent.replace(/^Desativar /, '')}? A pessoa não consegue mais entrar no painel nem usar o robô.`, { danger: true }))) return;
+      await api(`/users/${b.dataset.toggle}`, { method: 'PATCH', body: { active: !off } });
+      toast(off ? 'Desativado' : 'Ativado');
       screens.equipe();
     };
   });
