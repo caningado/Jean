@@ -664,6 +664,14 @@ function serviceFields(body, { partial = false } = {}) {
 function routes(api, ctx) {
   const { data, db } = ctx;
 
+  // Serviços em aberto que a pessoa vê (ADM: todos; motorista: os dele). O app compara com a
+  // lista anterior para tocar o aviso de serviço novo.
+  api.get('/servicos-ativos', (req, res) => {
+    const mine = req.user.role === 'dono' ? '' : 'AND driver_id = ?';
+    const args = req.user.role === 'dono' ? [] : [req.user.id];
+    res.json(ctx.db.prepare(`SELECT id FROM services WHERE status IN ('pendente', 'aberto') ${mine} ORDER BY id`).all(...args).map((r) => r.id));
+  });
+
   // Alertas para o topo do painel (cobrança atrasada, manutenção...).
   api.get('/alerts', (req, res) => {
     res.json(collectAlerts(ctx, req.user));
