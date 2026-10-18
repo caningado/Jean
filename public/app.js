@@ -2410,13 +2410,14 @@ screens.equipe = async () => {
     <div class="card"><ul class="list">${users
       .map((u) => `<li><div class="row"><div><strong>${esc(u.name)}</strong> ${u.active ? '' : '<span class="badge cancelado">desativado</span>'}<div class="sub">${phoneFmt(u.phone)} · ${u.role === 'dono' ? (u.drives ? 'ADM e motorista' : 'ADM') : 'Motorista'}</div>
         <select class="firm-pick" data-firm="${u.id}" aria-label="Empresa de ${esc(u.name)}">${firmOptions(u.firm)}</select></div>
-        <div class="actions"><button class="secondary" data-edit="${u.id}">✏️ Editar</button>${u.id !== state.me.id ? `<button class="secondary" data-toggle="${u.id}" data-active="${u.active}">${u.active ? 'Desativar' : 'Ativar'}</button>` : ''}</div></div>
+        <div class="actions"><button class="secondary" data-edit="${u.id}">✏️ Editar</button></div></div>
         <form class="team-edit" data-form="${u.id}" hidden>
           <label>Nome</label><input name="name" value="${esc(u.name)}" required>
           <label>Telefone (WhatsApp)</label><input name="phone" type="tel" value="${phoneFmt(u.phone)}" required>
           <label>Novo PIN (deixe vazio para não mudar)</label><input name="pin" inputmode="numeric" pattern="[0-9]{4,8}">
           <label>Função</label><select name="role">${u.id !== state.me.id ? `<option value="motorista"${u.role === 'motorista' ? ' selected' : ''}>Motorista</option>` : ''}<option value="dono"${u.role === 'dono' && !u.drives ? ' selected' : ''}>ADM (administrador)</option><option value="dono_motorista"${u.drives ? ' selected' : ''}>ADM e motorista (também faz serviço)</option></select>
           <div class="actions"><button>Salvar</button><button type="button" class="secondary" data-cancel>Cancelar</button></div>
+          ${u.id !== state.me.id ? `<div class="actions"><button type="button" class="${u.active ? 'danger' : 'secondary'}" data-toggle="${u.id}" data-active="${u.active}">${u.active ? 'Desativar' : 'Ativar'} ${esc(u.name)}</button></div>` : ''}
         </form></li>`)
       .join('')}</ul></div>
     <form class="card" id="f">
@@ -2460,7 +2461,10 @@ screens.equipe = async () => {
   });
   view.querySelectorAll('[data-toggle]').forEach((b) => {
     b.onclick = async () => {
-      await api(`/users/${b.dataset.toggle}`, { method: 'PATCH', body: { active: b.dataset.active !== 'true' } });
+      const off = b.dataset.active === 'true';
+      if (off && !(await ask(`Desativar ${b.textContent.replace(/^Desativar /, '')}? A pessoa não consegue mais entrar no painel nem usar o robô.`, { danger: true }))) return;
+      await api(`/users/${b.dataset.toggle}`, { method: 'PATCH', body: { active: !off } });
+      toast(off ? 'Desativado' : 'Ativado');
       screens.equipe();
     };
   });
