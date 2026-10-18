@@ -28,4 +28,12 @@ test('Equipe: o ADM edita nome, telefone, PIN e função de quem é da equipe', 
   assert.equal((await patch(id(OWNER_PHONE), { role: 'motorista' })).status, 400);
   assert.equal((await patch(jorge, { phone: OWNER_PHONE })).status, 409);
 
+  // "ADM e motorista": continua ADM e passa a aparecer nas listas de motorista; o próprio ADM pode marcar.
+  const both = await (await patch(id(OWNER_PHONE), { role: 'dono_motorista' })).json();
+  assert.deepEqual([both.role, both.drives], ['dono', true]);
+  assert.equal((await (await patch(id(OWNER_PHONE), { role: 'dono' })).json()).drives, false);
+  assert.equal((await (await patch(jorge, { role: 'dono_motorista' })).json()).drives, true);
+  assert.equal((await (await patch(jorge, { name: 'Jorge' })).json()).drives, true);
+  assert.equal((await (await patch(jorge, { role: 'motorista' })).json()).drives, false);
+
 });

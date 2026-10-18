@@ -98,6 +98,8 @@ const migrations = [
       set.run(count.get(key), d, s.id);
     }
   },
+  // ADM que também faz serviço: aparece nas listas de motorista.
+  `ALTER TABLE users ADD COLUMN drives INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 // As duas empresas do dono. O nome da J&J vem dos dados da invoice.
@@ -115,7 +117,7 @@ function checkFirm(value) {
 
 function publicUser(u) {
   if (!u) return null;
-  return { id: u.id, name: u.name, phone: u.phone, role: u.role, active: !!u.active, firm: u.firm || 'jj' };
+  return { id: u.id, name: u.name, phone: u.phone, role: u.role, drives: u.role === 'dono' && !!u.drives, active: !!u.active, firm: u.firm || 'jj' };
 }
 
 function requireOwner(req) {
@@ -686,6 +688,7 @@ function routes(api, ctx) {
   });
   api.post('/users', (req, res) => {
     requireOwner(req);
+    // Função: motorista, ADM, ou ADM e motorista (dono_motorista).
     const { role = 'motorista' } = req.body || {};
     const firm = checkFirm(req.body?.firm);
     const name = checkName(req.body?.name);
@@ -693,8 +696,8 @@ function routes(api, ctx) {
     const pin = blank(req.body?.pin) ? null : checkPin(req.body.pin);
     if (db.prepare('SELECT 1 FROM users WHERE phone = ?').get(p)) throw new HttpError(409, 'Esse telefone já está na equipe.');
     const info = db
-      .prepare('INSERT INTO users (name, phone, role, pin_hash, firm, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(name, p, role === 'dono' ? 'dono' : 'motorista', pin ? hashPin(pin) : null, firm || 'jj', new Date().toISOString());
+      .prepare('INSERT INTO users (name, phone, role, drives, pin_hash, firm, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(name, p, role === 'dono' || role === 'dono_motorista' ? 'dono' : 'motorista', role === 'dono_motorista' ? 1 : 0, pin ? hashPin(pin) : null, firm || 'jj', new Date().toISOString());
     res.status(201).json(publicUser(data.users.get(Number(info.lastInsertRowid))));
   });
   api.patch('/users/:id', (req, res) => {
@@ -703,15 +706,18 @@ function routes(api, ctx) {
     if (!user) throw new HttpError(404, 'Pessoa não encontrada.');
     const { name, phone, pin, active } = req.body || {};
     if (user.id === req.user.id && active === false) throw new HttpError(400, 'Você não pode desativar a si mesmo.');
-    const role = req.body?.role === 'dono' || req.body?.role === 'motorista' ? req.body.role : user.role;
+    const asked = req.body?.role;
+    const role = asked === 'dono' || asked === 'dono_motorista' ? 'dono' : asked === 'motorista' ? 'motorista' : user.role;
+    const drives = asked === 'dono_motorista' ? 1 : asked ? 0 : user.drives;
     if (role !== user.role && user.id === req.user.id) throw new HttpError(400, 'Você não pode tirar o seu próprio ADM.');
     if (!blank(phone) && checkPhone(phone) !== user.phone && db.prepare('SELECT 1 FROM users WHERE phone = ? AND id <> ?').get(checkPhone(phone), user.id))
       throw new HttpError(409, 'Esse telefone já está na equipe.');
-    db.prepare('UPDATE users SET name = ?, phone = ?, active = ?, role = ? WHERE id = ?').run(
+    db.prepare('UPDATE users SET name = ?, phone = ?, active = ?, role = ?, drives = ? WHERE id = ?').run(
       blank(name) ? user.name : checkName(name),
       blank(phone) ? user.phone : checkPhone(phone),
       active === undefined ? user.active : active ? 1 : 0,
       role,
+      drives,
       user.id
     );
     if (!blank(pin)) db.prepare('UPDATE users SET pin_hash = ? WHERE id = ?').run(hashPin(checkPin(pin)), user.id);
