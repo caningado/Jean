@@ -1534,6 +1534,78 @@ const setTheme = (t) => {
   } catch {}
 };
 
+// ---------- notificações no celular (app fechado) ----------
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const installed = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+async function pushStatus() {
+  if (!pushSupported()) return isIOS && !installed() ? 'instalar' : 'sem-suporte';
+  if (Notification.permission === 'denied') return 'bloqueado';
+  const reg = await navigator.serviceWorker.ready;
+  return (await reg.pushManager.getSubscription()) && Notification.permission === 'granted' ? 'ativo' : 'desligado';
+}
+
+function keyBytes(base64) {
+  const raw = atob((base64 + '='.repeat((4 - (base64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+async function enablePush() {
+  if ((await Notification.requestPermission()) !== 'granted') throw new Error('Notificações bloqueadas. Libere nos ajustes do celular para este app.');
+  const reg = await navigator.serviceWorker.ready;
+  const { key } = await api('/push/chave');
+  const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) }));
+  await api('/push/assinar', { method: 'POST', body: sub.toJSON() });
+}
+
+// Ao entrar: se este aparelho já ativou, confirma no servidor que ele é desta pessoa (troca de login no mesmo celular).
+async function syncPush() {
+  try {
+    if (!pushSupported() || Notification.permission !== 'granted') return;
+    const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+    if (sub) await api('/push/assinar', { method: 'POST', body: sub.toJSON() });
+  } catch {}
+}
+
+async function pushCard() {
+  const box = view.querySelector('#push');
+  if (!box) return;
+  const st = await pushStatus();
+  const text = {
+    ativo: '✅ Ativado neste aparelho. Chega notificação de serviço novo mesmo com o app fechado.',
+    desligado: 'Receba notificação de serviço novo mesmo com o app fechado ou a tela bloqueada.',
+    bloqueado: 'As notificações estão bloqueadas neste aparelho. Libere nos ajustes do celular (Notificações) para este app e volte aqui.',
+    instalar: 'No iPhone, primeiro instale o app: toque em Compartilhar e depois em "Adicionar à Tela de Início". Abra pelo ícone e volte aqui.',
+    'sem-suporte': 'Este navegador não recebe notificações. No Android, use o Chrome.',
+  }[st];
+  box.innerHTML = `<label>🔔 Aviso de serviço novo</label><p class="sub">${text}</p>${
+    st === 'desligado' ? '<button class="block" id="pushOn">Ativar notificações</button>' : st === 'ativo' ? '<button class="secondary block" id="pushTest">Mandar um teste</button>' : ''
+  }`;
+  const on = box.querySelector('#pushOn');
+  if (on)
+    on.onclick = async () => {
+      on.disabled = true;
+      try {
+        await enablePush();
+        toast('Notificações ativadas');
+      } catch (err) {
+        toast(err.message);
+      }
+      pushCard();
+    };
+  const test = box.querySelector('#pushTest');
+  if (test)
+    test.onclick = async () => {
+      try {
+        await api('/push/teste', { method: 'POST' });
+        toast('Teste enviado. A notificação chega em alguns segundos.');
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+}
+
 screens.mais = async () => {
   setScreen('Mais', { tab: 'mais' });
   view.innerHTML = `
@@ -1551,6 +1623,7 @@ screens.mais = async () => {
       <li><a href="#/robo"><span>💬 Testar o robô do WhatsApp</span><span>›</span></a></li>
       <li><a href="#/sair"><span>🚪 Sair</span><span>›</span></a></li>
     </ul></div>
+    ${has('notificacoes') ? '<div class="card" id="push"></div>' : ''}
     <div class="card"><label>Aparência</label><div class="segmented" id="tema"><button data-t="light">☀️ Claro</button><button data-t="dark">🌙 Escuro</button></div></div>
     <p class="sub">Dica: no navegador do celular, use "Adicionar à tela inicial" para abrir como aplicativo.</p>`;
   view.querySelectorAll('#tema button').forEach((b) => {
@@ -1560,6 +1633,7 @@ screens.mais = async () => {
       screens.mais();
     };
   });
+  pushCard();
 };
 
 // Relatório do dia (só dono): serviços abertos ou entregues no dia, pronto para imprimir.
@@ -3109,6 +3183,7 @@ async function loadMe() {
     state.firms = me.firms;
     state.pricing = me.pricing;
     renderSide();
+    if (has('notificacoes')) syncPush();
   } catch {
     state.me = null;
   }

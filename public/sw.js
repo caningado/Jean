@@ -49,3 +49,35 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match(event.request).then((hit) => hit || caches.match('/index.html')))
   );
 });
+
+// Notificação de serviço novo, mesmo com o app fechado.
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {}
+  event.waitUntil(
+    self.registration.showNotification(data.title || '🔔 Serviço novo', {
+      body: data.body || '',
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      tag: data.tag,
+      renotify: true,
+      vibrate: [300, 150, 300, 150, 300],
+      data: { url: data.url || '/#/servicos' },
+    })
+  );
+});
+
+// Tocar na notificação abre o app no serviço (usa a janela que já estiver aberta).
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = new URL(event.notification.data?.url || '/#/servicos', self.location.origin).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
+      const win = wins.find((w) => new URL(w.url).origin === self.location.origin);
+      if (win) return win.navigate(url).then((w) => (w || win).focus()).catch(() => win.focus());
+      return self.clients.openWindow(url);
+    })
+  );
+});
