@@ -440,8 +440,8 @@ screens.servicos = async (params) => {
   // "Todos" (só dono/sócio): também por período, de todos os motoristas.
   const comPeriodo = status === 'concluido' || (status === '' && state.me.role === 'dono');
   const periodo = comPeriodo ? (['semana', 'mes'].includes(params.get('periodo')) ? params.get('periodo') : 'dia') : '';
-  // O dono pode ver só os serviços de um motorista (inclusive os dele mesmo).
-  const drivers = state.me.role === 'dono' ? await api('/users') : [];
+  // O ADM pode ver só os serviços de um motorista. A lista tem só quem tem cargo de motorista.
+  const drivers = state.me.role === 'dono' ? (await api('/users')).filter((d) => d.role === 'motorista' || String(d.id) === driver) : [];
   const query = (s, d, p = '') => `#/servicos?status=${s}${d ? `&driver=${d}` : ''}${p ? `&periodo=${p}` : ''}`;
   // Fila: serviços pendentes, que ainda não têm motorista trabalhando.
   // Só o dono vê a fila: é ele quem escolhe o motorista.
@@ -1688,9 +1688,9 @@ screens.caminhoes = async () => {
   const [trucks, users] = await Promise.all([api('/trucks'), owner ? api('/users') : []]);
   const miles = (n) => `${Number(n || 0).toLocaleString('en-US')} mi`;
   const ICON = { ok: '✅', perto: '🟡', vencido: '🔴' };
-  const drivers = users.filter((u) => u.active);
+  const drivers = users.filter((u) => u.active && u.role === 'motorista');
   const driverSelect = (selected) =>
-    `<select name="driver_id"><option value="">Sem motorista fixo</option>${drivers.map((u) => `<option value="${u.id}"${u.id === selected ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}</select>`;
+    `<select name="driver_id"><option value="">Sem motorista fixo</option>${[...drivers, ...users.filter((u) => u.id === selected && !drivers.includes(u))].map((u) => `<option value="${u.id}"${u.id === selected ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}</select>`;
   const every = (i) => [i.every_miles ? `a cada ${miles(i.every_miles)}` : '', i.every_days ? `a cada ${i.every_days} dias` : ''].filter(Boolean).join(' ou ');
   const today = new Intl.DateTimeFormat('en-CA').format(new Date());
   view.innerHTML = `${owner && trucks.length ? `<div class="card" id="semana"><h2>📊 Relatório da semana</h2>
