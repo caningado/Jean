@@ -784,6 +784,7 @@ screens.novo = async () => {
       const { vin, ...body } = formData(form);
       if (body.driver_id && body.driver_id !== 'fila') body.driver_id = Number(body.driver_id);
       const service = await sendCheckingAddress((b) => api('/services', { method: 'POST', body: b }), body);
+      novo.mine.add(service.id);
       // VIN digitado ou escaneado já entra no serviço; se o dígito verificador não bater, pergunta.
       if (vin?.trim()) {
         await api(`/services/${service.id}/vin`, { method: 'POST', body: { vin } }).catch(async (err) => {
@@ -1536,6 +1537,78 @@ const setTheme = (t) => {
   } catch {}
 };
 
+// ---------- notificações no celular (app fechado) ----------
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const installed = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+async function pushStatus() {
+  if (!pushSupported()) return isIOS && !installed() ? 'instalar' : 'sem-suporte';
+  if (Notification.permission === 'denied') return 'bloqueado';
+  const reg = await navigator.serviceWorker.ready;
+  return (await reg.pushManager.getSubscription()) && Notification.permission === 'granted' ? 'ativo' : 'desligado';
+}
+
+function keyBytes(base64) {
+  const raw = atob((base64 + '='.repeat((4 - (base64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+async function enablePush() {
+  if ((await Notification.requestPermission()) !== 'granted') throw new Error('Notificações bloqueadas. Libere nos ajustes do celular para este app.');
+  const reg = await navigator.serviceWorker.ready;
+  const { key } = await api('/push/chave');
+  const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) }));
+  await api('/push/assinar', { method: 'POST', body: sub.toJSON() });
+}
+
+// Ao entrar: se este aparelho já ativou, confirma no servidor que ele é desta pessoa (troca de login no mesmo celular).
+async function syncPush() {
+  try {
+    if (!pushSupported() || Notification.permission !== 'granted') return;
+    const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+    if (sub) await api('/push/assinar', { method: 'POST', body: sub.toJSON() });
+  } catch {}
+}
+
+async function pushCard() {
+  const box = view.querySelector('#push');
+  if (!box) return;
+  const st = await pushStatus();
+  const text = {
+    ativo: '✅ Ativado neste aparelho. Chega notificação de serviço novo mesmo com o app fechado.',
+    desligado: 'Receba notificação de serviço novo mesmo com o app fechado ou a tela bloqueada.',
+    bloqueado: 'As notificações estão bloqueadas neste aparelho. Libere nos ajustes do celular (Notificações) para este app e volte aqui.',
+    instalar: 'No iPhone, primeiro instale o app: toque em Compartilhar e depois em "Adicionar à Tela de Início". Abra pelo ícone e volte aqui.',
+    'sem-suporte': 'Este navegador não recebe notificações. No Android, use o Chrome.',
+  }[st];
+  box.innerHTML = `<label>🔔 Aviso de serviço novo</label><p class="sub">${text}</p>${
+    st === 'desligado' ? '<button class="block" id="pushOn">Ativar notificações</button>' : st === 'ativo' ? '<button class="secondary block" id="pushTest">Mandar um teste</button>' : ''
+  }`;
+  const on = box.querySelector('#pushOn');
+  if (on)
+    on.onclick = async () => {
+      on.disabled = true;
+      try {
+        await enablePush();
+        toast('Notificações ativadas');
+      } catch (err) {
+        toast(err.message);
+      }
+      pushCard();
+    };
+  const test = box.querySelector('#pushTest');
+  if (test)
+    test.onclick = async () => {
+      try {
+        await api('/push/teste', { method: 'POST' });
+        toast('Teste enviado. A notificação chega em alguns segundos.');
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+}
+
 screens.mais = async () => {
   setScreen('Mais', { tab: 'mais' });
   view.innerHTML = `
@@ -1553,6 +1626,7 @@ screens.mais = async () => {
       <li><a href="#/robo"><span>💬 Testar o robô do WhatsApp</span><span>›</span></a></li>
       <li><a href="#/sair"><span>🚪 Sair</span><span>›</span></a></li>
     </ul></div>
+    ${has('notificacoes') ? '<div class="card" id="push"></div>' : ''}
     <div class="card"><label>Aparência</label><div class="segmented" id="tema"><button data-t="light">☀️ Claro</button><button data-t="dark">🌙 Escuro</button></div></div>
     <p class="sub">Dica: no navegador do celular, use "Adicionar à tela inicial" para abrir como aplicativo.</p>`;
   view.querySelectorAll('#tema button').forEach((b) => {
@@ -1562,6 +1636,7 @@ screens.mais = async () => {
       screens.mais();
     };
   });
+  pushCard();
 };
 
 // Relatório do dia (só dono): serviços abertos ou entregues no dia, pronto para imprimir.
@@ -3137,6 +3212,7 @@ async function loadMe() {
     state.pricing = me.pricing;
     state.meAt = Date.now();
     renderSide();
+    if (has('notificacoes')) syncPush();
   } catch {
     state.me = null;
   }
@@ -3175,6 +3251,74 @@ async function route() {
   }
 }
 
+// ---------- aviso de serviço novo ----------
+// Com o app aberto, confere a cada 20 s se entrou serviço (para o motorista: dado para ele; para o ADM:
+// qualquer um). Tem serviço novo: toca um alarme, fala "Serviço novo" e mostra o aviso.
+// Serviço que a própria pessoa criou neste aparelho não toca.
+const novo = { user: null, ids: null, mine: new Set(), audio: null };
+
+// O navegador só deixa tocar som depois que a pessoa toca na tela uma vez.
+function unlockSound() {
+  try {
+    novo.audio ||= new (window.AudioContext || window.webkitAudioContext)();
+    novo.audio.resume();
+    if (!novo.voiceReady && 'speechSynthesis' in window) {
+      speechSynthesis.speak(Object.assign(new SpeechSynthesisUtterance(''), { volume: 0 }));
+      novo.voiceReady = true;
+    }
+  } catch {}
+}
+document.addEventListener('pointerdown', unlockSound, { capture: true });
+
+function alarm(count) {
+  const ctx = novo.audio;
+  if (ctx && ctx.state === 'running') {
+    // Três toques de dois tons, como uma campainha.
+    for (let i = 0; i < 3; i++) {
+      for (const [freq, at] of [[880, 0], [660, 0.18]]) {
+        const t = ctx.currentTime + i * 0.5 + at;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.5, t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.17);
+      }
+    }
+  }
+  if ('speechSynthesis' in window) {
+    const say = new SpeechSynthesisUtterance(count > 1 ? `${count} serviços novos` : 'Serviço novo');
+    say.lang = 'pt-BR';
+    setTimeout(() => speechSynthesis.speak(say), 1600);
+  }
+  navigator.vibrate?.([300, 150, 300, 150, 300]);
+  toast(count > 1 ? `🔔 ${count} serviços novos` : '🔔 Serviço novo');
+}
+
+async function checkNew() {
+  if (!state.me || document.visibilityState === 'hidden') return;
+  if (novo.user !== state.me.id) Object.assign(novo, { user: state.me.id, ids: null });
+  let ids;
+  try {
+    ids = await api('/servicos-ativos');
+  } catch {
+    return;
+  }
+  if (novo.ids) {
+    const fresh = ids.filter((id) => !novo.ids.has(id) && !novo.mine.has(id));
+    if (fresh.length) {
+      alarm(fresh.length);
+      if (state.screen === 'servicos') route();
+    }
+  }
+  novo.ids = new Set(ids);
+}
+setInterval(checkNew, 20000);
+document.addEventListener('visibilitychange', checkNew);
+
 window.addEventListener('hashchange', route);
 // Voltou para o app (outra aba, celular desbloqueado): se o cargo mudou, redesenha a tela com as permissões novas.
 document.addEventListener('visibilitychange', async () => {
@@ -3186,6 +3330,7 @@ document.addEventListener('visibilitychange', async () => {
 // Virou a tela (ou mudou o tamanho da janela): desenha de novo no formato certo.
 deskQuery.addEventListener('change', () => state.me && route());
 await loadMe();
+checkNew();
 if (!location.hash) location.hash = state.me ? '#/servicos' : '#/login';
 else route();
 
