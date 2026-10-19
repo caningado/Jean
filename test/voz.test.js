@@ -114,3 +114,54 @@ test('Comando de voz sem GEMINI_API_KEY: o microfone fica desligado', async (t) 
   const res = await fetch(`${base}/api/voice-command?servico=1`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'audio/webm' }, body: Buffer.alloc(2000) });
   assert.equal(res.status, 503);
 });
+
+test('Serviço novo por voz: o Gemini tira os campos e o app preenche o formulário', async (t) => {
+  const ctx = makeContext({ GEMINI_API_KEY: 'chave-teste' });
+  const server = createApp(ctx).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const realFetch = globalThis.fetch;
+  t.after(() => (globalThis.fetch = realFetch));
+  const answers = [];
+  let prompt = '';
+  globalThis.fetch = async (url, opts) => {
+    if (!String(url).includes('generativelanguage.googleapis.com')) return realFetch(url, opts);
+    const body = JSON.parse(opts.body);
+    prompt = body.contents[0].parts[1].text;
+    assert.equal(body.generationConfig.responseSchema.properties.valor.type, 'NUMBER');
+    return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(answers.shift()) }] } }] });
+  };
+  const login = async (phone, pin) =>
+    (await realFetch(`${base}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, pin }) })).headers.get('set-cookie').split(';')[0];
+  const adm = await login(OWNER_PHONE, '1234');
+  const drv = await login(DRIVER_PHONE, '5678');
+  const speak = async (cookie, answer) => {
+    answers.push(answer);
+    return (await realFetch(`${base}/api/voice-command/novo`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'audio/wav' }, body: Buffer.alloc(2000, 1) })).json();
+  };
+  const jorge = ctx.db.prepare('SELECT id FROM users WHERE phone = ?').get(DRIVER_PHONE).id;
+
+  let r = await speak(adm, {
+    cliente: 'João Silva', telefone: '(407) 555-1234', retirada: '1200 Alafaya Trail, Oviedo', destino: 'Ribas Auto', veiculo: 'Honda Civic 2015',
+    placa: 'abc1234', valor: 150, motorista: 'jorge', observacoes: 'carro não liga', transcricao: 'serviço pro João...',
+  });
+  assert.match(prompt, /serviço novo/);
+  assert.equal(r.entendeu, true);
+  assert.equal(r.contact_name, 'João Silva');
+  assert.equal(r.contact_phone, '4075551234');
+  assert.equal(r.pickup, '1200 Alafaya Trail, Oviedo');
+  assert.equal(r.plate, 'ABC1234');
+  assert.equal(r.price, 150);
+  assert.equal(r.miles, null);
+  assert.equal(r.driver_id, jorge);
+  assert.equal(r.notes, 'carro não liga');
+  // Nada foi criado: a pessoa confere e salva.
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM services').get().n, 0);
+
+  // Motorista não escolhe motorista; fala sem serviço: não entendeu.
+  r = await speak(drv, { cliente: 'Ana', motorista: 'Jorge' });
+  assert.equal(r.driver_id, null);
+  r = await speak(drv, { transcricao: 'bom dia' });
+  assert.equal(r.entendeu, false);
+});
