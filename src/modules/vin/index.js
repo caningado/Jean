@@ -66,15 +66,51 @@ export function describeVehicle(info) {
   return [info.year, info.make, info.model].filter(Boolean).join(' ') || null;
 }
 
+const VIN_PROMPT =
+  'This photo should show a vehicle VIN (17 characters), from a door-jamb label, the windshield plate, ' +
+  'a barcode label or a document. Reply with only the VIN exactly as printed, with no other words. ' +
+  'If you cannot read a full VIN, reply with NONE.';
+
+const vinInText = (text) => {
+  const match = String(text || '').toUpperCase().match(/[A-Z0-9]{17}/);
+  return match ? cleanVin(match[0]) : null;
+};
+
+// Pergunta ao Gemini (Google). Tem uso grátis com a chave do AI Studio.
+export async function readVinGemini(ctx, buffer, mimeType, fetchImpl = fetch) {
+  const res = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${ctx.config.geminiModel}:generateContent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': ctx.config.geminiApiKey },
+    body: JSON.stringify({
+      contents: [{ parts: [{ inline_data: { mime_type: mimeType || 'image/jpeg', data: buffer.toString('base64') } }, { text: VIN_PROMPT }] }],
+      generationConfig: { temperature: 0 },
+    }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) throw new Error(`Gemini respondeu ${res.status}`);
+  const data = await res.json();
+  const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join(' ');
+  return vinInText(text);
+}
+
 // Lê o VIN de uma foto (etiqueta da porta, para-brisa ou documento).
-// Primeiro procura o código de barras; se não achar, lê as letras com o leitor grátis
-// (Tesseract). Só se os dois falharem e houver ANTHROPIC_API_KEY, tenta com o Claude.
+// Primeiro procura o código de barras. Se não achar e houver GEMINI_API_KEY, pergunta ao Gemini,
+// que lê bem melhor que o leitor grátis. Depois tenta o leitor grátis (Tesseract) e, por último,
+// o Claude, se houver ANTHROPIC_API_KEY.
 export async function readVinFromImage(ctx, buffer, mimeType) {
   try {
     const vin = await readVinBarcode(buffer);
     if (vin) return { vin, source: 'codigo' };
   } catch (err) {
     ctx.log?.('Falha ao ler código de barras', err);
+  }
+  if (ctx.config.geminiApiKey) {
+    try {
+      const vin = await readVinGemini(ctx, buffer, mimeType);
+      if (vin) return { vin, source: 'gemini' };
+    } catch (err) {
+      ctx.log?.('Falha ao ler o VIN com o Gemini', err);
+    }
   }
   if (ctx.config.vinOcr !== false) {
     try {
@@ -97,21 +133,15 @@ export async function readVinFromImage(ctx, buffer, mimeType) {
         role: 'user',
         content: [
           { type: 'image', source: { type: 'base64', media_type: mimeType || 'image/jpeg', data: buffer.toString('base64') } },
-          {
-            type: 'text',
-            text:
-              'This photo should show a vehicle VIN (17 characters), from a door-jamb label, the windshield plate, ' +
-              'a barcode label or a document. Reply with only the VIN exactly as printed, with no other words. ' +
-              'If you cannot read a full VIN, reply with NONE.',
-          },
+          { type: 'text', text: VIN_PROMPT },
         ],
       },
     ],
   });
   if (response.stop_reason === 'refusal') return { vin: null, reason: 'recusado' };
   const text = response.content.filter((b) => b.type === 'text').map((b) => b.text).join(' ');
-  const match = text.toUpperCase().match(/[A-Z0-9]{17}/);
-  return match ? { vin: cleanVin(match[0]) } : { vin: null, reason: 'nao-leu' };
+  const vin = vinInText(text);
+  return vin ? { vin } : { vin: null, reason: 'nao-leu' };
 }
 
 // Grava o VIN no serviço e completa o veículo com marca/modelo/ano.

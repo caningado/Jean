@@ -8,7 +8,7 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 - **Serviços**: cliente, retirada, destino, veículo, placa, milhas e valor (com tabela base + por milha).
 - **Agenda de contatos**: importa a agenda do celular (.vcf); cliente novo que aparece entra sozinho; histórico de cada cliente.
 - **Fotos (opcionais)**: antes (retirada), depois (entrega) e VIN, com data e hora.
-- **VIN**: confere o número, descobre marca/modelo/ano (base gratuita da NHTSA), escaneia o código de barras pela câmera (Android) e lê o número de uma foto (Android e iPhone, precisa de `ANTHROPIC_API_KEY`).
+- **VIN**: confere o número, descobre marca/modelo/ano (base gratuita da NHTSA), escaneia o código de barras pela câmera (Android) e lê o número de uma foto (Android e iPhone; lê melhor com `GEMINI_API_KEY`, grátis, ou `ANTHROPIC_API_KEY`).
 - **Pagamentos**: Zelle, dinheiro, cartão, cheque e seguradora/motor club (AAA, Agero, Honk…). Mostra o que falta receber, quanto dinheiro está com cada motorista, e gera a mensagem de cobrança com o Zelle.
 - **Despesas**: combustível, pedágio, manutenção…
 - **Resumo** do dia e do mês: faturado, recebido, despesas e saldo.
