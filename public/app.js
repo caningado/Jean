@@ -1316,7 +1316,8 @@ screens.contato = async (params, id) => {
       c.services.length
         ? c.services.map((s) => `<li><a href="#/servico/${s.id}"><div>${esc(s.vehicle || s.pickup || 'Serviço')}<div class="sub">${when(s.created_at)}</div></div><div class="right">${s.price_cents != null ? money(s.price_cents) : ''}</div></a></li>`).join('')
         : '<li class="empty">Nenhum serviço ainda.</li>'
-    }</ul></div>` : ''}`;
+    }</ul></div>` : ''}
+    ${!isNew && state.me.role === 'dono' && !c.services.length ? `<div class="actions"><button type="button" class="danger" id="delContact">Apagar ${esc(c.name)}</button></div>` : ''}`;
   // Tocar em Empresa abre uma janela com busca e as 5 empresas mais novas (no lugar da lista com todas).
   const companyPick = view.querySelector('#companyPick');
   if (companyPick) {
@@ -1333,6 +1334,19 @@ screens.contato = async (params, id) => {
       sel.innerHTML = `<option value="${co ? co.id : ''}">${esc(co ? co.name : 'Nenhuma (cliente particular)')}</option>`;
     };
   }
+  // Só aparece para cliente sem serviço (quem tem histórico não pode ser apagado).
+  const del = view.querySelector('#delContact');
+  if (del)
+    del.onclick = async () => {
+      if (!(await ask(`Apagar ${c.name} da lista de clientes? Não dá para desfazer.`, { danger: true }))) return;
+      try {
+        await api(`/contacts/${id}`, { method: 'DELETE' });
+        toast('Cliente apagado');
+        location.hash = '#/contatos';
+      } catch (err) {
+        toast(err.message);
+      }
+    };
   view.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
     try {
