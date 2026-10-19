@@ -468,3 +468,13 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .photos figure.missing .g.carro { width: 85%; padding: 0; border: 0; filter: none; }
 .photos figure.missing .g.carro img { filter: invert(1) opacity(.55); }
 .team-edit { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line, #ddd); }
+
+/* Comandos de voz */
+.voice-card { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+button.mic { width: 96px; height: 96px; border-radius: 50%; padding: 0; display: grid; place-items: center; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+button.mic svg { width: 44px; height: 44px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+button.mic svg rect { fill: currentColor; }
+button.mic.rec { background: var(--bad); animation: mic-pulse 1s ease-in-out infinite; }
+@keyframes mic-pulse { 50% { transform: scale(1.08); } }
+.voice-status { margin: 0; color: var(--muted, inherit); }
+p.stage { font-weight: 600; }

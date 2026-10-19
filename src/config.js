@@ -12,7 +12,7 @@ function loadDotEnv(file) {
   }
 }
 
-export const ALL_MODULES = ['vin', 'fotos', 'pagamentos', 'despesas', 'whatsapp', 'planilha', 'manutencao', 'invoice', 'empresas', 'comissao', 'backup', 'notificacoes'];
+export const ALL_MODULES = ['vin', 'fotos', 'pagamentos', 'despesas', 'whatsapp', 'planilha', 'manutencao', 'invoice', 'empresas', 'comissao', 'backup', 'notificacoes', 'voz'];
 
 export function loadConfig(overrides = {}) {
   loadDotEnv(path.resolve('.env'));
@@ -57,6 +57,8 @@ export function loadConfig(overrides = {}) {
     // Leitura do VIN por foto com o Gemini (Google), que tem uso grátis.
     geminiApiKey: env.GEMINI_API_KEY || '',
     geminiModel: env.GEMINI_MODEL || 'gemini-flash-latest',
+    // Comandos de voz na tela do serviço: modelo rápido e barato do Gemini.
+    geminiVoiceModel: env.GEMINI_VOICE_MODEL || 'gemini-flash-lite-latest',
     // Leitura grátis das letras do VIN na foto (Tesseract). VIN_OCR=off desliga.
     vinOcr: env.VIN_OCR !== 'off',
     // Conferir endereços no mapa (Census + OpenStreetMap, grátis). GEOCODER=off desliga.
