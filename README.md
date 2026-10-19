@@ -44,6 +44,11 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 | `abrir 12` | Volta a mexer no serviço #12 |
 | `atual`, `pendentes`, `resumo`, `resumo mes`, `ajuda`, `cancelar` | |
 
+Com `GEMINI_API_KEY`, o robô também entende **texto livre e áudio** ("abasteci 80 de diesel",
+"serviço pra Ana, pegar na Alafaya, levar pra Ribas"): o Gemini traduz para um desses comandos.
+O que mexe em dinheiro ou fecha serviço (`entregue`, `pago`, `gasto`, `recolhi`, `fiz`, `odometro`,
+`empresa`) só acontece depois de um *sim*. No cadastro de serviço, o áudio vira a resposta da pergunta.
+
 Quem não é da equipe (clientes, amigos) e manda mensagem para o número do robô vira contato,
 mas o robô **não responde nada**: só o dono responde clientes, pelo app WhatsApp Business.
 Se um dia quiser um "já vamos responder" automático, use `WHATSAPP_RESPOSTA_FORA=diaria`

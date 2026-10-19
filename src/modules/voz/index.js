@@ -3,6 +3,7 @@
 // situação do serviço, guardando quem fez e a hora. Precisa de GEMINI_API_KEY.
 import express from 'express';
 import { HttpError, nowIso, simplify } from '../../lib/util.js';
+import { askGemini as gemini } from '../../lib/gemini.js';
 
 // Ação do Gemini -> o que muda no serviço. "stage" é a etapa dentro de "em andamento".
 export const ACTIONS = {
@@ -34,25 +35,7 @@ const SCHEMA = {
 };
 
 // Manda o áudio para o Gemini com um pedido e um formato de JSON; devolve o JSON da resposta.
-async function askGemini(ctx, audio, mimeType, prompt, schema, fetchImpl = fetch) {
-  const res = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${ctx.config.geminiVoiceModel}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': ctx.config.geminiApiKey },
-    body: JSON.stringify({
-      contents: [{ parts: [{ inline_data: { mime_type: mimeType, data: audio.toString('base64') } }, { text: prompt }] }],
-      generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: schema },
-    }),
-    signal: AbortSignal.timeout(30000),
-  });
-  if (!res.ok) throw new Error(`Gemini respondeu ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const data = await res.json();
-  const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
-  try {
-    return JSON.parse(text) || {};
-  } catch {
-    return {};
-  }
-}
+const askGemini = (ctx, audio, mimeType, prompt, schema, fetchImpl) => gemini(ctx, { prompt, audio, mimeType, schema }, fetchImpl);
 
 // Comando na tela do serviço: devolve { acao, transcricao }.
 export async function classifyAudio(ctx, audio, mimeType, fetchImpl = fetch) {

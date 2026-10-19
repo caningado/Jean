@@ -65,6 +65,10 @@ export function extractMessages(payload) {
         } else if (m.type === 'document' && m.document?.mime_type?.startsWith('image/')) {
           msg.mediaId = m.document.id;
           msg.text = m.document.caption || '';
+        } else if (m.type === 'audio' && m.audio?.id) {
+          // Mensagem de voz: o robô entende com o Gemini.
+          msg.mediaId = m.audio.id;
+          msg.audio = true;
         } else if (m.type === 'location' && m.location) {
           // Localização 📍 mandada pelo WhatsApp: vira texto com nome, endereço e coordenadas.
           const { latitude, longitude, name, address } = m.location;
@@ -88,13 +92,15 @@ export async function processMessage(ctx, client, msg) {
   if (!user) return handleOutsider(ctx, client, msg);
 
   let media = null;
-  if (msg.mediaId) media = await client.downloadMedia(msg.mediaId);
+  let audio = null;
+  if (msg.audio) audio = await client.downloadMedia(msg.mediaId);
+  else if (msg.mediaId) media = await client.downloadMedia(msg.mediaId);
   else if (!msg.text) {
-    await client.sendText(msg.from, 'Por enquanto eu entendo texto e fotos. Mande *ajuda* para ver os comandos.');
+    await client.sendText(msg.from, 'Por enquanto eu entendo texto, áudio e fotos. Mande *ajuda* para ver os comandos.');
     return;
   }
 
-  const replies = await ctx.bot.handle({ phone: msg.from, text: msg.text, media });
+  const replies = await ctx.bot.handle({ phone: msg.from, text: msg.text, media, audio });
   for (const reply of replies) await client.sendText(msg.from, reply);
 }
 
