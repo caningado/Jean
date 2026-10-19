@@ -100,11 +100,16 @@ function routes(api, ctx) {
   });
 
   api.post('/expenses', (req, res) => {
-    const { amount, category, description, service_id, truck_id } = req.body || {};
+    const { amount, category, description, service_id, truck_id, odometer } = req.body || {};
     const amountCents = checkMoney(parseMoney(amount), { max: 5000, what: 'O valor da despesa' });
     const cat = CATEGORIES[category] ? category : guessCategory(description);
     // truck_id: "" = sem caminhão; não mandado = caminhão do motorista.
     const truckId = truck_id === undefined ? undefined : Number(truck_id) || null;
+    // Milhas do caminhão junto (ex.: depois de abastecer). Confere antes de gravar a despesa.
+    const miles = odometer != null && odometer !== '' && ctx.api.manutencao ? odometer : null;
+    const truck = miles != null && (truckId === undefined ? ctx.api.manutencao.truckFor(req.user.id) : truckId && ctx.api.manutencao.get(truckId));
+    if (miles != null && !(truck && ctx.api.manutencao.canEdit(req.user, truck))) throw new HttpError(400, 'Escolha o caminhão para guardar as milhas.');
+    if (truck) ctx.api.manutencao.updateOdometer(req.user, truck, miles);
     res.status(201).json(addExpense(ctx, { userId: req.user.id, serviceId: service_id || null, amountCents, category: cat, description, truckId }));
   });
 

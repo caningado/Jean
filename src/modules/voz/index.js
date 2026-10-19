@@ -1,4 +1,4 @@
-// Comandos de voz: na tela do serviço, o motorista aperta o microfone e fala ("peguei o carro",
+// Comandos de voz: o microfone de todas as telas (assistente) e o da tela do serviço, o motorista aperta o microfone e fala ("peguei o carro",
 // "tô indo entregar", "finaliza"...). O Gemini (Google) diz qual comando foi e o servidor muda a
 // situação do serviço, guardando quem fez e a hora. Precisa de GEMINI_API_KEY.
 import express from 'express';
@@ -84,7 +84,10 @@ const NEW_SCHEMA = {
 
 // Serviço novo falado: devolve os campos para o app preencher o formulário (a pessoa confere e salva).
 export async function readNewService(ctx, audio, mimeType, fetchImpl = fetch) {
-  const a = await askGemini(ctx, audio, mimeType, NEW_PROMPT, NEW_SCHEMA, fetchImpl);
+  return newServiceFields(await askGemini(ctx, audio, mimeType, NEW_PROMPT, NEW_SCHEMA, fetchImpl));
+}
+
+function newServiceFields(a) {
   const text = (k, max = 300) => String(a[k] ?? '').trim().slice(0, max);
   const num = (k) => (Number.isFinite(Number(a[k])) && Number(a[k]) > 0 ? Number(a[k]) : null);
   return {
@@ -141,6 +144,196 @@ export function applyAction(ctx, user, service, acao, { confirm = false, source 
   }
   logEvent(ctx, service.id, acao, user.id, source);
   return result;
+}
+
+// Motorista falado -> o da equipe com esse nome (só o ADM escolhe motorista).
+function withDriver(ctx, user, fields) {
+  let driver_id = null;
+  if (user.role === 'dono' && fields.driver) {
+    const name = simplify(fields.driver);
+    const team = ctx.db.prepare("SELECT id, name FROM users WHERE active = 1 AND (role = 'motorista' OR drives = 1)").all();
+    driver_id = team.find((u) => simplify(u.name) === name)?.id || team.find((u) => simplify(u.name).split(' ')[0] === name.split(' ')[0])?.id || null;
+  }
+  const understood = ['contact_name', 'contact_phone', 'pickup', 'dropoff', 'vehicle', 'plate', 'vin', 'miles', 'price', 'notes'].some((k) => fields[k]);
+  return { ...fields, driver_id, entendeu: understood };
+}
+
+// ---------- assistente: o microfone que fica em todas as telas ----------
+// Entende o que a pessoa quer (abrir uma tela, criar serviço, mudar a situação do serviço, lançar
+// despesa, pagamento ou milhas do caminhão). O que mexe em dinheiro ou milhas só preenche a tela:
+// a pessoa confere e confirma. Mudar a situação do serviço já é feito na hora (menos cancelar).
+
+// Telas que dá para abrir falando. owner = só o ADM.
+export const SCREENS = {
+  servicos: { hash: '#/servicos', label: 'Serviços em andamento' },
+  servicos_entregues: { hash: '#/servicos?status=concluido', label: 'Serviços entregues' },
+  servicos_pendentes: { hash: '#/servicos?status=pendente', label: 'Serviços pendentes', owner: true },
+  servico_atual: { hash: null, label: 'Serviço atual' },
+  novo_servico: { hash: '#/novo', label: 'Novo serviço' },
+  clientes: { hash: '#/contatos', label: 'Clientes' },
+  resumo: { hash: '#/resumo', label: 'Resumo do dia' },
+  resumo_mes: { hash: '#/resumo?p=mes', label: 'Resumo do mês' },
+  pendencias: { hash: '#/pendentes', label: 'Pendências', module: 'pagamentos' },
+  despesas: { hash: '#/despesas', label: 'Despesas', module: 'despesas' },
+  caminhoes: { hash: '#/caminhoes', label: 'Caminhões e manutenção', module: 'manutencao' },
+  ganhos: { hash: null, label: 'Ganhos', module: 'comissao' },
+  enderecos: { hash: '#/enderecos', label: 'Endereços com apelido' },
+  mais: { hash: '#/mais', label: 'Mais' },
+  relatorio_dia: { hash: '#/relatorio', label: 'Relatório do dia', owner: true },
+  equipe: { hash: '#/equipe', label: 'Equipe', owner: true },
+  empresas: { hash: '#/empresas', label: 'Empresas e extrato', owner: true, module: 'empresas' },
+  planilha: { hash: '#/planilha', label: 'Planilha do Excel', owner: true, module: 'planilha' },
+  backup: { hash: '#/backup', label: 'Backup', owner: true, module: 'backup' },
+};
+
+const INTENTS = ['abrir_tela', 'servico_novo', 'status_servico', 'pagamento', 'despesa', 'milhas_caminhao', 'pular', 'nao_entendi'];
+
+// Perguntas que o app faz para completar o serviço novo, numa conversa (campo do Gemini -> pergunta).
+export const QUESTIONS = {
+  telefone: 'Qual o telefone do cliente?',
+  cliente: 'Qual o nome do cliente?',
+  retirada: 'Onde pegar o carro?',
+  destino: 'Para onde levar?',
+  veiculo: 'Qual é o carro?',
+  valor: 'Qual o valor do serviço?',
+};
+const PAY_METHODS = ['zelle', 'dinheiro', 'cartao', 'cheque', 'seguradora'];
+const EXPENSE_TYPES = ['combustivel', 'pedagio', 'manutencao', 'alimentacao', 'outros'];
+
+const ASSISTANT_PROMPT = `Você é o assistente de voz do app de uma empresa de guincho nos EUA (Flórida). Quem fala é {quem}, em português do Brasil, muitas vezes informal e misturando inglês. Pode ter barulho de rua ou de motor. {contexto}
+Escolha a intenção:
+- abrir_tela: quer ver/abrir uma parte do app ("abre as despesas", "mostra meus ganhos", "cadê os serviços de hoje", "procura o cliente João"). Ponha a tela em "tela" e, se pediu um cliente, o nome em "busca".
+- servico_novo: está ditando um serviço novo (cliente, telefone, onde pegar, para onde levar, carro, preço). Preencha cliente, telefone (só números), retirada, destino, veiculo, placa, vin, distancia (milhas da viagem), valor (preço em dólares), motorista (quem vai fazer), observacoes.
+- status_servico: muda a situação do serviço atual. Ponha em "acao": iniciar_servico ("bora começar", "vou lá buscar"), peguei_o_carro ("carro carregado", "peguei a máquina"), indo_entregar ("tô levando"), finalizar_servico ("entreguei", "acabou"), cancelar_servico ("cancela", "cliente desistiu").
+- pagamento: recebeu dinheiro do serviço ("recebi 150 no zelle", "cliente pagou em cash"). valor em dólares; forma: zelle, dinheiro (cash), cartao, cheque ou seguradora (AAA, Agero, Honk, motor club, com o nome em "pagador").
+- despesa: gastou dinheiro ("abasteci 80 dólares", "paguei 12 de pedágio", "troquei o pneu, 300"). valor em dólares; categoria: combustivel, pedagio, manutencao, alimentacao ou outros; descricao curta (ex.: "diesel"); se disse as milhas do painel do caminhão (odômetro), ponha em "odometro"; se disse qual caminhão, em "caminhao".
+- milhas_caminhao: só informa as milhas do painel do caminhão ("o caminhão está com 123 mil e 400 milhas"). Número inteiro em "odometro"; caminhão em "caminhao" se disse.
+- pular: não sabe ou quer deixar a pergunta em branco ("não sei", "pula", "depois eu vejo").
+- nao_entendi: silêncio, conversa sem pedido, ou se tiver dúvida.
+Não invente nada que não foi dito. Números: "123 mil e 400" = 123400; "80 e 50" dólares = 80.50. Em "transcricao", escreva o que a pessoa falou.`;
+
+const ASSISTANT_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    intencao: { type: 'STRING', enum: INTENTS },
+    tela: { type: 'STRING', enum: Object.keys(SCREENS) },
+    busca: { type: 'STRING' },
+    acao: { type: 'STRING', enum: Object.keys(ACTIONS).filter((a) => a !== 'nao_entendi') },
+    valor: { type: 'NUMBER' },
+    forma: { type: 'STRING', enum: PAY_METHODS },
+    pagador: { type: 'STRING' },
+    categoria: { type: 'STRING', enum: EXPENSE_TYPES },
+    descricao: { type: 'STRING' },
+    odometro: { type: 'NUMBER' },
+    caminhao: { type: 'STRING' },
+    cliente: { type: 'STRING' },
+    telefone: { type: 'STRING' },
+    retirada: { type: 'STRING' },
+    destino: { type: 'STRING' },
+    veiculo: { type: 'STRING' },
+    placa: { type: 'STRING' },
+    vin: { type: 'STRING' },
+    distancia: { type: 'NUMBER' },
+    motorista: { type: 'STRING' },
+    observacoes: { type: 'STRING' },
+    transcricao: { type: 'STRING' },
+  },
+  required: ['intencao'],
+};
+
+const STATUS_WORDS = { pendente: 'pendente (ainda não começou)', aberto: 'em andamento', concluido: 'entregue', cancelado: 'cancelado' };
+
+export async function askAssistant(ctx, user, service, audio, mimeType, { question = '' } = {}, fetchImpl = fetch) {
+  let contexto = service
+    ? `Serviço atual: #${service.id}, ${STATUS_WORDS[service.status] || service.status}${service.vehicle ? `, ${service.vehicle}` : ''}.`
+    : 'Ele não está com nenhum serviço aberto agora.';
+  // Conversa do serviço novo: a resposta curta ("na Ribas", "um Civic 2015") é o campo perguntado.
+  if (QUESTIONS[question]) {
+    contexto = `Ele está preenchendo um serviço novo e o app acabou de perguntar: "${QUESTIONS[question]}". A resposta vai no campo "${question}" com intenção servico_novo (junto com qualquer outro dado do serviço que ele falar), a não ser que peça claramente outra coisa ou queira pular.`;
+  }
+  const prompt = ASSISTANT_PROMPT.replace('{quem}', user.role === 'dono' ? `o dono/ADM (${user.name})` : `o motorista ${user.name}`).replace('{contexto}', contexto);
+  return askGemini(ctx, audio, mimeType, prompt, ASSISTANT_SCHEMA, fetchImpl);
+}
+
+const positive = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null);
+
+// Resposta do Gemini -> o que o app faz.
+export function assistantResult(ctx, user, service, a) {
+  const intencao = INTENTS.includes(a.intencao) ? a.intencao : 'nao_entendi';
+  const transcricao = String(a.transcricao || '').slice(0, 500);
+  const words = String(a.caminhao || '').split(/\s+/).filter(Boolean);
+  const nope = (msg) => ({ intencao: 'nao_entendi', transcricao, mensagem: msg });
+  const needService = () => {
+    if (!service) throw new HttpError(409, 'Você não está com nenhum serviço aberto. Abra o serviço e fale de novo.');
+  };
+
+  if (intencao === 'abrir_tela') {
+    const screen = SCREENS[a.tela];
+    if (!screen) return nope();
+    if (screen.module && !ctx.has(screen.module)) return nope(`${screen.label} não está ligado neste app.`);
+    if (screen.owner && user.role !== 'dono') return nope(`${screen.label} é só para o ADM.`);
+    let hash = screen.hash;
+    if (a.tela === 'ganhos') hash = user.role === 'dono' ? '#/comissao' : `#/motorista/${user.id}`;
+    if (a.tela === 'servico_atual') {
+      needService();
+      hash = `#/servico/${service.id}`;
+    }
+    const busca = String(a.busca || '').trim().slice(0, 60);
+    if (a.tela === 'clientes' && busca) hash += `?q=${encodeURIComponent(busca)}`;
+    return { intencao, transcricao, tela: a.tela, label: screen.label, hash };
+  }
+
+  if (intencao === 'servico_novo') {
+    const fields = withDriver(ctx, user, newServiceFields({ ...a, milhas: a.distancia }));
+    return fields.entendeu ? { intencao, transcricao, campos: fields } : nope();
+  }
+
+  if (intencao === 'status_servico') {
+    if (!ACTIONS[a.acao] || a.acao === 'nao_entendi') return nope();
+    needService();
+    return { intencao, transcricao, acao: a.acao, label: ACTIONS[a.acao].label, service_id: service.id };
+  }
+
+  if (intencao === 'pagamento') {
+    if (!ctx.has('pagamentos')) return nope('Os pagamentos não estão ligados neste app.');
+    needService();
+    const method = PAY_METHODS.includes(a.forma) ? a.forma : '';
+    return {
+      intencao,
+      transcricao,
+      service_id: service.id,
+      campos: { amount: positive(a.valor), method, payer: String(a.pagador || '').trim().slice(0, 60) },
+    };
+  }
+
+  if (intencao === 'despesa') {
+    if (!ctx.has('despesas')) return nope('As despesas não estão ligadas neste app.');
+    const named = words.length ? ctx.api.manutencao?.findTruck(words) : null;
+    return {
+      intencao,
+      transcricao,
+      campos: {
+        amount: positive(a.valor),
+        category: EXPENSE_TYPES.includes(a.categoria) ? a.categoria : '',
+        description: String(a.descricao || '').trim().slice(0, 120),
+        odometer: positive(a.odometro) && Math.round(a.odometro),
+        truck_id: named?.id ?? null,
+      },
+    };
+  }
+
+  if (intencao === 'milhas_caminhao') {
+    if (!ctx.has('manutencao')) return nope('Os caminhões não estão ligados neste app.');
+    const odometer = positive(a.odometro) && Math.round(a.odometro);
+    if (!odometer) return nope('Não ouvi as milhas. Fale o número do painel do caminhão.');
+    const truck = (words.length && ctx.api.manutencao.findTruck(words)) || ctx.api.manutencao.truckFor(user.id);
+    if (!truck) return { intencao, transcricao, odometer, truck_id: null, hash: '#/caminhoes' };
+    return { intencao, transcricao, odometer, truck_id: truck.id, truck_name: truck.name, truck_odometer: truck.odometer };
+  }
+
+  if (intencao === 'pular') return { intencao, transcricao };
+
+  return nope();
 }
 
 function findService(ctx, user, id) {
@@ -211,15 +404,33 @@ export default {
         ctx.log('Serviço por voz: falha no Gemini', err.message);
         throw new HttpError(502, 'Não consegui entender o áudio agora. Tente de novo ou digite.');
       }
-      // Motorista falado -> o da equipe com esse nome (só o ADM escolhe motorista).
-      let driver_id = null;
-      if (req.user.role === 'dono' && fields.driver) {
-        const name = simplify(fields.driver);
-        const team = ctx.db.prepare("SELECT id, name FROM users WHERE active = 1 AND (role = 'motorista' OR drives = 1)").all();
-        driver_id = team.find((u) => simplify(u.name) === name)?.id || team.find((u) => simplify(u.name).split(' ')[0] === name.split(' ')[0])?.id || null;
+      res.json(withDriver(ctx, req.user, fields));
+    });
+
+    // Assistente (microfone de todas as telas). ?servico=ID quando a pessoa está na tela de um serviço.
+    api.post('/voice-command/assistente', express.raw({ type: 'audio/*', limit: '15mb' }), async (req, res) => {
+      if (!ctx.config.geminiApiKey) throw new HttpError(503, 'Os comandos de voz precisam da GEMINI_API_KEY no servidor.');
+      if (!Buffer.isBuffer(req.body) || req.body.length < 500) throw new HttpError(400, 'Não ouvi nada. Segure o microfone e fale.');
+      // Sem tela de serviço aberta: o serviço em andamento dele, ou o único que está na fila dele.
+      let service = req.query.servico ? findService(ctx, req.user, req.query.servico) : ctx.data.services.active(req.user);
+      if (!service) {
+        const queue = ctx.db.prepare("SELECT id FROM services WHERE driver_id = ? AND status = 'pendente'").all(req.user.id);
+        if (queue.length === 1) service = ctx.data.services.get(queue[0].id);
       }
-      const understood = ['contact_name', 'contact_phone', 'pickup', 'dropoff', 'vehicle', 'plate', 'vin', 'miles', 'price', 'notes'].some((k) => fields[k]);
-      res.json({ ...fields, driver_id, entendeu: understood });
+      let answer;
+      try {
+        answer = await askAssistant(ctx, req.user, service, req.body, audioType(req.headers['content-type']), { question: String(req.query.pergunta || '') });
+      } catch (err) {
+        ctx.log('Assistente de voz: falha no Gemini', err.message);
+        throw new HttpError(502, 'Não consegui entender o áudio agora. Tente de novo.');
+      }
+      const result = assistantResult(ctx, req.user, service, answer);
+      // Situação do serviço: muda na hora, como o microfone da tela do serviço (cancelar pede confirmação).
+      if (result.intencao === 'status_servico') {
+        const done = applyAction(ctx, req.user, service, result.acao);
+        Object.assign(result, { confirmar: Boolean(done.pending), service: done.updated, notices: done.notices });
+      }
+      res.json(result);
     });
 
     // Depois do "Confirmar cancelamento" na tela.
