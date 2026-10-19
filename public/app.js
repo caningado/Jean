@@ -265,7 +265,7 @@ function renderSide() {
     [
       'Financeiro',
       [
-        has('pagamentos') ? item('pendentes', '#/pendentes', 'Pendências') : '',
+        has('pagamentos') ? item('pendentes', '#/pendentes', owner ? 'Pendências' : 'Minhas pendências') : '',
         has('comissao') ? item('comissao', owner ? '#/comissao' : `#/motorista/${state.me.id}`, owner ? 'Pagar motoristas' : 'Meus ganhos') : '',
         has('despesas') ? item('despesas', '#/despesas', 'Despesas') : '',
         has('planilha') && owner ? item('planilha', '#/planilha', 'Planilha do Excel') : '',
@@ -1382,7 +1382,8 @@ screens.resumo = async (params) => {
     ${s.received_cents != null && s.expenses_cents != null ? `<div class="card"><div class="sub">Saldo (recebido − despesas)</div><div class="big">${money(s.received_cents - s.expenses_cents)}</div></div>` : ''}
     ${s.received_by_method ? `<div class="card"><h2>Recebido por forma</h2><ul class="list">${Object.entries(s.received_by_method).map(([k, v]) => `<li><div class="row"><span>${METHODS[k]}</span><span>${money(v)}</span></div></li>`).join('') || '<li class="empty">Nada recebido.</li>'}</ul></div>` : ''}
     <div id="caixa"></div>
-    ${s.open_cents || s.to_receive_cents ? `<div class="card"><h2>Pendências (todas)</h2><p>Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
+    ${state.me.role !== 'dono' && s.open_cents != null ? `<div class="card"><h2>Minhas pendências</h2><p>${s.open_cents || s.to_receive_cents ? `Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}` : 'Nada pendente 👍'}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
+    ${state.me.role === 'dono' && (s.open_cents || s.to_receive_cents) ? `<div class="card"><h2>Pendências (todas)</h2><p>Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
     ${s.expenses_by_category && Object.keys(s.expenses_by_category).length ? `<div class="card"><h2>Despesas</h2><ul class="list">${Object.entries(s.expenses_by_category).map(([k, v]) => `<li><div class="row"><span>${CATEGORIES[k] || k}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}
     ${state.me.role === 'dono' ? '<a class="card linkcard" href="#/relatorio"><span>🖨 Relatório do dia para imprimir</span><span>›</span></a>' : ''}
     ${has('planilha') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/planilha"><span>📊 Planilha do Excel</span><span>›</span></a>' : ''}`;
@@ -1525,7 +1526,7 @@ async function cashCard(box) {
 }
 
 screens.pendentes = async () => {
-  setScreen('Pendências', { tab: 'resumo', back: '#/resumo' });
+  setScreen(state.me.role === 'dono' ? 'Pendências' : 'Minhas pendências', { tab: 'resumo', back: '#/resumo' });
   const list = await api('/payments/pending');
   const late = list.filter((s) => s.overdue).length;
   const age = (d) => (d === 0 ? 'hoje' : d === 1 ? 'há 1 dia' : `há ${d} dias`);
@@ -1622,6 +1623,7 @@ screens.mais = async () => {
   view.innerHTML = `
     <div class="card"><p><strong>${esc(state.me.name)}</strong><br><span class="sub">${phoneFmt(state.me.phone)} · ${state.me.role === 'dono' ? 'ADM' : 'Motorista'}</span></p></div>
     <div class="card"><ul class="list">
+      ${has('pagamentos') && state.me.role !== 'dono' ? '<li><a href="#/pendentes"><span>⏳ Minhas pendências</span><span>›</span></a></li>' : ''}
       ${has('despesas') ? '<li><a href="#/despesas"><span>🧾 Despesas</span><span>›</span></a></li>' : ''}
       ${has('manutencao') ? '<li><a href="#/caminhoes"><span>🔧 Caminhões e manutenção</span><span>›</span></a></li>' : ''}
       ${has('comissao') ? `<li><a href="${state.me.role === 'dono' ? '#/comissao' : `#/motorista/${state.me.id}`}"><span>💰 ${state.me.role === 'dono' ? 'Pagamento dos motoristas' : 'Meus ganhos'}</span><span>›</span></a></li>` : ''}
