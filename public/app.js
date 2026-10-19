@@ -1189,10 +1189,12 @@ screens.contatos = async (params) => {
       }
     };
   }
-  // Sem busca: só os 5 clientes mais novos. Com busca: todos que batem, aos poucos.
+  // Celular, sem busca: só os 5 clientes mais novos. Com busca, ou o ADM no computador: todos
+  // (em ordem de nome), aos poucos.
   const PAGE = 300;
+  const all = Boolean(q) || (isDesk() && state.me.role === 'dono');
   const [first, companies] = await Promise.all([
-    api(q ? `/contacts?q=${encodeURIComponent(q)}&limit=${PAGE}` : '/contacts?recent=1&limit=5', { withTotal: true }),
+    api(all ? `/contacts?q=${encodeURIComponent(q)}&limit=${PAGE}` : '/contacts?recent=1&limit=5', { withTotal: true }),
     has('empresas') ? api('/companies').catch(() => []) : [],
   ]);
   const list = first.data;
@@ -1218,7 +1220,7 @@ screens.contatos = async (params) => {
     view.querySelector('#list').innerHTML = list.length ? list.map(phoneRow).join('') : `<li class="empty">${empty}</li>`;
   }
   // Agenda grande: mostra aos poucos, com o total e o botão "Mostrar mais".
-  if (q && total > list.length) {
+  if (all && total > list.length) {
     view.insertAdjacentHTML('beforeend', '<div class="more"><p class="sub" id="shown"></p><button class="secondary" id="more">Mostrar mais</button></div>');
     const shown = view.querySelector('#shown');
     const more = view.querySelector('#more');
