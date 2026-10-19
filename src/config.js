@@ -45,7 +45,6 @@ export function loadConfig(overrides = {}) {
       apiVersion: env.WHATSAPP_API_VERSION || 'v21.0',
       // Resposta automática para quem não é da equipe: diaria (padrão), nunca ou sempre.
       // Padrão: o robô nunca responde clientes (só o dono responde, pelo WhatsApp Business).
-      outsiderReply: ['diaria', 'sempre'].includes(env.WHATSAPP_RESPOSTA_FORA) ? env.WHATSAPP_RESPOSTA_FORA : 'nunca',
     },
     // Cobrança atrasada: avisa quando passa desse número de dias sem receber.
     overdueDays: Number(env.COBRANCA_DIAS) > 0 ? Number(env.COBRANCA_DIAS) : 7,

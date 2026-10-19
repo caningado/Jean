@@ -45,9 +45,9 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 | `atual`, `pendentes`, `resumo`, `resumo mes`, `ajuda`, `cancelar` | |
 
 Quem não é da equipe (clientes, amigos) e manda mensagem para o número do robô vira contato,
-mas o robô **não responde nada**: só o dono responde clientes, pelo app WhatsApp Business.
-Se um dia quiser um "já vamos responder" automático, use `WHATSAPP_RESPOSTA_FORA=diaria`
-(no máximo uma vez por dia, com aviso ao dono) ou `WHATSAPP_RESPOSTA_FORA=sempre`.
+mas o robô **nunca responde**: só o dono responde clientes, pelo app WhatsApp Business.
+Isso é uma trava no código: o robô só manda mensagem para telefones de ADM ou motorista
+ativos (Mais › Equipe), nunca para cliente.
 
 ## Rodar no computador (para testar)
 
