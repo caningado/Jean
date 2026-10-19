@@ -560,7 +560,12 @@ screens.novo = async () => {
   const drivers = state.me.role === 'dono' ? await api('/users') : [];
   const { pricing } = state;
   const priced = pricing && (pricing.baseCents || pricing.perMileCents);
+  const voice = has('voz') && (await voiceEnabled());
   view.innerHTML = `
+    ${voice ? `<div class="card voice-card">
+      <button type="button" class="mic" id="mic" aria-label="Falar o serviço"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <p class="voice-status" id="voiceStatus">Segure e fale o serviço: cliente, telefone, onde pegar, para onde levar, carro e valor.</p>
+    </div>` : ''}
     <form class="card" id="f">
       <input type="hidden" name="contact_id">
       <input type="hidden" name="company_id">
@@ -593,6 +598,7 @@ screens.novo = async () => {
   const form = view.querySelector('#f');
   placeSuggestions(form.pickup);
   placeSuggestions(form.dropoff);
+  if (voice) wireMic(view.querySelector('#mic'), view.querySelector('#voiceStatus'), newServiceVoice(form), 60000);
   // Escolher o cliente direto da agenda do celular.
   const agenda = view.querySelector('#agenda');
   if (agenda) {
@@ -1001,7 +1007,7 @@ screens.servico = async (params, id) => {
     reload();
   });
   on('#edit', () => (location.hash = `#/editar/${id}`));
-  if (voice) wireVoice(view.querySelector('#mic'), view.querySelector('#voiceStatus'), s, reload);
+  if (voice) wireMic(view.querySelector('#mic'), view.querySelector('#voiceStatus'), serviceVoice(s, reload));
 
   const vinForm = view.querySelector('#vinForm');
   if (vinForm) {
@@ -3350,7 +3356,69 @@ async function toWav(blob) {
   }
 }
 
-function wireVoice(btn, status, service, reload) {
+// Comando na tela do serviço (peguei o carro, indo entregar...).
+const serviceVoice = (service, reload) => async (audio, setStatus) => {
+  const r = await api(`/voice-command?servico=${service.id}`, { method: 'POST', raw: audio, type: audio.type });
+  if (r.acao === 'nao_entendi') {
+    setStatus(`Não entendi, tente de novo.${r.transcricao ? ` (ouvi: "${r.transcricao}")` : ''}`);
+    voiceFeedback('Não entendi, tente de novo', false);
+    return;
+  }
+  if (r.confirmar) {
+    voiceFeedback('Confirme o cancelamento', true);
+    setStatus('Cancelar o serviço? Confirme na tela.');
+    if (!(await ask(`Cancelar o serviço #${num(service)}?`, { ok: 'Confirmar cancelamento', cancel: 'Não cancelar', danger: true }))) return setStatus('Cancelamento desfeito. Nada mudou.');
+    await api('/voice-command/confirmar', { method: 'POST', body: { servico: service.id, acao: 'cancelar_servico' } });
+    voiceFeedback('Status atualizado: serviço cancelado', true);
+    toast('Status atualizado: Serviço cancelado');
+    reload();
+    return;
+  }
+  const text = `Status atualizado: ${r.label}`;
+  voiceFeedback(text, true);
+  toast([text, ...(r.notices || [])].join(' · '));
+  reload();
+};
+
+// Serviço novo falado: preenche o formulário com o que o Gemini entendeu. A pessoa confere e toca em Criar.
+const newServiceVoice = (form) => async (audio, setStatus) => {
+  const r = await api('/voice-command/novo', { method: 'POST', raw: audio, type: audio.type });
+  if (!r.entendeu) {
+    setStatus(`Não entendi, tente de novo.${r.transcricao ? ` (ouvi: "${r.transcricao}")` : ''}`);
+    voiceFeedback('Não entendi, tente de novo', false);
+    return;
+  }
+  const filled = [];
+  const put = (name, value, label) => {
+    const input = form[name];
+    if (!input || value == null || value === '') return;
+    input.value = value;
+    // Dispara a busca do campo (cliente na agenda, endereço no mapa, VIN).
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    filled.push(label);
+  };
+  if (r.contact_phone || r.contact_name) form.contact_id.value = '';
+  const d = (r.contact_phone || '').replace(/\D/g, '');
+  put('contact_phone', /^1?\d{10}$/.test(d) ? phoneFmt(d.length === 10 ? '1' + d : d) : r.contact_phone, 'celular');
+  put('contact_name', r.contact_name, 'cliente');
+  put('pickup', r.pickup, 'retirada');
+  put('dropoff', r.dropoff, 'destino');
+  put('vin', r.vin, 'VIN');
+  put('vehicle', r.vehicle, 'veículo');
+  put('plate', r.plate, 'placa');
+  put('miles', r.miles, 'milhas');
+  put('price', r.price, 'valor');
+  if (r.notes) put('notes', [form.notes.value, r.notes].filter(Boolean).join('\n'), 'observações');
+  if (r.driver_id && form.driver_id) {
+    form.driver_id.value = String(r.driver_id);
+    filled.push('motorista');
+  }
+  setStatus(`✅ Preenchi: ${filled.join(', ')}. Confira e toque em Criar serviço.`);
+  voiceFeedback('Confira os dados e toque em criar serviço', true);
+};
+
+// Liga o botão de microfone: grava, converte para WAV e entrega o áudio para handle(audio, setStatus).
+function wireMic(btn, status, handle, maxMs = 15000) {
   const TYPES = ['audio/mp4;codecs=mp4a.40.2', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus'];
   let rec = null;
   let starting = false;
@@ -3384,7 +3452,7 @@ function wireVoice(btn, status, service, reload) {
     rec.start();
     btn.classList.add('rec');
     setStatus('🔴 Ouvindo… solte (ou toque de novo) quando terminar.');
-    timer = setTimeout(stop, 15000); // no máximo 15 segundos
+    timer = setTimeout(stop, maxMs); // tempo máximo de gravação
   };
   const stop = () => {
     if (!rec || rec.state === 'inactive') return;
@@ -3398,26 +3466,7 @@ function wireVoice(btn, status, service, reload) {
     btn.disabled = true;
     setStatus('Entendendo…');
     try {
-      const audio = await toWav(blob);
-      const r = await api(`/voice-command?servico=${service.id}`, { method: 'POST', raw: audio, type: audio.type });
-      if (r.acao === 'nao_entendi') {
-        setStatus(`Não entendi, tente de novo.${r.transcricao ? ` (ouvi: "${r.transcricao}")` : ''}`);
-        voiceFeedback('Não entendi, tente de novo', false);
-        return;
-      }
-      if (r.confirmar) {
-        voiceFeedback('Confirme o cancelamento', true);
-        setStatus('Cancelar o serviço? Confirme na tela.');
-        if (!(await ask(`Cancelar o serviço #${num(service)}?`, { ok: 'Confirmar cancelamento', cancel: 'Não cancelar', danger: true }))) return setStatus('Cancelamento desfeito. Nada mudou.');
-        await api('/voice-command/confirmar', { method: 'POST', body: { servico: service.id, acao: 'cancelar_servico' } });
-        voiceFeedback('Status atualizado: serviço cancelado', true);
-        toast('Status atualizado: Serviço cancelado');
-        return reload();
-      }
-      const text = `Status atualizado: ${r.label}`;
-      voiceFeedback(text, true);
-      toast([text, ...(r.notices || [])].join(' · '));
-      reload();
+      await handle(await toWav(blob), setStatus);
     } catch (err) {
       setStatus(err.message);
       voiceFeedback('Não deu certo', false);
