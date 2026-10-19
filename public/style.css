@@ -478,3 +478,18 @@ button.mic.rec { background: var(--bad); animation: mic-pulse 1s ease-in-out inf
 @keyframes mic-pulse { 50% { transform: scale(1.08); } }
 .voice-status { margin: 0; color: var(--muted, inherit); }
 p.stage { font-weight: 600; }
+
+/* Assistente de voz: microfone flutuante em todas as telas */
+button.fab-mic { position: fixed; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 55; width: 64px; height: 64px; box-shadow: 0 4px 12px rgba(0, 0, 0, .25); }
+button.fab-mic svg { width: 30px; height: 30px; }
+button.fab-mic.hidden { display: none; }
+.voice-bubble { position: fixed; right: 16px; left: 16px; bottom: calc(156px + env(safe-area-inset-bottom)); z-index: 56; margin-left: auto; max-width: 360px; width: fit-content; padding: 10px 14px; border-radius: 14px; background: var(--card, #fff); color: var(--text, inherit); box-shadow: 0 4px 14px rgba(0, 0, 0, .2); font-size: 15px; }
+.voice-bubble.hidden { display: none; }
+body.has-fab .toast { right: 92px; }
+body.has-fab main { padding-bottom: 72px; }
+.voice-hint { margin: 0 4px 8px; }
+@media (min-width: 1000px) {
+  button.fab-mic { bottom: 24px; right: 24px; }
+  .voice-bubble { bottom: 100px; right: 24px; }
+}
+@media print { button.fab-mic, .voice-bubble { display: none !important; } }

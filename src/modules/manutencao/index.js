@@ -332,6 +332,13 @@ const commands = [
   },
 ];
 
+// Milhas novas do caminhão: o motorista não pode diminuir (só o ADM corrige para menos).
+function updateOdometer(ctx, user, truck, value) {
+  const miles = int(value, 'Milhas');
+  if (miles < truck.odometer && user.role !== 'dono') throw new HttpError(400, `As milhas não podem ser menores que ${fmtMiles(truck.odometer)}.`);
+  return setOdometer(ctx, truck, miles, user.id);
+}
+
 function canEdit(user, truck) {
   return truck && (user.role === 'dono' || truck.driver_id === user.id || truck.driver_id == null);
 }
@@ -405,11 +412,7 @@ function routes(api, ctx) {
     const truck = getTruck(ctx, req.params.id);
     if (!canEdit(req.user, truck)) throw new HttpError(404, 'Caminhão não encontrado.');
     const body = req.body || {};
-    if (body.odometer != null && body.odometer !== '') {
-      const miles = int(body.odometer, 'Milhas');
-      if (miles < truck.odometer && req.user.role !== 'dono') throw new HttpError(400, `As milhas não podem ser menores que ${fmtMiles(truck.odometer)}.`);
-      setOdometer(ctx, truck, miles, req.user.id);
-    }
+    if (body.odometer != null && body.odometer !== '') updateOdometer(ctx, req.user, truck, body.odometer);
     if (req.user.role === 'dono') {
       if (body.name != null && String(body.name).trim()) ctx.db.prepare('UPDATE trucks SET name = ? WHERE id = ?').run(String(body.name).trim(), truck.id);
       if (body.plate !== undefined) ctx.db.prepare('UPDATE trucks SET plate = ? WHERE id = ?').run(String(body.plate || '').trim() || null, truck.id);
@@ -823,6 +826,9 @@ function publicRoutes(app, ctx) {
 function setup(ctx) {
   ctx.api.manutencao = {
     get: (id) => getTruck(ctx, id),
+    canEdit,
+    // Confere quem pode e se as milhas fazem sentido (lança erro se não), depois grava.
+    updateOdometer: (user, truck, miles) => updateOdometer(ctx, user, truck, miles),
     // Caminhão do motorista; se só existe um caminhão, é ele.
     truckFor(userId) {
       const mine = ctx.db.prepare('SELECT * FROM trucks WHERE active = 1 AND driver_id = ? ORDER BY id').all(userId);

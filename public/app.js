@@ -560,12 +560,8 @@ screens.novo = async () => {
   const drivers = state.me.role === 'dono' ? await api('/users') : [];
   const { pricing } = state;
   const priced = pricing && (pricing.baseCents || pricing.perMileCents);
-  const voice = has('voz') && (await voiceEnabled());
   view.innerHTML = `
-    ${voice ? `<div class="card voice-card">
-      <button type="button" class="mic" id="mic" aria-label="Falar o serviço"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
-      <p class="voice-status" id="voiceStatus">Segure e fale o serviço: cliente, telefone, onde pegar, para onde levar, carro e valor.</p>
-    </div>` : ''}
+    ${has('voz') && (await voiceEnabled()) ? '<p class="sub voice-hint">🎤 Dica: segure o microfone e fale o serviço. Eu pergunto o que faltar.</p>' : ''}
     <form class="card" id="f">
       <input type="hidden" name="contact_id">
       <input type="hidden" name="company_id">
@@ -598,7 +594,9 @@ screens.novo = async () => {
   const form = view.querySelector('#f');
   placeSuggestions(form.pickup);
   placeSuggestions(form.dropoff);
-  if (voice) wireMic(view.querySelector('#mic'), view.querySelector('#voiceStatus'), newServiceVoice(form), 60000);
+  // Veio do microfone (de outra tela): preenche e continua a conversa.
+  const spoken = takePrefill('novo');
+  if (spoken) setTimeout(() => talkNewService(form, spoken), 50);
   // Escolher o cliente direto da agenda do celular.
   const agenda = view.querySelector('#agenda');
   if (agenda) {
@@ -852,7 +850,7 @@ screens.servico = async (params, id) => {
     ${voice ? `
     <div class="card voice-card">
       <button type="button" class="mic" id="mic" aria-label="Comando de voz"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
-      <p class="voice-status" id="voiceStatus">Segure e fale: "peguei o carro", "indo entregar", "finalizar"…</p>
+      <p class="voice-status" id="voiceStatus">Segure e fale: "peguei o carro", "indo entregar", "finalizar", "recebi 150 no Zelle"…</p>
     </div>` : ''}
     ${s.events?.length ? `<div class="card"><h2>Histórico</h2><ul class="list">${s.events.map((e) => `<li><div class="row"><span>${esc(VOICE_LABELS[e.action] || e.action)}</span><span class="sub">${when(e.created_at)} · ${esc(e.user_name || '')}${e.source === 'voz' ? ' 🎤' : ''}</span></div></li>`).join('')}</ul></div>` : ''}
 
@@ -1007,7 +1005,8 @@ screens.servico = async (params, id) => {
     reload();
   });
   on('#edit', () => (location.hash = `#/editar/${id}`));
-  if (voice) wireMic(view.querySelector('#mic'), view.querySelector('#voiceStatus'), serviceVoice(s, reload));
+  state.voiceService = s.id;
+  if (voice) wireMic(view.querySelector('#mic'), view.querySelector('#voiceStatus'), assistantVoice);
 
   const vinForm = view.querySelector('#vinForm');
   if (vinForm) {
@@ -1102,6 +1101,16 @@ screens.servico = async (params, id) => {
       reload();
     };
   });
+  // "Recebi 150 no Zelle" falado: preenche o pagamento para conferir.
+  const pay = takePrefill('pagamento');
+  if (pay) {
+    if (payForm) {
+      fillForm(payForm, pay.campos);
+      payForm.method.onchange();
+      payForm.scrollIntoView({ block: 'center' });
+      voiceSay('Confira o pagamento e toque em registrar.', '✅ Preenchi o pagamento. Confira e toque em Registrar pagamento.');
+    } else voiceSay('Não dá para registrar pagamento neste serviço.', 'Não dá para registrar pagamento neste serviço.', false);
+  }
 };
 
 screens.editar = async (params, id) => {
@@ -2477,6 +2486,7 @@ screens.despesas = async () => {
       </div>
       <label>Descrição</label><input name="description" placeholder="Diesel, pedágio I-90…">
       ${trucks.length ? `<label>Caminhão</label><select name="truck_id"><option value="">Nenhum (despesa geral)</option>${trucks.map((t) => `<option value="${t.id}"${t.id === defaultTruck ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>` : ''}
+      ${trucks.length ? '<label>Milhas do caminhão (painel) — opcional</label><input name="odometer" type="number" inputmode="numeric" placeholder="Ex.: depois de abastecer">' : ''}
       <button class="block">Registrar</button>
     </form>
     <div class="card"><ul class="list">${
@@ -2495,6 +2505,15 @@ screens.despesas = async () => {
       toast(err.message);
     }
   };
+  const spoken = takePrefill('despesa');
+  if (spoken) {
+    const form = view.querySelector('#f');
+    const c = spoken.campos;
+    fillForm(form, { amount: c.amount, category: c.category, description: c.description, odometer: c.odometer, truck_id: c.truck_id });
+    const missing = c.amount ? '' : 'Faltou o valor: digite quanto gastou.';
+    voiceSay(missing || 'Confira a despesa e toque em registrar.', missing || '✅ Preenchi a despesa. Confira e toque em Registrar.', !missing);
+    (missing ? form.amount : form.querySelector('button')).focus();
+  }
   view.querySelectorAll('[data-del]').forEach((b) => {
     b.onclick = async () => {
       if (!(await ask('Apagar esta despesa?', { danger: true }))) return;
@@ -3274,12 +3293,14 @@ async function route() {
   const nav = (state.nav = (state.nav || 0) + 1);
   const screen = screens[name] || screens.servicos;
   state.screen = screens[name] ? name : 'servicos';
+  state.voiceService = null;
   try {
     await screen(params, id);
   } catch (err) {
     // Erro de uma tela que já foi trocada por outra (clique rápido) não aparece.
     if (state.me && nav === state.nav) view.innerHTML = `<div class="card empty">${esc(err.message)}</div>`;
   }
+  if (nav === state.nav) showFab();
 }
 
 // ---------- comandos de voz ----------
@@ -3299,7 +3320,7 @@ async function voiceEnabled() {
   return voiceOn;
 }
 
-// Fala e toca um bip curto (agudo = deu certo, grave = não entendeu).
+// Fala e toca um bip curto (agudo = deu certo, grave = não entendeu). Termina quando acaba de falar.
 function voiceFeedback(text, ok) {
   const ctx = novo.audio;
   if (ctx && ctx.state === 'running') {
@@ -3314,12 +3335,22 @@ function voiceFeedback(text, ok) {
     osc.start(t);
     osc.stop(t + 0.26);
   }
-  if ('speechSynthesis' in window) {
+  navigator.vibrate?.(ok ? 120 : [80, 80, 80]);
+  if (!('speechSynthesis' in window)) return Promise.resolve();
+  // Termina quando acaba de falar (para poder escutar a resposta em seguida).
+  return new Promise((resolve) => {
     const say = new SpeechSynthesisUtterance(text);
     say.lang = 'pt-BR';
-    setTimeout(() => speechSynthesis.speak(say), 300);
-  }
-  navigator.vibrate?.(ok ? 120 : [80, 80, 80]);
+    const timer = setTimeout(resolve, 2000 + text.length * 90);
+    say.onend = say.onerror = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    setTimeout(() => {
+      speechSynthesis.cancel();
+      speechSynthesis.speak(say);
+    }, 300);
+  });
 }
 
 // Converte a gravação para WAV mono 16 kHz: o Gemini entende WAV sempre, e cada celular grava num formato
@@ -3356,38 +3387,121 @@ async function toWav(blob) {
   }
 }
 
-// Comando na tela do serviço (peguei o carro, indo entregar...).
-const serviceVoice = (service, reload) => async (audio, setStatus) => {
-  const r = await api(`/voice-command?servico=${service.id}`, { method: 'POST', raw: audio, type: audio.type });
-  if (r.acao === 'nao_entendi') {
-    setStatus(`Não entendi, tente de novo.${r.transcricao ? ` (ouvi: "${r.transcricao}")` : ''}`);
-    voiceFeedback('Não entendi, tente de novo', false);
-    return;
+// ---------- assistente de voz: o microfone que fica em todas as telas ----------
+// Entende o que a pessoa pede (abrir uma tela, criar serviço, "peguei o carro", lançar despesa,
+// pagamento ou milhas do caminhão). Dinheiro e milhas: só preenche a tela, a pessoa confere e confirma.
+const MIC_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+const fab = Object.assign(document.createElement('button'), { type: 'button', className: 'mic fab-mic hidden', innerHTML: MIC_SVG });
+fab.setAttribute('aria-label', 'Assistente de voz');
+const bubble = Object.assign(document.createElement('div'), { className: 'voice-bubble hidden' });
+bubble.setAttribute('role', 'status');
+document.body.append(bubble, fab);
+let fabMic = null;
+
+// Balão em cima do microfone com o que ele está fazendo ou perguntando.
+function bubbleStatus(text) {
+  bubble.textContent = text;
+  bubble.classList.toggle('hidden', !text);
+  clearTimeout(bubbleStatus.timer);
+  if (text && !/^(🔴|🎤|Entendendo)/.test(text)) bubbleStatus.timer = setTimeout(() => bubble.classList.add('hidden'), 8000);
+}
+
+// Mostra o microfone flutuante (menos no login e na tela que já tem o microfone grande).
+async function showFab() {
+  const on = Boolean(state.me) && state.screen !== 'login' && has('voz') && (await voiceEnabled());
+  const own = Boolean(view.querySelector('#mic'));
+  fab.classList.toggle('hidden', !on || own);
+  document.body.classList.toggle('has-fab', on && !own);
+  if (!on) bubbleStatus('');
+  if (on && !fabMic) fabMic = wireMic(fab, bubbleStatus, assistantVoice, 60000, true);
+}
+
+// O microfone pode mandar para outra tela já com os campos para preencher.
+function go(hash, kind = null, data = null) {
+  state.voicePrefill = kind ? { kind, data } : null;
+  if (location.hash === hash) route();
+  else location.hash = hash;
+}
+function takePrefill(kind) {
+  const p = state.voicePrefill;
+  if (!p || p.kind !== kind) return null;
+  state.voicePrefill = null;
+  return p.data;
+}
+
+// Preenche os campos pelo name e avisa cada um (buscas, mostrar/esconder campos).
+function fillForm(form, values) {
+  for (const [name, value] of Object.entries(values || {})) {
+    const input = form?.elements[name];
+    if (!input || value == null || value === '') continue;
+    input.value = value;
+    input.dispatchEvent(new Event(input.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
   }
-  if (r.confirmar) {
-    voiceFeedback('Confirme o cancelamento', true);
-    setStatus('Cancelar o serviço? Confirme na tela.');
-    if (!(await ask(`Cancelar o serviço #${num(service)}?`, { ok: 'Confirmar cancelamento', cancel: 'Não cancelar', danger: true }))) return setStatus('Cancelamento desfeito. Nada mudou.');
-    await api('/voice-command/confirmar', { method: 'POST', body: { servico: service.id, acao: 'cancelar_servico' } });
-    voiceFeedback('Status atualizado: serviço cancelado', true);
-    toast('Status atualizado: Serviço cancelado');
-    reload();
-    return;
-  }
-  const text = `Status atualizado: ${r.label}`;
-  voiceFeedback(text, true);
-  toast([text, ...(r.notices || [])].join(' · '));
-  reload();
+}
+
+const voiceSay = (spoken, shown = spoken, ok = true) => {
+  bubbleStatus(shown);
+  return voiceFeedback(spoken, ok);
 };
 
-// Serviço novo falado: preenche o formulário com o que o Gemini entendeu. A pessoa confere e toca em Criar.
-const newServiceVoice = (form) => async (audio, setStatus) => {
-  const r = await api('/voice-command/novo', { method: 'POST', raw: audio, type: audio.type });
-  if (!r.entendeu) {
-    setStatus(`Não entendi, tente de novo.${r.transcricao ? ` (ouvi: "${r.transcricao}")` : ''}`);
-    voiceFeedback('Não entendi, tente de novo', false);
-    return;
+async function assistantVoice(audio, setStatus) {
+  const form = state.screen === 'novo' ? view.querySelector('#f') : null;
+  const q = new URLSearchParams();
+  if (state.voiceService) q.set('servico', state.voiceService);
+  if (form?.talk?.current) q.set('pergunta', form.talk.current);
+  const r = await api(`/voice-command/assistente?${q}`, { method: 'POST', raw: audio, type: audio.type });
+  const heard = r.transcricao ? ` (ouvi: "${r.transcricao}")` : '';
+  if (r.intencao === 'nao_entendi' || r.intencao === 'pular') {
+    // No meio da conversa do serviço novo: pergunta de novo (ou passa para a próxima).
+    // (sem await: ele escuta a resposta depois que este áudio termina)
+    if (form?.talk?.current) return void askNext(form, { again: r.intencao === 'nao_entendi' });
+    setStatus(`${r.mensagem || 'Não entendi, tente de novo.'}${r.intencao === 'nao_entendi' ? heard : ''}`);
+    return voiceFeedback(r.mensagem || 'Não entendi, tente de novo', false);
   }
+  if (r.intencao === 'abrir_tela') {
+    setStatus(`Abrindo ${r.label}`);
+    voiceFeedback(r.label, true);
+    return go(r.hash);
+  }
+  if (r.intencao === 'servico_novo') {
+    if (form) return talkNewService(form, r.campos);
+    setStatus('Abrindo Novo serviço…');
+    return go('#/novo', 'novo', r.campos);
+  }
+  if (r.intencao === 'status_servico') {
+    const refresh = () => ['servico', 'servicos'].includes(state.screen) && route();
+    if (r.confirmar) {
+      voiceFeedback('Confirme o cancelamento', true);
+      setStatus('Cancelar o serviço? Confirme na tela.');
+      if (!(await ask(`Cancelar o serviço #${num(r.service)}?`, { ok: 'Confirmar cancelamento', cancel: 'Não cancelar', danger: true }))) return setStatus('Cancelamento desfeito. Nada mudou.');
+      await api('/voice-command/confirmar', { method: 'POST', body: { servico: r.service_id, acao: 'cancelar_servico' } });
+      voiceFeedback('Status atualizado: serviço cancelado', true);
+      setStatus('Status atualizado: Serviço cancelado');
+      return refresh();
+    }
+    const text = `Status atualizado: ${r.label}`;
+    voiceFeedback(text, true);
+    setStatus([`${text} (serviço #${num(r.service)})`, ...(r.notices || [])].join(' · '));
+    return refresh();
+  }
+  if (r.intencao === 'pagamento') return go(`#/servico/${r.service_id}`, 'pagamento', r);
+  if (r.intencao === 'despesa') return go('#/despesas', 'despesa', r);
+  if (r.intencao === 'milhas_caminhao') {
+    if (!r.truck_id) {
+      voiceSay('Escolha o caminhão e digite as milhas.', `Escolha o caminhão e digite ${r.odometer.toLocaleString('en-US')} mi.`);
+      return go('#/caminhoes');
+    }
+    const n = r.odometer.toLocaleString('en-US');
+    voiceFeedback(`Atualizar as milhas do ${r.truck_name}?`, true);
+    if (!(await ask(`Atualizar as milhas do ${r.truck_name} para ${n} mi?`, { ok: 'Atualizar', cancel: 'Não' }))) return setStatus('Nada mudou.');
+    await api(`/trucks/${r.truck_id}`, { method: 'PATCH', body: { odometer: r.odometer } });
+    voiceSay('Milhas atualizadas', `✅ Milhas do ${r.truck_name}: ${n} mi`);
+    if (['caminhoes', 'manutencao'].includes(state.screen)) route();
+  }
+}
+
+// Serviço novo falado: preenche o formulário com o que o Gemini entendeu. Devolve o que preencheu.
+function fillNewService(form, r) {
   const filled = [];
   const put = (name, value, label) => {
     const input = form[name];
@@ -3413,12 +3527,51 @@ const newServiceVoice = (form) => async (audio, setStatus) => {
     form.driver_id.value = String(r.driver_id);
     filled.push('motorista');
   }
-  setStatus(`✅ Preenchi: ${filled.join(', ')}. Confira e toque em Criar serviço.`);
-  voiceFeedback('Confira os dados e toque em criar serviço', true);
-};
+  return filled;
+}
+
+// Conversa do serviço novo: depois de preencher, pergunta o que falta e já escuta a resposta.
+const NEW_QUESTIONS = [
+  ['contact_phone', 'telefone', 'Qual o telefone do cliente?'],
+  ['contact_name', 'cliente', 'Qual o nome do cliente?'],
+  ['pickup', 'retirada', 'Onde pegar o carro?'],
+  ['dropoff', 'destino', 'Para onde levar?'],
+  ['vehicle', 'veiculo', 'Qual é o carro?'],
+  ['price', 'valor', 'Qual o valor do serviço?'],
+];
+function talkNewService(form, campos) {
+  form.talk ||= { asked: new Set(), current: null, misses: 0 };
+  const filled = fillNewService(form, campos || {});
+  if (filled.length) bubbleStatus(`✅ Preenchi: ${filled.join(', ')}.`);
+  // Espera a busca na agenda: cliente que já existe completa o nome sozinho.
+  setTimeout(() => askNext(form), 900);
+}
+async function askNext(form, { again = false } = {}) {
+  const talk = (form.talk ||= { asked: new Set(), current: null, misses: 0 });
+  if (state.screen !== 'novo' || !form.isConnected) return;
+  talk.misses = again ? talk.misses + 1 : 0;
+  // Não entendeu: pergunta a mesma coisa uma vez; na segunda, passa para a próxima.
+  let next = again && talk.misses === 1 ? NEW_QUESTIONS.find((q) => q[1] === talk.current) : null;
+  next ||= NEW_QUESTIONS.find(([field]) => form[field] && !form[field].value.trim() && !talk.asked.has(field));
+  if (!next) {
+    talk.current = null;
+    form.querySelector('button.block')?.scrollIntoView({ block: 'center' });
+    return voiceSay('Pronto. Confira e toque em criar serviço.', '✅ Pronto. Confira os dados e toque em Criar serviço.');
+  }
+  const [field, key, question] = next;
+  talk.current = key;
+  talk.asked.add(field);
+  form[field].scrollIntoView({ block: 'center' });
+  const asking = `${again ? 'Não entendi. ' : ''}${question}`;
+  bubbleStatus(`🎤 ${asking}`);
+  await voiceFeedback(asking, true);
+  if (talk.current === key && state.screen === 'novo' && form.isConnected) fabMic?.listen(`🔴 ${asking} Pode falar (ou diga "pula").`);
+}
 
 // Liga o botão de microfone: grava, converte para WAV e entrega o áudio para handle(audio, setStatus).
-function wireMic(btn, status, handle, maxMs = 15000) {
+// status: o elemento do texto (ou uma função). keep: o botão continua na tela quando ela muda.
+// Devolve { listen }: começa a escutar sozinho e para quando a pessoa termina de falar.
+function wireMic(btn, status, handle, maxMs = 15000, keep = false) {
   const TYPES = ['audio/mp4;codecs=mp4a.40.2', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus'];
   let rec = null;
   let starting = false;
@@ -3427,14 +3580,14 @@ function wireMic(btn, status, handle, maxMs = 15000) {
   let pressedAt = 0;
   let timer = null;
   let busy = false;
-  const setStatus = (text) => (status.textContent = text);
+  const setStatus = typeof status === 'function' ? status : (text) => (status.textContent = text);
   const release = () => {
     clearTimeout(timer);
     stream?.getTracks().forEach((t) => t.stop());
     stream = null;
     btn.classList.remove('rec');
   };
-  const start = async () => {
+  const start = async (auto = false, prompt = '') => {
     if (rec || busy || starting) return;
     starting = true;
     try {
@@ -3451,8 +3604,51 @@ function wireMic(btn, status, handle, maxMs = 15000) {
     rec.onstop = () => send(new Blob(chunks, { type: rec.mimeType || type || 'audio/webm' }));
     rec.start();
     btn.classList.add('rec');
-    setStatus('🔴 Ouvindo… solte (ou toque de novo) quando terminar.');
+    setStatus(auto ? prompt || '🔴 Pode falar…' : '🔴 Ouvindo… solte (ou toque de novo) quando terminar.');
     timer = setTimeout(stop, maxMs); // tempo máximo de gravação
+    if (auto) watchSilence(stream);
+  };
+  // Escuta sozinho: para 1,5 s depois que a pessoa para de falar; ninguém falou em 7 s, desiste.
+  const watchSilence = (s) => {
+    try {
+      const ac = (novo.audio ||= new (window.AudioContext || window.webkitAudioContext)());
+      ac.resume();
+      const source = ac.createMediaStreamSource(s);
+      const meter = ac.createAnalyser();
+      meter.fftSize = 1024;
+      source.connect(meter);
+      const buf = new Uint8Array(meter.fftSize);
+      const began = Date.now();
+      let spoke = false;
+      let quietSince = began;
+      const check = () => {
+        if (!rec || rec.state === 'inactive' || stream !== s) return source.disconnect();
+        meter.getByteTimeDomainData(buf);
+        let peak = 0;
+        for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+        const now = Date.now();
+        if (peak > 14) {
+          spoke = true;
+          quietSince = now;
+        }
+        if (spoke && now - quietSince > 1500) return stop();
+        if (!spoke && now - began > 7000) {
+          drop();
+          return setStatus('Toque no microfone para responder.');
+        }
+        setTimeout(check, 100);
+      };
+      check();
+    } catch {}
+  };
+  // Para de gravar sem mandar.
+  const drop = () => {
+    if (rec) {
+      rec.onstop = null;
+      if (rec.state !== 'inactive') rec.stop();
+      rec = null;
+    }
+    release();
   };
   const stop = () => {
     if (!rec || rec.state === 'inactive') return;
@@ -3488,14 +3684,8 @@ function wireMic(btn, status, handle, maxMs = 15000) {
   });
   btn.addEventListener('contextmenu', (e) => e.preventDefault());
   // Saiu da tela: para de gravar sem mandar.
-  window.addEventListener('hashchange', () => {
-    if (rec) {
-      rec.onstop = null;
-      rec.stop();
-      rec = null;
-    }
-    release();
-  }, { once: true });
+  window.addEventListener('hashchange', drop, { once: !keep });
+  return { listen: (prompt) => start(true, prompt) };
 }
 
 // ---------- aviso de serviço novo ----------
