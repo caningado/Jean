@@ -1,0 +1,82 @@
+// Inteligência do robô (Gemini): entende o que a equipe escreve ou fala no WhatsApp do jeito dela
+// ("abasteci 80 de diesel", áudio "peguei o carro do João") e traduz para um comando do robô.
+// Sem GEMINI_API_KEY o robô funciona só com os comandos de sempre.
+import { askGemini } from '../lib/gemini.js';
+
+// Comandos que mexem em dinheiro ou fecham coisas: o robô pede "sim" antes de fazer.
+export const CONFIRM_FIRST = ['entregue', 'pago', 'gasto', 'recolhi', 'fiz', 'odometro', 'empresa'];
+
+const SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    comando: { type: 'STRING' },
+    cliente: { type: 'STRING' },
+    telefone: { type: 'STRING' },
+    retirada: { type: 'STRING' },
+    destino: { type: 'STRING' },
+    veiculo: { type: 'STRING' },
+    milhas: { type: 'NUMBER' },
+    valor: { type: 'NUMBER' },
+    resposta: { type: 'STRING' },
+    transcricao: { type: 'STRING' },
+  },
+};
+
+function prompt(ctx, user, text) {
+  const list = ctx.commands.map((c) => c.help).filter(Boolean).join('\n');
+  return `Você é o robô de WhatsApp da equipe de uma empresa de guincho nos EUA (Flórida). Quem fala é ${user.role === 'dono' ? `o dono/ADM ${user.name}` : `o motorista ${user.name}`}, em português do Brasil, muitas vezes informal, com erros de digitação ou misturando inglês. Valores em dólar, distâncias em milhas.
+Os comandos que o robô entende são estes (o primeiro trecho em *negrito* é o jeito de escrever):
+${list}
+
+Traduza o pedido para UM comando, escrito em "comando" do jeito que se digitaria (ex.: "gasto 80 diesel", "pago 150 zelle", "odometro 123400", "entregue", "abrir 12", "resumo mes").
+- "peguei o carro", "carro no guincho": não muda nada no robô; responda em "resposta" que anotou e lembre de mandar as fotos (*antes*).
+- Serviço novo ditado ("serviço pro João, pegar na Alafaya, levar pra Ribas, Civic, 150"): comando "novo" e preencha só o que foi dito em cliente, telefone (só números), retirada, destino, veiculo (com a placa, se disse), milhas, valor.
+- Pergunta sobre como usar o robô, ou conversa sem pedido: deixe "comando" vazio e responda curto em "resposta" (em português, no máximo 3 frases, sem inventar dados da empresa).
+- Se não der para saber o que ele quer, deixe "comando" vazio e peça em "resposta" para explicar de outro jeito.
+Nunca invente valores, nomes ou números que não foram ditos. Em "transcricao", escreva o que a pessoa falou ou escreveu.
+${text ? `Mensagem: """${text.slice(0, 1500)}"""` : 'A mensagem é o áudio anexado.'}`;
+}
+
+export function createAi(ctx) {
+  const enabled = () => Boolean(ctx.config.geminiApiKey);
+
+  // Texto livre ou áudio -> { comando, novo, resposta, transcricao }.
+  async function understand(user, { text = '', audio = null }) {
+    const a = await askGemini(ctx, { prompt: prompt(ctx, user, text), audio: audio?.buffer, mimeType: audioType(audio?.mime), schema: SCHEMA });
+    const str = (k, max = 300) => String(a[k] ?? '').trim().slice(0, max);
+    const num = (k) => (Number.isFinite(Number(a[k])) && Number(a[k]) > 0 ? Number(a[k]) : null);
+    return {
+      comando: str('comando', 200).replace(/^\*|\*$/g, ''),
+      novo: {
+        cliente: str('cliente', 120),
+        telefone: str('telefone', 30).replace(/[^\d+]/g, ''),
+        retirada: str('retirada'),
+        destino: str('destino'),
+        veiculo: str('veiculo', 120),
+        milhas: num('milhas'),
+        valor: num('valor'),
+      },
+      resposta: str('resposta', 600),
+      transcricao: str('transcricao', 500),
+    };
+  }
+
+  // Áudio respondendo uma pergunta do robô: devolve só o texto da resposta.
+  async function transcribe(audio, question) {
+    const a = await askGemini(ctx, {
+      prompt: `Um motorista de guincho (EUA, fala português do Brasil, às vezes inglês) respondeu por áudio esta pergunta do robô:\n"""${String(question).slice(0, 800)}"""\nEscreva em "texto" só a resposta dele, do jeito mais curto que o robô entende (ex.: um endereço, "Honda Civic ABC1234", "150", "sim", "pular", "1"). Números por extenso viram algarismos.`,
+      audio: audio.buffer,
+      mimeType: audioType(audio.mime),
+      schema: { type: 'OBJECT', properties: { texto: { type: 'STRING' } } },
+    });
+    return String(a.texto || '').trim().slice(0, 500);
+  }
+
+  return { enabled, understand, transcribe };
+}
+
+// O WhatsApp manda áudio como "audio/ogg; codecs=opus": o Gemini quer só "audio/ogg".
+function audioType(mime) {
+  const type = String(mime || '').split(';')[0].trim().toLowerCase();
+  return type.startsWith('audio/') ? type : 'audio/ogg';
+}
