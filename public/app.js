@@ -816,6 +816,7 @@ screens.servico = async (params, id) => {
   setScreen(`Serviço #${num(s)}`, { tab: 'servicos', back: '#/servicos' });
   const owner = state.me.role === 'dono';
   const drivers = owner && s.status === 'pendente' ? await api('/users') : [];
+  const voice = has('voz') && ['pendente', 'aberto'].includes(s.status) && (s.driver_id === state.me.id || (owner && s.driver_id)) && (await voiceEnabled());
   const vehicleInfo = s.vin_info ? [s.vin_info.year, s.vin_info.make, s.vin_info.model, s.vin_info.body].filter(Boolean).join(' · ') : '';
   const b = s.balance;
 
@@ -832,6 +833,7 @@ screens.servico = async (params, id) => {
       <p class="big">${s.price_cents != null ? money(s.price_cents) : 'Sem valor'}</p>
       <p class="sub">${when(s.created_at)}${s.driver_name ? ' · ' + esc(s.driver_name) + (owner && s.driver_seq ? ` (nº ${s.driver_seq} do dia ${s.driver_ref_day.slice(8)}/${s.driver_ref_day.slice(5, 7)})` : '') : ''}</p>
       ${s.notes ? `<p>${esc(s.notes)}</p>` : ''}
+      ${s.status === 'aberto' && STAGES[s.stage] ? `<p class="stage">${STAGES[s.stage]}</p>` : ''}
       <div class="actions">
         ${s.status === 'pendente' ? (queued(s) && (owner || s.driver_id === state.me.id) ? '<button id="start">▶ Começar</button>' : '') : s.status === 'aberto' ? '<button id="done">✅ Entregue</button>' : '<button class="secondary" id="reopen">Reabrir</button>'}
         ${s.status !== 'pendente' || owner || s.driver_id === state.me.id ? '<button class="secondary" id="edit">Editar</button>' : ''}
@@ -840,6 +842,13 @@ screens.servico = async (params, id) => {
       ${s.status === 'aberto' && owner ? '<div class="actions"><button class="secondary" id="queue">⏳ Voltar para a fila</button></div>' : ''}
       ${(['aberto', 'pendente'].includes(s.status) && (owner || s.driver_id === state.me.id)) ? '<div class="actions"><button class="danger" id="cancel">✖ Cancelar serviço</button></div>' : ''}
     </div>
+
+    ${voice ? `
+    <div class="card voice-card">
+      <button type="button" class="mic" id="mic" aria-label="Comando de voz"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <p class="voice-status" id="voiceStatus">Segure e fale: "peguei o carro", "indo entregar", "finalizar"…</p>
+    </div>` : ''}
+    ${s.events?.length ? `<div class="card"><h2>Histórico</h2><ul class="list">${s.events.map((e) => `<li><div class="row"><span>${esc(VOICE_LABELS[e.action] || e.action)}</span><span class="sub">${when(e.created_at)} · ${esc(e.user_name || '')}${e.source === 'voz' ? ' 🎤' : ''}</span></div></li>`).join('')}</ul></div>` : ''}
 
     ${has('fotos') ? `
     <div class="card docs-card" id="docs-zone">
@@ -992,6 +1001,7 @@ screens.servico = async (params, id) => {
     reload();
   });
   on('#edit', () => (location.hash = `#/editar/${id}`));
+  if (voice) wireVoice(view.querySelector('#mic'), view.querySelector('#voiceStatus'), s, reload);
 
   const vinForm = view.querySelector('#vinForm');
   if (vinForm) {
@@ -3264,6 +3274,179 @@ async function route() {
     // Erro de uma tela que já foi trocada por outra (clique rápido) não aparece.
     if (state.me && nav === state.nav) view.innerHTML = `<div class="card empty">${esc(err.message)}</div>`;
   }
+}
+
+// ---------- comandos de voz ----------
+// Na tela do serviço: segure o microfone e fale (ou toque uma vez para começar e outra para parar).
+// O servidor manda o áudio para o Gemini, que diz qual comando foi, e muda a situação do serviço.
+const STAGES = { coletado: '🚚 Carro coletado', entregando: '🏁 Indo entregar' };
+const VOICE_LABELS = {
+  iniciar_servico: '▶ Serviço começado',
+  peguei_o_carro: '🚚 Peguei o carro',
+  indo_entregar: '🏁 Indo entregar',
+  finalizar_servico: '✅ Serviço entregue',
+  cancelar_servico: '✖ Serviço cancelado',
+};
+let voiceOn = null;
+async function voiceEnabled() {
+  if (voiceOn === null) voiceOn = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder) && (await api('/voice-command').then((r) => r.enabled).catch(() => false));
+  return voiceOn;
+}
+
+// Fala e toca um bip curto (agudo = deu certo, grave = não entendeu).
+function voiceFeedback(text, ok) {
+  const ctx = novo.audio;
+  if (ctx && ctx.state === 'running') {
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = ok ? 990 : 330;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.4, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.26);
+  }
+  if ('speechSynthesis' in window) {
+    const say = new SpeechSynthesisUtterance(text);
+    say.lang = 'pt-BR';
+    setTimeout(() => speechSynthesis.speak(say), 300);
+  }
+  navigator.vibrate?.(ok ? 120 : [80, 80, 80]);
+}
+
+// Converte a gravação para WAV mono 16 kHz: o Gemini entende WAV sempre, e cada celular grava num formato
+// (iPhone em mp4, Android em webm). Se o celular não conseguir converter, manda como gravou.
+async function toWav(blob) {
+  try {
+    const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const decoded = await new (window.AudioContext || window.webkitAudioContext)().decodeAudioData(await blob.arrayBuffer());
+    const rate = 16000;
+    const offline = new AC(1, Math.ceil(decoded.duration * rate), rate);
+    const src = offline.createBufferSource();
+    src.buffer = decoded;
+    src.connect(offline.destination);
+    src.start();
+    const samples = (await offline.startRendering()).getChannelData(0);
+    const out = new DataView(new ArrayBuffer(44 + samples.length * 2));
+    const text = (at, str) => [...str].forEach((c, i) => out.setUint8(at + i, c.charCodeAt(0)));
+    text(0, 'RIFF');
+    out.setUint32(4, 36 + samples.length * 2, true);
+    text(8, 'WAVEfmt ');
+    out.setUint32(16, 16, true);
+    out.setUint16(20, 1, true);
+    out.setUint16(22, 1, true);
+    out.setUint32(24, rate, true);
+    out.setUint32(28, rate * 2, true);
+    out.setUint16(32, 2, true);
+    out.setUint16(34, 16, true);
+    text(36, 'data');
+    out.setUint32(40, samples.length * 2, true);
+    samples.forEach((v, i) => out.setInt16(44 + i * 2, Math.max(-1, Math.min(1, v)) * 0x7fff, true));
+    return new Blob([out], { type: 'audio/wav' });
+  } catch {
+    return blob;
+  }
+}
+
+function wireVoice(btn, status, service, reload) {
+  const TYPES = ['audio/mp4;codecs=mp4a.40.2', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus'];
+  let rec = null;
+  let starting = false;
+  let stream = null;
+  let chunks = [];
+  let pressedAt = 0;
+  let timer = null;
+  let busy = false;
+  const setStatus = (text) => (status.textContent = text);
+  const release = () => {
+    clearTimeout(timer);
+    stream?.getTracks().forEach((t) => t.stop());
+    stream = null;
+    btn.classList.remove('rec');
+  };
+  const start = async () => {
+    if (rec || busy || starting) return;
+    starting = true;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      return setStatus('Libere o microfone para este app nos ajustes do celular.');
+    } finally {
+      starting = false;
+    }
+    const type = TYPES.find((t) => MediaRecorder.isTypeSupported?.(t));
+    rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+    chunks = [];
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    rec.onstop = () => send(new Blob(chunks, { type: rec.mimeType || type || 'audio/webm' }));
+    rec.start();
+    btn.classList.add('rec');
+    setStatus('🔴 Ouvindo… solte (ou toque de novo) quando terminar.');
+    timer = setTimeout(stop, 15000); // no máximo 15 segundos
+  };
+  const stop = () => {
+    if (!rec || rec.state === 'inactive') return;
+    rec.stop();
+    release();
+  };
+  const send = async (blob) => {
+    rec = null;
+    if (blob.size < 500) return setStatus('Não ouvi nada. Segure o microfone enquanto fala.');
+    busy = true;
+    btn.disabled = true;
+    setStatus('Entendendo…');
+    try {
+      const audio = await toWav(blob);
+      const r = await api(`/voice-command?servico=${service.id}`, { method: 'POST', raw: audio, type: audio.type });
+      if (r.acao === 'nao_entendi') {
+        setStatus(`Não entendi, tente de novo.${r.transcricao ? ` (ouvi: "${r.transcricao}")` : ''}`);
+        voiceFeedback('Não entendi, tente de novo', false);
+        return;
+      }
+      if (r.confirmar) {
+        voiceFeedback('Confirme o cancelamento', true);
+        setStatus('Cancelar o serviço? Confirme na tela.');
+        if (!(await ask(`Cancelar o serviço #${num(service)}?`, { ok: 'Confirmar cancelamento', cancel: 'Não cancelar', danger: true }))) return setStatus('Cancelamento desfeito. Nada mudou.');
+        await api('/voice-command/confirmar', { method: 'POST', body: { servico: service.id, acao: 'cancelar_servico' } });
+        voiceFeedback('Status atualizado: serviço cancelado', true);
+        toast('Status atualizado: Serviço cancelado');
+        return reload();
+      }
+      const text = `Status atualizado: ${r.label}`;
+      voiceFeedback(text, true);
+      toast([text, ...(r.notices || [])].join(' · '));
+      reload();
+    } catch (err) {
+      setStatus(err.message);
+      voiceFeedback('Não deu certo', false);
+    } finally {
+      busy = false;
+      btn.disabled = false;
+    }
+  };
+  // Segurar: grava enquanto o dedo está no botão. Toque rápido: grava até tocar de novo.
+  btn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (rec) return stop();
+    pressedAt = Date.now();
+    start();
+  });
+  btn.addEventListener('pointerup', () => {
+    if (rec && pressedAt && Date.now() - pressedAt > 600) stop();
+    pressedAt = 0;
+  });
+  btn.addEventListener('contextmenu', (e) => e.preventDefault());
+  // Saiu da tela: para de gravar sem mandar.
+  window.addEventListener('hashchange', () => {
+    if (rec) {
+      rec.onstop = null;
+      rec.stop();
+      rec = null;
+    }
+    release();
+  }, { once: true });
 }
 
 // ---------- aviso de serviço novo ----------

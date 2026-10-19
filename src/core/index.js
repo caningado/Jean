@@ -129,6 +129,57 @@ function canSee(user, service) {
   return service && (user.role === 'dono' || service.driver_id === user.id);
 }
 
+// Grava uma mudança no serviço com as regras da fila, do limite em andamento, do fechamento e do
+// cancelamento. Usado pela tela Editar/botões (PATCH) e pelos comandos de voz.
+function saveServiceChange(ctx, user, service, body, motivoRaw = '') {
+  const { data, db } = ctx;
+  if (user.role !== 'dono') delete body.driver_id;
+  // Fila: só o dono põe e tira serviço da fila geral (é ele quem escolhe o motorista).
+  // O motorista mexe nos da fila dele: começa um, ou volta um em andamento para a fila dele.
+  if (user.role !== 'dono') {
+    if (service.status === 'pendente' && service.driver_id !== user.id) throw new HttpError(403, 'Só o ADM escolhe o motorista do serviço.');
+    if (body.status === 'pendente' && service.status !== 'pendente') {
+      if (service.status !== 'aberto') throw new HttpError(403, 'Serviço entregue ou cancelado não volta para Pendente. Fale com o ADM.');
+      body.driver_id = user.id; // continua com ele, na fila dele
+    }
+  }
+  if (service.status === 'pendente' && body.status === 'aberto' && !body.driver_id) body.driver_id = service.driver_id || user.id;
+  // Volta para a fila geral: sem motorista (só o dono).
+  if (body.status === 'pendente' && body.driver_id === undefined) body.driver_id = null;
+  // Começar (ou reabrir): no máximo config.maxActive em andamento por motorista.
+  const starting = body.status === 'aberto' && service.status !== 'aberto';
+  if (starting) checkCanStart(ctx, body.driver_id || service.driver_id || user.id, service.id);
+  // Fechar: confere as regras da empresa (ex.: VIN obrigatório).
+  const finishing = body.status === 'concluido' && service.status !== 'concluido';
+  if (finishing) {
+    const blocked = blockDone(ctx, { ...service, ...body });
+    if (blocked) throw new HttpError(400, blocked.replace(/\*/g, ''));
+  }
+  // Cancelar: guarda o motivo nas observações e, se foi o motorista, avisa o dono.
+  const cancelling = body.status === 'cancelado' && service.status !== 'cancelado';
+  const motivo = cancelling ? String(motivoRaw || '').trim().slice(0, 300) : '';
+  if (motivo) body.notes = [body.notes ?? service.notes, `Cancelado: ${motivo}`].filter(Boolean).join('\n');
+  let updated = data.services.update(service.id, body, user.id);
+  let notices = [];
+  if (finishing) {
+    notices = ctx.loaded.flatMap((mod) => mod.afterDone?.({ ctx, service: updated, user }) || []);
+    updated = data.services.get(service.id);
+  }
+  if (cancelling && user.role !== 'dono' && ctx.send) {
+    const text = `❌ ${user.name} cancelou o serviço #${service.id}${service.contact_name ? ` (${service.contact_name})` : ''}.${motivo ? `\nMotivo: ${motivo}` : ''}`;
+    for (const o of db.prepare("SELECT phone FROM users WHERE active = 1 AND role = 'dono'").all()) ctx.send(o.phone, text).catch(() => {});
+  }
+  if (service.status === 'pendente' && updated.status === 'aberto' && updated.driver_id) {
+    if (!data.services.active({ id: updated.driver_id })) data.services.setActive(updated.driver_id, service.id);
+  }
+  // Dono passou para a fila de um motorista (ou trocou o motorista da fila): avisa.
+  if (updated.status === 'pendente' && updated.driver_id && updated.driver_id !== service.driver_id) notifyAssigned(ctx, updated, user);
+  if (body.status && body.status !== 'aberto') {
+    db.prepare('UPDATE users SET active_service_id = NULL WHERE active_service_id = ?').run(service.id);
+  }
+  return { updated, notices };
+}
+
 // Algum módulo impede fechar o serviço? (ex.: empresa que exige o VIN)
 function blockDone(ctx, service) {
   for (const mod of ctx.loaded) {
@@ -1010,50 +1061,7 @@ function routes(api, ctx) {
       if (contactId && !data.contacts.get(contactId)) throw new HttpError(400, 'Cliente não encontrado.');
       body.contact_id = contactId;
     }
-    if (req.user.role !== 'dono') delete body.driver_id;
-    // Fila: só o dono põe e tira serviço da fila geral (é ele quem escolhe o motorista).
-    // O motorista mexe nos da fila dele: começa um, ou volta um em andamento para a fila dele.
-    if (req.user.role !== 'dono') {
-      if (service.status === 'pendente' && service.driver_id !== req.user.id) throw new HttpError(403, 'Só o ADM escolhe o motorista do serviço.');
-      if (body.status === 'pendente' && service.status !== 'pendente') {
-        if (service.status !== 'aberto') throw new HttpError(403, 'Serviço entregue ou cancelado não volta para Pendente. Fale com o ADM.');
-        body.driver_id = req.user.id; // continua com ele, na fila dele
-      }
-    }
-    if (service.status === 'pendente' && body.status === 'aberto' && !body.driver_id) body.driver_id = service.driver_id || req.user.id;
-    // Volta para a fila geral: sem motorista (só o dono).
-    if (body.status === 'pendente' && body.driver_id === undefined) body.driver_id = null;
-    // Começar (ou reabrir): no máximo config.maxActive em andamento por motorista.
-    const starting = body.status === 'aberto' && service.status !== 'aberto';
-    if (starting) checkCanStart(ctx, body.driver_id || service.driver_id || req.user.id, service.id);
-    // Fechar: confere as regras da empresa (ex.: VIN obrigatório).
-    const finishing = body.status === 'concluido' && service.status !== 'concluido';
-    if (finishing) {
-      const blocked = blockDone(ctx, { ...service, ...body });
-      if (blocked) throw new HttpError(400, blocked.replace(/\*/g, ''));
-    }
-    // Cancelar: guarda o motivo nas observações e, se foi o motorista, avisa o dono.
-    const cancelling = body.status === 'cancelado' && service.status !== 'cancelado';
-    const motivo = cancelling ? String(req.body?.motivo || '').trim().slice(0, 300) : '';
-    if (motivo) body.notes = [body.notes ?? service.notes, `Cancelado: ${motivo}`].filter(Boolean).join('\n');
-    let updated = data.services.update(service.id, body, req.user.id);
-    let notices = [];
-    if (finishing) {
-      notices = ctx.loaded.flatMap((mod) => mod.afterDone?.({ ctx, service: updated, user: req.user }) || []);
-      updated = data.services.get(service.id);
-    }
-    if (cancelling && req.user.role !== 'dono' && ctx.send) {
-      const text = `❌ ${req.user.name} cancelou o serviço #${service.id}${service.contact_name ? ` (${service.contact_name})` : ''}.${motivo ? `\nMotivo: ${motivo}` : ''}`;
-      for (const o of db.prepare("SELECT phone FROM users WHERE active = 1 AND role = 'dono'").all()) ctx.send(o.phone, text).catch(() => {});
-    }
-    if (service.status === 'pendente' && updated.status === 'aberto' && updated.driver_id) {
-      if (!data.services.active({ id: updated.driver_id })) data.services.setActive(updated.driver_id, service.id);
-    }
-    // Dono passou para a fila de um motorista (ou trocou o motorista da fila): avisa.
-    if (updated.status === 'pendente' && updated.driver_id && updated.driver_id !== service.driver_id) notifyAssigned(ctx, updated, req.user);
-    if (body.status && body.status !== 'aberto') {
-      db.prepare('UPDATE users SET active_service_id = NULL WHERE active_service_id = ?').run(service.id);
-    }
+    const { updated, notices } = saveServiceChange(ctx, req.user, service, body, req.body?.motivo);
     res.json(notices.length ? { ...updated, notices } : updated);
   });
 
@@ -1227,6 +1235,7 @@ export default {
   publicRoutes,
   exportSheets,
   setup(ctx) {
+    ctx.api.servicos = { change: (user, service, body, motivo) => saveServiceChange(ctx, user, service, body, motivo), canSee };
     const fixed = repairEncodedNames(ctx.db);
     if (fixed) ctx.log?.(`Nomes de clientes corrigidos (importação antiga): ${fixed}`);
   },
