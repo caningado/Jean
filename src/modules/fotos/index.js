@@ -56,6 +56,19 @@ const migrations = [
 
 const DOC_TYPES = { 'application/pdf': '.pdf', 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/heic': '.heic', 'image/heif': '.heic', 'image/gif': '.gif' };
 
+// Grava o gate pass (PDF ou foto) no serviço. Usado pelo painel e pelo robô do WhatsApp.
+function saveDoc(ctx, { serviceId, buffer, mime, name, userId }) {
+  const clean = String(name || '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').trim().slice(0, 120) || `gate pass${DOC_TYPES[mime]}`;
+  const dir = path.join(ctx.config.uploadsDir, `servico-${serviceId}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = `${Date.now()}-gatepass-${crypto.randomBytes(3).toString('hex')}${DOC_TYPES[mime]}`;
+  fs.writeFileSync(path.join(dir, file), buffer);
+  const info = ctx.db
+    .prepare('INSERT INTO service_docs (service_id, kind, name, file, mime, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(serviceId, 'gatepass', clean, path.join(`servico-${serviceId}`, file), mime, userId, nowIso());
+  return Number(info.lastInsertRowid);
+}
+
 // Link que abre o arquivo original sem login, por 1 hora: o leitor de PDF do celular
 // (fora do app) não tem o login do app, principalmente no iPhone.
 const LINK_HOURS = 1;
@@ -274,15 +287,8 @@ function routes(api, ctx) {
     const mime = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
     if (!DOC_TYPES[mime]) throw new HttpError(400, 'Mande um PDF ou uma foto.');
     if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(400, 'O arquivo está vazio.');
-    const name = String(req.query.name || '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').trim().slice(0, 120) || `gate pass${DOC_TYPES[mime]}`;
-    const dir = path.join(ctx.config.uploadsDir, `servico-${service.id}`);
-    fs.mkdirSync(dir, { recursive: true });
-    const file = `${Date.now()}-gatepass-${crypto.randomBytes(3).toString('hex')}${DOC_TYPES[mime]}`;
-    fs.writeFileSync(path.join(dir, file), req.body);
-    const info = ctx.db
-      .prepare('INSERT INTO service_docs (service_id, kind, name, file, mime, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(service.id, 'gatepass', name, path.join(`servico-${service.id}`, file), mime, req.user.id, nowIso());
-    res.status(201).json(listDocs(ctx, service.id).find((d) => d.id === Number(info.lastInsertRowid)));
+    const id = saveDoc(ctx, { serviceId: service.id, buffer: req.body, mime, name: req.query.name, userId: req.user.id });
+    res.status(201).json(listDocs(ctx, service.id).find((d) => d.id === id));
   });
 
   api.get('/docs/:id/file', (req, res) => {
@@ -383,6 +389,12 @@ export default {
   routes,
   publicRoutes,
   onMedia,
+  setup(ctx) {
+    ctx.api.fotos = {
+      docTypes: DOC_TYPES,
+      saveDoc: (doc) => saveDoc(ctx, doc),
+    };
+  },
   serviceHint: '📷 Fotos: mande *antes* ou *depois* e em seguida as fotos da volta no carro (frente, lateral esquerda, traseira, lateral direita).',
   serviceDetail: ({ ctx, service }) => ({ photos: listPhotos(ctx, service.id), docs: listDocs(ctx, service.id) }),
 };

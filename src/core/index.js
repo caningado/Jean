@@ -1,4 +1,5 @@
 // Núcleo: equipe, contatos (agenda) e serviços. Todos os outros módulos se apoiam nele.
+import fs from 'node:fs';
 import express from 'express';
 import { FlowError } from './bot.js';
 import { repairEncodedNames } from './data.js';
@@ -532,6 +533,12 @@ const flows = {
       // VIN lido de uma foto antes de abrir o serviço.
       const withVin = await ctx.api.vin?.attachPending(user, service);
       if (withVin) service = withVin;
+      // Gate pass mandado pelo WhatsApp antes de criar o serviço.
+      if (data._notes && !service.notes) service = ctx.data.services.update(service.id, { notes: data._notes });
+      if (data._doc && ctx.api.fotos && fs.existsSync(data._doc.file)) {
+        ctx.api.fotos.saveDoc({ serviceId: service.id, buffer: fs.readFileSync(data._doc.file), mime: data._doc.mime, name: data._doc.name, userId: user.id });
+        fs.rmSync(data._doc.file, { force: true });
+      }
       const hints = ctx.serviceHints.length ? '\n\n' + ctx.serviceHints.join('\n') : '';
       return `✅ Serviço #${ctx.data.services.ref(service, user)} criado.\n\n${ctx.data.services.describe(service, user)}${hints}\nQuando entregar, mande *entregue*.`;
     },

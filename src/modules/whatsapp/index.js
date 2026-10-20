@@ -88,6 +88,10 @@ export function extractMessages(payload) {
         } else if (m.type === 'document' && m.document?.mime_type?.startsWith('image/')) {
           msg.mediaId = m.document.id;
           msg.text = m.document.caption || '';
+        } else if (m.type === 'document' && m.document?.id) {
+          // PDF (gate pass, pedido de serviço): o robô lê e abre o serviço.
+          msg.mediaId = m.document.id;
+          msg.doc = { name: m.document.filename || '', mime: m.document.mime_type || '' };
         } else if (m.type === 'audio' && m.audio?.id) {
           // Mensagem de voz: o robô entende com o Gemini.
           msg.mediaId = m.audio.id;
@@ -135,9 +139,12 @@ export async function processMessage(ctx, client, msg) {
   }
   // Foto ou áudio: antes, responde os textos que estavam esperando (a ordem importa).
   await flushTexts(ctx, client, msg.from);
-  const audio = msg.audio ? await client.downloadMedia(msg.mediaId) : null;
-  const media = msg.audio ? null : await client.downloadMedia(msg.mediaId);
-  await answer(ctx, client, user, { phone: msg.from, text: msg.text, media, audio });
+  const file = await client.downloadMedia(msg.mediaId);
+  if (msg.doc) {
+    const mime = String(file?.mime || msg.doc.mime).split(';')[0].trim().toLowerCase();
+    return answer(ctx, client, user, { phone: msg.from, doc: { buffer: file?.buffer, mime, name: msg.doc.name } });
+  }
+  await answer(ctx, client, user, { phone: msg.from, text: msg.text, media: msg.audio ? null : file, audio: msg.audio ? file : null });
 }
 
 async function answer(ctx, client, user, input) {

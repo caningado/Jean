@@ -1,6 +1,8 @@
 // O "cérebro" do robô. Não sabe nada de WhatsApp: recebe uma mensagem
 // (telefone + texto ou foto) e devolve as respostas. O módulo whatsapp é só
 // o meio de transporte, e o simulador do painel usa este mesmo código.
+import fs from 'node:fs';
+import path from 'node:path';
 import { normalizePhone, simplify, nowIso, formatPhone } from '../lib/util.js';
 import { ValidationError } from '../lib/validate.js';
 import { servicesBlocked } from '../lib/daily.js';
@@ -109,10 +111,11 @@ export function createBot(ctx) {
 
   // Serviço novo ditado: começa o cadastro e já responde as perguntas com o que foi dito.
   // Para na primeira pergunta sem resposta (ou com resposta que não passou), como uma conversa.
-  async function startNewService(user, novo) {
+  async function startNewService(user, novo, extra = {}) {
     const reply = await runCommand(user, 'novo');
     const conversation = getConversation(user.id);
     if (conversation?.flow !== 'novo') return [].concat(reply);
+    Object.assign(conversation.data, extra);
     conversation.data._prefill = novoAnswers(novo);
     saveConversation(user.id, 'novo', conversation.step, conversation.data);
     // Mostra o que entendeu, para a pessoa conferir antes das perguntas que faltam.
@@ -220,9 +223,52 @@ export function createBot(ctx) {
     return [said, `🤖 *${heard.comando}*`, ...[].concat(await runCommand(user, heard.comando))];
   }
 
+  // PDF (gate pass, pedido de serviço) mandado pelo WhatsApp.
+  // Sem serviço aberto (ou de outro carro): lê o documento e começa um serviço novo com o que estava nele;
+  // o PDF entra no serviço quando ele for criado. Com o serviço do mesmo carro aberto: guarda nele.
+  async function handleDoc(user, conversation, doc) {
+    const fotos = ctx.api.fotos;
+    if (!fotos?.docTypes[doc.mime]) return 'Esse tipo de arquivo eu não abro. Mande PDF ou foto.';
+    let read = null;
+    if (ai.enabled()) {
+      try {
+        read = await ai.readDocument(doc);
+      } catch (err) {
+        ctx.log('Robô: falha ao ler o documento', err.message);
+      }
+    }
+    const active = ctx.data.services.active(user);
+    // Serviço aberto sem VIN ou com o mesmo VIN: o documento é dele. VIN diferente: é outro carro.
+    const sameCar = active && conversation?.flow !== 'novo' && (!read?.vin || !active.vin || active.vin === read.vin);
+    if (sameCar) {
+      fotos.saveDoc({ serviceId: active.id, buffer: doc.buffer, mime: doc.mime, name: doc.name, userId: user.id });
+      if (read?.vin && !active.vin && ctx.api.vin?.remember(user.id, read.vin)) await ctx.api.vin.attachPending(user, active);
+      return `📄 Documento guardado no serviço #${ctx.data.services.ref(active, user)}.${read?.vin && !active.vin ? ` VIN ${read.vin} salvo.` : ''} Aparece no painel, no serviço.`;
+    }
+    if (!read) {
+      return ai.enabled()
+        ? 'Não consegui ler esse documento agora. Mande *novo* para abrir o serviço e depois mande o PDF de novo, que eu guardo nele.'
+        : 'Não tem serviço aberto. Mande *novo* para abrir o serviço e depois mande o PDF, que eu guardo nele.';
+    }
+    // Guarda o arquivo até o serviço ser criado.
+    const dir = path.join(ctx.config.uploadsDir, 'pendentes');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${user.id}-${Date.now()}${fotos.docTypes[doc.mime]}`);
+    fs.writeFileSync(file, doc.buffer);
+    if (read.vin) ctx.api.vin?.remember(user.id, read.vin);
+    clearConversation(user.id);
+    const extras = [
+      read.vin && `VIN: ${read.vin}`,
+      read.observacoes && `Obs.: ${read.observacoes}`,
+    ].filter(Boolean);
+    const reply = await startNewService(user, read.novo, { _doc: { file, mime: doc.mime, name: doc.name }, _notes: read.observacoes || null });
+    if (extras.length && reply[0]?.startsWith('📝')) reply[0] += '\n' + extras.join('\n');
+    return [`📄 Li o ${read.tipo || 'documento'}.`, ...reply];
+  }
+
   // Ponto de entrada. Sempre devolve uma lista de textos para responder.
   // audio = { buffer, mime }: mensagem de voz (precisa do Gemini).
-  async function handle({ phone, text = '', media = null, audio = null }) {
+  async function handle({ phone, text = '', media = null, audio = null, doc = null }) {
     const user = findUser(phone);
     if (!user) {
       return ['Este número não está cadastrado na equipe. Peça ao responsável para te adicionar no painel.'];
@@ -234,6 +280,7 @@ export function createBot(ctx) {
       clearConversation(user.id);
       conversation = null;
     }
+    if (doc) return finish(await handleDoc(user, conversation, doc));
     let prefix = [];
     if (audio) {
       if (!ai.enabled()) return ['Por enquanto eu entendo texto e fotos. Mande *ajuda* para ver os comandos.'];
