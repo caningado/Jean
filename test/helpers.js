@@ -28,6 +28,7 @@ export function makeContext(overrides = {}) {
   });
   const ctx = createContext(config);
   ctx.log = () => {};
+  ctx.config.geminiRetryMs = 0; // sem esperar a 2ª volta do Gemini nos testes
   const insert = ctx.db.prepare('INSERT INTO users (name, phone, role, pin_hash, created_at) VALUES (?, ?, ?, ?, ?)');
   insert.run('Caningado', OWNER_PHONE, 'dono', hashPin('1234'), new Date().toISOString());
   insert.run('Jorge', DRIVER_PHONE, 'motorista', hashPin('5678'), new Date().toISOString());

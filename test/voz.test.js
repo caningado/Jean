@@ -99,7 +99,7 @@ test('Comando de voz: o Gemini diz a ação e o serviço muda, com quem fez e a 
   const s3 = await json(adm, 'POST', '/services', { contact_name: 'Caio Reis', pickup: '3 Main St, Oviedo FL', driver_id: 'fila' });
   assert.equal((await speak(drv, s3.id, 'iniciar_servico')).status, 404);
   answers.length = 0;
-  answers.push(500); // os dois modelos fora do ar (o principal e o reserva)
+  answers.push(500, 500, 500); // os dois modelos fora do ar, nas duas voltas
   const down = await speak(adm, s3.id, 500);
   assert.equal(down.status, 502);
 });

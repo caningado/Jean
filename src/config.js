@@ -74,6 +74,8 @@ export function loadConfig(overrides = {}) {
     geminiModel: env.GEMINI_MODEL || 'gemini-flash-latest',
     // Comandos de voz na tela do serviço: modelo rápido e barato do Gemini.
     geminiVoiceModel: env.GEMINI_VOICE_MODEL || 'gemini-flash-lite-latest',
+    // Modelos extras para quando os dois de cima estão lotados (separados por vírgula).
+    geminiReservas: (env.GEMINI_RESERVAS || '').split(',').map((m) => m.trim()).filter(Boolean),
     // Robô responde com áudio quando a pessoa manda áudio. ROBO_VOZ=off desliga.
     roboVoz: env.ROBO_VOZ !== 'off',
     // Nome do robô (escolhido pelo Caningado em 20/10).
