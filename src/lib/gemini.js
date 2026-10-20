@@ -5,8 +5,8 @@ export async function askGemini(ctx, opts, fetchImpl = globalThis.fetch) {
   try {
     return await callGemini(ctx, { ...opts, model }, fetchImpl);
   } catch (err) {
-    // Modelo pedido falhou (limite do plano grátis, nome trocado pelo Google...): tenta o modelo leve.
-    const reserva = ctx.config.geminiVoiceModel;
+    // Modelo lotado ("high demand"), demorou demais ou mudou de nome: tenta o outro modelo.
+    const reserva = model === ctx.config.geminiVoiceModel ? ctx.config.geminiModel : ctx.config.geminiVoiceModel;
     if (!reserva || reserva === model) throw err;
     ctx.log?.(`Gemini: ${model} falhou (${err.message.slice(0, 120)}), usando ${reserva}`);
     return callGemini(ctx, { ...opts, model: reserva }, fetchImpl);
@@ -22,7 +22,7 @@ async function callGemini(ctx, { prompt, audio = null, mimeType = '', schema, mo
       contents: [{ parts }],
       generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: schema },
     }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(20000),
   });
   if (!res.ok) throw new Error(`Gemini respondeu ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();
