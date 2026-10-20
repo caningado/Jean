@@ -69,6 +69,8 @@ export function loadConfig(overrides = {}) {
     vinOcr: env.VIN_OCR !== 'off',
     // Conferir endereços no mapa (Census + OpenStreetMap, grátis). GEOCODER=off desliga.
     geocoder: env.GEOCODER !== 'off',
+    // Busca de endereço só neste estado (sigla). GEO_ESTADO=todos busca no país inteiro.
+    geoEstado: (env.GEO_ESTADO || 'FL').toUpperCase() === 'TODOS' ? null : (env.GEO_ESTADO || 'FL').toUpperCase(),
   };
 }
 

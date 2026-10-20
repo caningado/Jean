@@ -301,8 +301,19 @@ async function resolvePlace(ctx, location) {
   if (!ctx.geo || isMapReference(location)) return { value: location };
   const found = await ctx.geo.lookup(location);
   if (found.status === 'erro') return { value: location };
-  if (found.matches.length === 1) return { value: found.matches[0].label, notice: `📍 Achei no mapa: *${found.matches[0].label}*` };
+  // Um endereço só: aceita direto quando a pessoa já disse a cidade ou o CEP; senão pergunta se é esse.
+  if (found.matches.length === 1 && sameCity(location, found.matches[0].label)) return { value: found.matches[0].label, notice: `📍 Achei no mapa: *${found.matches[0].label}*` };
   return { check: { query: location, options: found.matches.map((m) => m.label) } };
+}
+
+// "2775 Old Dixie Hwy Kissimmee" e "2775 Old Dixie Hwy, Kissimmee, FL 34744": mesma cidade.
+function sameCity(typed, label) {
+  const text = simplify(typed);
+  const zip = String(label).match(/\b(\d{5})\b(?!.*\d{5})/)?.[1];
+  if (zip && text.includes(zip)) return true;
+  const parts = String(label).split(',').map((p) => simplify(p.trim()));
+  const city = parts.length >= 3 ? parts[parts.length - 2] : null;
+  return Boolean(city && text.includes(city));
 }
 
 // Dois passos para um local (retirada ou destino): o local e, se precisar, a escolha
@@ -342,6 +353,7 @@ function placeSteps(key, what, askText, { optional = false } = {}) {
           );
         }
         const lines = options.map((label, i) => `*${i + 1}* ${label}`);
+        if (options.length === 1) return `📍 Achei no mapa: *${options[0]}*\nÉ esse? Mande *1* para confirmar, *0* para usar como digitei, ou digite o endereço certo (com a cidade).`;
         return `Achei mais de um endereço para "${query}". Qual é?\n${lines.join('\n')}\n*0* usar como digitei\nOu digite o endereço de novo.`;
       },
       async parse(text, { ctx, data }) {

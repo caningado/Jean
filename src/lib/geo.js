@@ -32,7 +32,16 @@ export function photonLabel(p) {
   return [first, city !== first ? city : null, state].filter(Boolean).join(', ');
 }
 
-export function createGeocoder({ fetchImpl = fetch, timeoutMs = 6000, userAgent = 'towing-jj (guincho)' } = {}) {
+// Sigla -> nome do estado (o mapa aberto devolve o nome inteiro).
+const STATE_NAMES = { FL: 'Florida', GA: 'Georgia', AL: 'Alabama', MA: 'Massachusetts', NY: 'New York', TX: 'Texas', CA: 'California' };
+// Hora de parar de somar o estado: a pessoa já escreveu algum (", GA", "Georgia", "FL 34744").
+// A sigla precisa estar em maiúsculas ("Dr", "St" não são estado).
+const HAS_STATE = (q) => /(,\s*|\s)(FL|GA|AL|SC|NC|TN|TX|CA|NY|MA|NJ|PA|OH|IL|MI|VA)(\s+\d{5})?\s*$/.test(q) || /\b(florida|georgia|alabama|texas|california|new york)\b/i.test(q);
+
+// state: sigla (ex.: FL) para só aceitar endereços daquele estado; null = país inteiro.
+export function createGeocoder({ fetchImpl = fetch, timeoutMs = 6000, userAgent = 'towing-jj (guincho)', state = null } = {}) {
+  const stateName = state && (STATE_NAMES[state] || state);
+  const inState = (m) => !state || m.state === state || m.state === stateName;
   const cache = new Map();
   const get = async (url) => {
     const res = await fetchImpl(url, { headers: { 'User-Agent': userAgent, Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
@@ -47,14 +56,17 @@ export function createGeocoder({ fetchImpl = fetch, timeoutMs = 6000, userAgent 
       label: prettyCensus(m.matchedAddress),
       lat: m.coordinates?.y,
       lng: m.coordinates?.x,
+      state: String(m.matchedAddress).split(',').map((p) => p.trim()).filter((p) => /^[A-Z]{2}$/.test(p)).pop() || null,
     }));
   }
 
   async function photon(query, limit) {
-    const data = await get(`${PHOTON}?q=${encodeURIComponent(query)}&limit=${limit * 2}&lang=en`);
+    // Com estado: dá preferência aos lugares perto de Orlando (centro da Flórida) e pede mais resultados para filtrar.
+    const bias = state === 'FL' ? '&lat=28.5&lon=-81.4' : '';
+    const data = await get(`${PHOTON}?q=${encodeURIComponent(query)}&limit=${limit * (state ? 4 : 2)}&lang=en${bias}`);
     return (data?.features || [])
       .filter((f) => (f.properties?.countrycode || '').toUpperCase() === 'US')
-      .map((f) => ({ label: photonLabel(f.properties), lat: f.geometry?.coordinates?.[1], lng: f.geometry?.coordinates?.[0] }));
+      .map((f) => ({ label: photonLabel(f.properties), lat: f.geometry?.coordinates?.[1], lng: f.geometry?.coordinates?.[0], state: f.properties?.state || null }));
   }
 
   // Devolve { status: 'ok' | 'nada' | 'erro', matches: [{ label, lat, lng }] }
@@ -65,18 +77,21 @@ export function createGeocoder({ fetchImpl = fetch, timeoutMs = 6000, userAgent 
     let failures = 0;
     if (/^\s*\d+[a-z]?\s+\S/i.test(query)) {
       try {
-        matches = await census(query);
+        matches = (await census(query)).filter(inState);
+        // Sem estado escrito ("3241 Bella Vista Dr"): procura de novo já dentro do estado.
+        if (!matches.length && state && !HAS_STATE(query)) matches = (await census(`${query}, ${state}`)).filter(inState);
       } catch {
         failures++;
       }
     }
     if (!matches.length) {
       try {
-        matches = await photon(query, limit);
+        matches = (await photon(query, limit)).filter(inState);
       } catch {
         failures++;
       }
     }
+    matches = matches.map(({ state: _s, ...m }) => m);
     const seen = new Set();
     matches = matches.filter((m) => m.label && !seen.has(m.label.toLowerCase()) && seen.add(m.label.toLowerCase())).slice(0, limit);
     const result = { status: matches.length ? 'ok' : failures && !matches.length ? 'erro' : 'nada', matches };
