@@ -52,6 +52,17 @@ export function loadConfig(overrides = {}) {
       // Padrão: o robô nunca responde clientes (só o dono responde, pelo WhatsApp Business).
     },
     // Cobrança atrasada: avisa quando passa desse número de dias sem receber.
+    // Link de pagamento com cartão pelo Square. Sem token, a cobrança fica só com o Zelle.
+    square: {
+      token: env.SQUARE_ACCESS_TOKEN || '',
+      locationId: env.SQUARE_LOCATION_ID || '',
+      sandbox: env.SQUARE_AMBIENTE === 'teste',
+      // Para marcar pago sozinho quando o cliente paga (Square › Webhooks › Signature key).
+      webhookKey: env.SQUARE_WEBHOOK_KEY || '',
+      // Taxa inicial do cartão (link de pagamento online). Depois o sistema aprende a real todo dia.
+      feePct: Number(env.SQUARE_TAXA) > 0 ? Number(env.SQUARE_TAXA) : 3.3,
+      feeFixedCents: env.SQUARE_TAXA_FIXA != null && env.SQUARE_TAXA_FIXA !== '' ? Math.round(Number(env.SQUARE_TAXA_FIXA) * 100) : 30,
+    },
     overdueDays: Number(env.COBRANCA_DIAS) > 0 ? Number(env.COBRANCA_DIAS) : 7,
     // Quantos serviços um motorista pode ter em andamento ao mesmo tempo (o resto fica na fila dele).
     maxActive: Number(env.MAX_EM_ANDAMENTO) > 0 ? Number(env.MAX_EM_ANDAMENTO) : 2,
