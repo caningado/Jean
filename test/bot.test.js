@@ -44,7 +44,8 @@ test('motorista registra um serviço completo pelo robô', async () => {
 
   const [charge] = await chat(ctx, DRIVER_PHONE, 'cobrar');
   assert.match(charge, /\$15\.00/);
-  assert.match(charge, /Zelle to Towing J&J \(\(508\) 555-0100\)/);
+  assert.match(charge, /Pay with Zelle to Towing J&J: \(508\) 555-0100/);
+  assert.doesNotMatch(charge, /#\d/); // número do serviço é interno
 
   const [done] = await chat(ctx, DRIVER_PHONE, 'entregue');
   assert.match(done, /entregue/);
