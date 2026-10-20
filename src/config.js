@@ -43,6 +43,8 @@ export function loadConfig(overrides = {}) {
       verifyToken: env.WHATSAPP_VERIFY_TOKEN || '',
       appSecret: env.WHATSAPP_APP_SECRET || '',
       apiVersion: env.WHATSAPP_API_VERSION || 'v21.0',
+      // Só para trocar a foto do robô; sem ele, o sistema descobre pelo token.
+      appId: env.WHATSAPP_APP_ID || '',
       // Mensagens de texto que chegam juntas (encaminhadas, cartão de contato) esperam este tempo
       // e viram uma só, para o robô entender o serviço inteiro.
       juntarMs: env.WHATSAPP_JUNTAR_MS != null && env.WHATSAPP_JUNTAR_MS !== '' ? Number(env.WHATSAPP_JUNTAR_MS) : 3000,
