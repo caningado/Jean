@@ -43,7 +43,7 @@ export function createAi(ctx) {
 
   // Texto livre ou áudio -> { comando, novo, resposta, transcricao }.
   async function understand(user, { text = '', audio = null }) {
-    const a = await askGemini(ctx, { prompt: prompt(ctx, user, text), audio: audio?.buffer, mimeType: audioType(audio?.mime), schema: SCHEMA, model: ctx.config.geminiModel });
+    const a = await askGemini(ctx, { prompt: prompt(ctx, user, text), audio: audio?.buffer, mimeType: audioType(audio?.mime), schema: SCHEMA });
     const str = (k, max = 300) => String(a[k] ?? '').trim().slice(0, max);
     const num = (k) => (Number.isFinite(Number(a[k])) && Number(a[k]) > 0 ? Number(a[k]) : null);
     return {
@@ -74,7 +74,6 @@ export function createAi(ctx) {
       audio: audio?.buffer,
       mimeType: audio ? audioType(audio.mime) : '',
       schema: { type: 'OBJECT', properties: { texto: { type: 'STRING' }, ...fields } },
-      model: ctx.config.geminiModel,
     });
     const str = (k, max = 300) => String(a[k] ?? '').trim().slice(0, max);
     const num = (k) => (Number.isFinite(Number(a[k])) && Number(a[k]) > 0 ? Number(a[k]) : null);
