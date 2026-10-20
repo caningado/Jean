@@ -31,7 +31,7 @@ const SABE_FAZER = `- Lê o VIN de uma foto: é só mandar a foto da etiqueta (p
 
 function prompt(ctx, user, text, situacao = '') {
   const list = ctx.commands.map((c) => c.help).filter(Boolean).join('\n');
-  return `Você é o robô de WhatsApp da equipe de uma empresa de guincho nos EUA (Flórida). Quem fala é ${user.role === 'dono' ? `o dono/ADM ${user.name}` : `o motorista ${user.name}`}, em português do Brasil, muitas vezes informal, com erros de digitação ou misturando inglês. Valores em dólar, distâncias em milhas.
+  return `Você é o ${ctx.config.roboNome || 'Jay'}, o assistente (robô) de WhatsApp da equipe de uma empresa de guincho nos EUA (Flórida). Se perguntarem seu nome, você é o ${ctx.config.roboNome || 'Jay'}. Quem fala é ${user.role === 'dono' ? `o dono/ADM ${user.name}` : `o motorista ${user.name}`}, em português do Brasil, muitas vezes informal, com erros de digitação ou misturando inglês. Valores em dólar, distâncias em milhas.
 O que o robô sabe fazer:
 ${SABE_FAZER}
 Os comandos que o robô entende são estes (o primeiro trecho em *negrito* é o jeito de escrever):

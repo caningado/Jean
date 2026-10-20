@@ -280,7 +280,7 @@ function renderSide() {
         has('invoice') && owner ? item('empresa', '#/empresa', 'Dados da empresa') : '',
         item('enderecos', '#/enderecos', 'Endereços com apelido'),
         has('backup') && owner ? item('backup', '#/backup', 'Backup') : '',
-        owner ? item('robo', '#/robo', 'Testar o robô') : '',
+        owner ? item('robo', '#/robo', 'Testar o Jay (robô)') : '',
       ],
     ],
   ];
@@ -1660,7 +1660,7 @@ screens.mais = async () => {
       ${has('invoice') && state.me.role === 'dono' ? '<li><a href="#/empresa"><span>🏢 Dados da empresa (invoice)</span><span>›</span></a></li>' : ''}
       <li><a href="#/enderecos"><span>📍 Endereços com apelido</span><span>›</span></a></li>
       ${has('backup') && state.me.role === 'dono' ? '<li><a href="#/backup"><span>💾 Backup</span><span>›</span></a></li>' : ''}
-      ${state.me.role === 'dono' ? '<li><a href="#/robo"><span>💬 Testar o robô do WhatsApp</span><span>›</span></a></li>' : ''}
+      ${state.me.role === 'dono' ? '<li><a href="#/robo"><span>💬 Testar o Jay (robô do WhatsApp)</span><span>›</span></a></li>' : ''}
       <li><a href="#/sair"><span>🚪 Sair</span><span>›</span></a></li>
     </ul></div>
     ${has('notificacoes') ? '<div class="card" id="push"></div>' : ''}
@@ -2635,7 +2635,7 @@ screens.robo = async () => {
     location.hash = '#/mais';
     return;
   }
-  setScreen('Testar o robô', { tab: 'mais', back: '#/mais' });
+  setScreen('Testar o Jay', { tab: 'mais', back: '#/mais' });
   view.innerHTML = `
     <p class="sub">Funciona igual ao WhatsApp, usando o seu número. Comece com <strong>ajuda</strong> ou <strong>novo</strong>.</p>
     <div class="chat" id="chat"></div>

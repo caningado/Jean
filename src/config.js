@@ -63,6 +63,8 @@ export function loadConfig(overrides = {}) {
     geminiVoiceModel: env.GEMINI_VOICE_MODEL || 'gemini-flash-lite-latest',
     // Robô responde com áudio quando a pessoa manda áudio. ROBO_VOZ=off desliga.
     roboVoz: env.ROBO_VOZ !== 'off',
+    // Nome do robô (escolhido pelo Caningado em 20/10).
+    roboNome: (env.ROBO_NOME || 'Jay').trim(),
     geminiTtsModel: env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
     geminiTtsVoice: env.GEMINI_TTS_VOICE || 'Kore',
     // Leitura grátis das letras do VIN na foto (Tesseract). VIN_OCR=off desliga.
