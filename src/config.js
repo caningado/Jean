@@ -12,7 +12,7 @@ function loadDotEnv(file) {
   }
 }
 
-export const ALL_MODULES = ['vin', 'fotos', 'pagamentos', 'despesas', 'whatsapp', 'planilha', 'manutencao', 'invoice', 'empresas', 'comissao', 'backup', 'notificacoes', 'voz'];
+export const ALL_MODULES = ['vin', 'fotos', 'pagamentos', 'despesas', 'whatsapp', 'planilha', 'manutencao', 'invoice', 'empresas', 'comissao', 'backup', 'notificacoes', 'voz', 'ajuda'];
 
 export function loadConfig(overrides = {}) {
   loadDotEnv(path.resolve('.env'));
@@ -78,6 +78,8 @@ export function loadConfig(overrides = {}) {
     geminiReservas: (env.GEMINI_RESERVAS || '').split(',').map((m) => m.trim()).filter(Boolean),
     // Robô responde com áudio quando a pessoa manda áudio. ROBO_VOZ=off desliga.
     roboVoz: env.ROBO_VOZ !== 'off',
+    // Pessoa de apoio: quando o Jay não consegue resolver, pede ajuda para ela pelo WhatsApp e cobra até resolver.
+    ajudaTelefone: env.AJUDA_TELEFONE || '',
     // Nome do robô (escolhido pelo Caningado em 20/10).
     roboNome: (env.ROBO_NOME || 'Jay').trim(),
     geminiTtsModel: env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',

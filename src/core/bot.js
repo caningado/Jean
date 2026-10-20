@@ -197,6 +197,12 @@ export function createBot(ctx) {
     return lines.join('\n');
   }
 
+  // O Jay não conseguiu: chama a pessoa de apoio (módulo ajuda) e avisa quem estava falando.
+  async function withHelp(user, text, reason, replies) {
+    const note = await ctx.api.ajuda?.pedir(user, text, reason);
+    return note ? [...[].concat(replies).filter(Boolean), note] : replies;
+  }
+
   async function askAi(user, { text = '', audio = null }) {
     let heard;
     try {
@@ -206,7 +212,12 @@ export function createBot(ctx) {
       // Plano B: mensagens encaminhadas com cara de serviço viram serviço novo mesmo sem a inteligência.
       const novo = !audio && !getConversation(user.id) ? guessService(text) : null;
       if (novo && looksLikeService(novo)) return startNewService(user, novo);
-      return audio ? 'Não consegui ouvir o áudio agora. Tente de novo ou escreva.' : 'A inteligência não respondeu agora. Tente de novo daqui a pouco, ou mande *ajuda* para ver os comandos.';
+      return withHelp(
+        user,
+        audio ? '(mandou um áudio)' : text,
+        'a inteligência (Gemini) não respondeu',
+        audio ? 'Não consegui ouvir o áudio agora. Tente de novo ou escreva.' : 'A inteligência não respondeu agora. Tente de novo daqui a pouco, ou mande *ajuda* para ver os comandos.'
+      );
     }
     const said = audio && heard.transcricao ? `🎤 Ouvi: "${heard.transcricao}"` : null;
     // Falou o próprio comando ("ajuda", "novo serviço") e o Gemini não preencheu: usa o que ele ouviu.
@@ -216,7 +227,8 @@ export function createBot(ctx) {
     }
     const word = simplify(heard.comando).split(/\s+/)[0];
     const command = word && findCommand(word);
-    if (!command) return [said, heard.resposta || 'Não entendi. Pode explicar de outro jeito? Ou mande *ajuda* para ver os comandos.'];
+    if (!command && !heard.resposta) return withHelp(user, heard.transcricao || text || '(áudio)', 'o Jay não entendeu', [said, 'Não entendi. Pode explicar de outro jeito? Ou mande *ajuda* para ver os comandos.']);
+    if (!command) return [said, heard.resposta];
     if (command.names[0] === 'novo') return [said, ...(await startNewService(user, heard.novo))];
     // Escreveu o comando certinho (só que comprido): faz direto, sem pedir "sim".
     if (!audio && simplify(heard.comando) === simplify(text)) return runCommand(user, text);
@@ -369,7 +381,7 @@ export function createBot(ctx) {
       if (typed && !natural) reply = await runCommand(user, text);
       else if (ai.enabled() && simple) reply = await askAi(user, { text });
       else if (looksLikeService(guessService(text))) reply = await startNewService(user, guessService(text));
-      else reply = 'Não entendi. Mande *ajuda* para ver os comandos.';
+      else reply = await withHelp(user, text, 'o Jay não entendeu', 'Não entendi. Mande *ajuda* para ver os comandos.');
     }
 
     return finish([...prefix, ...[].concat(reply)]);
