@@ -22,6 +22,17 @@ function esc(value) {
 }
 const money = (cents) => '$' + ((cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const phoneFmt = (p) => (/^1\d{10}$/.test(p || '') ? `(${p.slice(1, 4)}) ${p.slice(4, 7)}-${p.slice(7)}` : p ? '+' + p : '');
+// Manda um texto pronto para o cliente: compartilhar do celular, WhatsApp ou copiar.
+async function shareText(message, phone) {
+  if (navigator.share) {
+    navigator.share({ text: message }).catch(() => {});
+  } else if (phone) {
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
+  } else {
+    await navigator.clipboard?.writeText(message);
+    toast('Mensagem copiada');
+  }
+}
 const when = (iso) => (iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
 // Endereço, link de mapa ou coordenadas -> link que abre no mapa do celular.
@@ -903,7 +914,8 @@ screens.servico = async (params, id) => {
           <div><label>Forma</label><select name="method">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
         </div>
         <label class="payer hidden">Seguradora / motor club</label><input class="payer hidden" name="payer" placeholder="AAA, Agero, Honk…">
-        <div class="actions"><button>Registrar pagamento</button>${b?.open_cents ? '<button type="button" class="secondary" id="charge">Cobrar cliente</button>' : ''}</div>
+        <div class="actions"><button>Registrar pagamento</button>${b?.open_cents ? '<button type="button" class="secondary" id="charge">Cobrar cliente</button>' : ''}${b?.open_cents && s.square ? '<button type="button" class="secondary" id="cardlink">💳 Link do cartão (+ taxa)</button>' : ''}</div>
+        <div id="cardlinkOut"></div>
       </form>
     </div>` : ''}
     ${has('invoice') ? `<a class="card linkcard" href="#/invoice/${s.id}"><span>🧾 Invoice para o cliente${s.invoice_number ? ` <span class="sub">nº ${s.invoice_number}</span>` : ''}</span><span>›</span></a>` : ''}`;
@@ -1084,17 +1096,25 @@ screens.servico = async (params, id) => {
         toast(err.message);
       }
     };
+    // Link do Square com o valor que falta + taxa do cartão.
+    on('#cardlink', async () => {
+      const out = view.querySelector('#cardlinkOut');
+      out.innerHTML = '<p class="sub">Criando o link no Square…</p>';
+      try {
+        const card = await api(`/services/${id}/square-link`, { method: 'POST' });
+        out.innerHTML = `<p>Serviço ${money(card.base_cents)} + taxa ${money(card.fee_cents)} = <strong>${money(card.total_cents)}</strong>
+          <span class="sub">(taxa ${card.fee.pct}% + ${money(card.fee.fixed_cents)}${card.fee.updated_at ? ', atualizada ' + when(card.fee.updated_at) : ''})</span></p>
+          <p><a href="${esc(card.url)}" target="_blank" rel="noopener">${esc(card.url)}</a></p>
+          <div class="actions"><button type="button" class="secondary" id="cardlinkSend">Mandar para o cliente</button></div>`;
+        out.querySelector('#cardlinkSend').onclick = () => shareText(card.message, s.contact_phone);
+      } catch (err) {
+        out.innerHTML = '';
+        toast(err.message);
+      }
+    });
     on('#charge', async () => {
       const { message } = await api(`/services/${id}/charge`);
-      if (!message) return;
-      if (navigator.share) {
-        navigator.share({ text: message }).catch(() => {});
-      } else if (s.contact_phone) {
-        window.open(`https://wa.me/${s.contact_phone}?text=${encodeURIComponent(message)}`, '_blank');
-      } else {
-        await navigator.clipboard?.writeText(message);
-        toast('Mensagem copiada');
-      }
+      if (message) shareText(message, s.contact_phone);
     });
   }
   view.querySelectorAll('[data-received]').forEach((btn) => {

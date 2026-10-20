@@ -2,6 +2,8 @@
 // Guarda quem recebeu (para saber quanto dinheiro está com cada motorista) e o que falta receber.
 import { parseMoney, formatMoney, simplify, nowIso, HttpError } from '../../lib/util.js';
 import { checkMoney, ValidationError } from '../../lib/validate.js';
+import express from 'express';
+import { createSquare, validSquareSignature } from '../../lib/square.js';
 
 export const METHODS = {
   zelle: 'Zelle',
@@ -33,6 +35,19 @@ const migrations = [
      created_at TEXT NOT NULL
    );
    CREATE INDEX cash_collections_driver ON cash_collections(driver_id, created_at);`,
+  // Links de pagamento do Square: reaproveita o mesmo link e marca pago quando o cliente paga.
+  `CREATE TABLE square_links (
+     id INTEGER PRIMARY KEY,
+     service_id INTEGER NOT NULL REFERENCES services(id),
+     amount_cents INTEGER NOT NULL,
+     fee_cents INTEGER NOT NULL DEFAULT 0,
+     link_id TEXT,
+     url TEXT NOT NULL,
+     order_id TEXT,
+     payment_id INTEGER REFERENCES payments(id),
+     created_at TEXT NOT NULL
+   );
+   CREATE INDEX square_links_order ON square_links(order_id);`,
 ];
 
 // Formas de pagamento que ficam na mão do motorista até ele entregar ao dono.
@@ -130,11 +145,102 @@ const daysAgo = (iso) => {
 };
 
 // Mensagem pronta para o motorista encaminhar ao cliente (em inglês, pois o cliente está nos EUA).
-export function chargeMessage(ctx, service, amountCents) {
+export function chargeMessage(ctx, service, amountCents, card = null) {
   const { name, contact } = ctx.config.zelle;
   const greeting = service.contact_name ? `Hi ${service.contact_name.split(' ')[0]}!` : 'Hi!';
   const zelle = contact ? `\nYou can pay with Zelle to ${name || ctx.config.companyName} (${contact}).` : '';
-  return `${greeting} The total for your tow service #${service.id} is ${formatMoney(amountCents)}.${zelle}\nThank you! – ${ctx.config.companyName}`;
+  const pay = card ? `\n${zelle ? 'Or pay' : 'You can pay'} by card (${formatMoney(card.total_cents)}, includes ${formatMoney(card.fee_cents)} card fee): ${card.url}` : '';
+  return `${greeting} The total for your tow service #${service.id} is ${formatMoney(amountCents)}.${zelle}${pay}\nThank you! – ${ctx.config.companyName}`;
+}
+
+// Mensagem só com o link do cartão (botão "Link do cartão").
+export function cardMessage(ctx, service, card) {
+  const greeting = service.contact_name ? `Hi ${service.contact_name.split(' ')[0]}!` : 'Hi!';
+  return `${greeting} Your tow service #${service.id} is ${formatMoney(card.base_cents)} + ${formatMoney(card.fee_cents)} card fee = ${formatMoney(card.total_cents)}.\nPay by card here: ${card.url}\nThank you! – ${ctx.config.companyName}`;
+}
+
+// Taxa do cartão do Square: começa com SQUARE_TAXA / SQUARE_TAXA_FIXA e é atualizada todo dia
+// com a taxa que o Square cobrou de verdade nos pagamentos pelos links.
+const FEE_KEY = 'square_taxa';
+export function cardFee(ctx) {
+  const saved = ctx.db.prepare('SELECT value FROM settings WHERE key = ?').get(FEE_KEY);
+  if (saved) return JSON.parse(saved.value);
+  return { pct: ctx.config.square.feePct, fixed_cents: ctx.config.square.feeFixedCents, updated_at: null };
+}
+
+// Valor do link para a empresa receber o valor cheio depois que o Square tira a taxa.
+export function withCardFee(ctx, baseCents) {
+  const { pct, fixed_cents } = cardFee(ctx);
+  const total = Math.ceil((baseCents + fixed_cents) / (1 - pct / 100));
+  return { base_cents: baseCents, fee_cents: total - baseCents, total_cents: total };
+}
+
+// Link do Square para pagar com cartão (valor + taxa). Reaproveita o link já feito para o mesmo valor.
+// Se o Square falhar, devolve null e a cobrança sai só com o Zelle.
+export async function cardLink(ctx, service, baseCents) {
+  if (!ctx.square?.configured || !baseCents) return null;
+  const price = withCardFee(ctx, baseCents);
+  const old = ctx.db
+    .prepare('SELECT url FROM square_links WHERE service_id = ? AND amount_cents = ? AND fee_cents = ? AND payment_id IS NULL ORDER BY id DESC')
+    .get(service.id, baseCents, price.fee_cents);
+  if (old) return { ...price, url: old.url };
+  try {
+    const link = await ctx.square.createLink({
+      amountCents: price.total_cents,
+      name: `${ctx.config.companyName} – tow service #${service.id}`,
+      note: [service.contact_name, service.vehicle].filter(Boolean).join(' · '),
+    });
+    ctx.db
+      .prepare('INSERT INTO square_links (service_id, amount_cents, fee_cents, link_id, url, order_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(service.id, baseCents, price.fee_cents, link.id, link.url, link.orderId, nowIso());
+    return { ...price, url: link.url };
+  } catch (err) {
+    ctx.log('Square: não consegui criar o link de pagamento', err.message);
+    return null;
+  }
+}
+
+// Todo dia: confere quanto o Square cobrou nos pagamentos dos nossos links (últimos 30 dias)
+// e guarda a taxa nova. A parte fixa fica a configurada; a porcentagem vem da média real.
+export async function updateCardFee(ctx, now = new Date()) {
+  if (!ctx.square?.configured) return null;
+  const since = new Date(now.getTime() - 30 * 86400000).toISOString();
+  const payments = await ctx.square.listPayments(since);
+  const ours = new Set(ctx.db.prepare('SELECT order_id FROM square_links WHERE order_id IS NOT NULL').all().map((r) => r.order_id));
+  const fixed = ctx.config.square.feeFixedCents;
+  const rates = payments
+    .filter((p) => p.status === 'COMPLETED' && ours.has(p.order_id) && p.processing_fee?.length && p.total_money?.amount > 0)
+    .map((p) => (p.processing_fee.reduce((sum, f) => sum + (f.amount_money?.amount || 0), 0) - fixed) / p.total_money.amount);
+  if (!rates.length) return null;
+  const pct = Math.round((rates.reduce((a, b) => a + b, 0) / rates.length) * 10000) / 100;
+  if (!(pct > 0 && pct < 10)) return null;
+  const fee = { pct, fixed_cents: fixed, updated_at: now.toISOString(), payments: rates.length };
+  ctx.db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(FEE_KEY, JSON.stringify(fee));
+  return fee;
+}
+
+// Square avisou que o cliente pagou: registra o pagamento em cartão e avisa o dono e o motorista.
+export async function squarePaid(ctx, payment) {
+  if (payment?.status !== 'COMPLETED' || !payment.order_id) return null;
+  const link = ctx.db.prepare('SELECT * FROM square_links WHERE order_id = ?').get(payment.order_id);
+  if (!link || link.payment_id) return null;
+  const service = ctx.data.services.get(link.service_id);
+  if (!service) return null;
+  // Entra o valor do serviço; a taxa do cartão fica com o Square.
+  const amountCents = link.amount_cents;
+  const row = addPayment(ctx, { serviceId: service.id, amountCents, method: 'cartao', payer: 'Square' });
+  ctx.db.prepare('UPDATE square_links SET payment_id = ? WHERE order_id = ?').run(row.id, payment.order_id);
+  const left = balance(ctx, service).open_cents;
+  const text = `💳 ${service.contact_name || 'Cliente'} pagou ${formatMoney(amountCents)} com cartão (Square) no serviço #${service.id}.${left ? `\nAinda falta ${formatMoney(left)}.` : '\nServiço quitado ✅'}`;
+  const people = ctx.db.prepare("SELECT * FROM users WHERE active = 1 AND (role = 'dono' OR id = ?)").all(service.driver_id || 0);
+  for (const person of people) {
+    try {
+      await ctx.send?.(person.phone, text);
+    } catch (err) {
+      ctx.log(`Não consegui avisar ${person.name} do pagamento no Square`, err);
+    }
+  }
+  return row;
 }
 
 // Dias desde o serviço (conta da entrega, ou da criação se ainda não entregou).
@@ -211,13 +317,27 @@ const commands = [
   },
   {
     names: ['cobrar', 'cobranca'],
-    help: '*cobrar* – mensagem pronta com o Zelle para mandar ao cliente',
-    run({ ctx, user }) {
+    help: '*cobrar* – mensagem pronta com o Zelle (e link do cartão) para mandar ao cliente',
+    async run({ ctx, user }) {
       const service = ctx.data.services.active(user);
       if (!service) return 'Nenhum serviço em andamento. Mande *abrir 12* para escolher o serviço.';
       const amount = balance(ctx, service).open_cents;
       if (!amount) return service.price_cents ? 'Esse serviço já está pago.' : 'Esse serviço ainda não tem valor.';
-      return ['Encaminhe esta mensagem para o cliente:', chargeMessage(ctx, service, amount)];
+      return ['Encaminhe esta mensagem para o cliente:', chargeMessage(ctx, service, amount, await cardLink(ctx, service, amount))];
+    },
+  },
+  {
+    names: ['link', 'cartao'],
+    help: '*link* – link do Square para o cliente pagar com cartão (valor + taxa)',
+    async run({ ctx, user }) {
+      if (!ctx.square?.configured) return 'O Square ainda não está ligado (SQUARE_ACCESS_TOKEN no Render).';
+      const service = ctx.data.services.active(user);
+      if (!service) return 'Nenhum serviço em andamento. Mande *abrir 12* para escolher o serviço.';
+      const amount = balance(ctx, service).open_cents;
+      if (!amount) return service.price_cents ? 'Esse serviço já está pago.' : 'Esse serviço ainda não tem valor.';
+      const card = await cardLink(ctx, service, amount);
+      if (!card) return 'O Square não criou o link agora. Tente de novo daqui a pouco.';
+      return ['Encaminhe esta mensagem para o cliente:', cardMessage(ctx, service, card)];
     },
   },
   {
@@ -343,11 +463,45 @@ function routes(api, ctx) {
     res.status(201).json(collectCash(ctx, { driverId: driver.driver_id, amountCents, ownerId: req.user.id }));
   });
 
-  api.get('/services/:id/charge', (req, res) => {
+  api.get('/services/:id/charge', async (req, res) => {
     const service = ctx.data.services.get(Number(req.params.id));
     if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
     const amount = balance(ctx, service).open_cents;
-    res.json({ amount_cents: amount, message: amount ? chargeMessage(ctx, service, amount) : null });
+    const card = amount ? await cardLink(ctx, service, amount) : null;
+    res.json({ amount_cents: amount, message: amount ? chargeMessage(ctx, service, amount, card) : null });
+  });
+
+  // Botão "Link do cartão": valor que falta + taxa do cartão.
+  api.post('/services/:id/square-link', async (req, res) => {
+    const service = ctx.data.services.get(Number(req.params.id));
+    if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
+    if (!ctx.square?.configured) throw new HttpError(400, 'O Square ainda não está ligado (SQUARE_ACCESS_TOKEN no Render).');
+    const amount = balance(ctx, service).open_cents;
+    if (!amount) throw new HttpError(400, 'Esse serviço não tem valor para receber.');
+    const card = await cardLink(ctx, service, amount);
+    if (!card) throw new HttpError(502, 'O Square não criou o link agora. Tente de novo daqui a pouco.');
+    res.json({ ...card, message: cardMessage(ctx, service, card), fee: cardFee(ctx) });
+  });
+}
+
+function publicRoutes(app, ctx) {
+  // Aviso do Square quando o cliente paga pelo link. Só vale com a chave de assinatura.
+  app.post('/webhook/square', express.raw({ type: '*/*', limit: '1mb' }), (req, res) => {
+    const key = ctx.config.square.webhookKey;
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
+    const url = `https://${req.get('host')}${req.originalUrl}`;
+    if (!key || !validSquareSignature({ key, url, rawBody: raw, header: req.get('x-square-hmacsha256-signature') })) {
+      ctx.log('Square: aviso de pagamento com assinatura errada. Confira o SQUARE_WEBHOOK_KEY no Render.');
+      return res.sendStatus(401);
+    }
+    res.sendStatus(200);
+    let event;
+    try {
+      event = JSON.parse(raw.toString('utf8'));
+    } catch {
+      return;
+    }
+    squarePaid(ctx, event?.data?.object?.payment).catch((err) => ctx.log('Square: erro ao registrar pagamento', err));
   });
 }
 
@@ -457,15 +611,24 @@ export default {
   migrations,
   commands,
   routes,
+  publicRoutes,
   summary,
   summaryLines,
   serviceHint: '💵 Pagamento: *pago 250 zelle* (ou dinheiro, cartão, cheque, aaa...). Para cobrar o cliente: *cobrar*.',
-  serviceDetail: ({ ctx, service }) => ({ payments: listPayments(ctx, service.id), balance: balance(ctx, service) }),
+  serviceDetail: ({ ctx, service }) => ({ payments: listPayments(ctx, service.id), balance: balance(ctx, service), square: Boolean(ctx.square?.configured) }),
+  async daily({ ctx }) {
+    try {
+      await updateCardFee(ctx);
+    } catch (err) {
+      ctx.log('Square: não consegui atualizar a taxa do cartão', err.message);
+    }
+  },
   onServiceDone({ ctx, service }) {
     const open = balance(ctx, service).open_cents;
     return open ? [`⚠️ Falta receber ${formatMoney(open)}. Mande *pago ${open / 100} zelle* quando receber, ou *cobrar*.`] : [];
   },
   setup(ctx) {
+    ctx.square = createSquare(ctx.config.square);
     ctx.api.pagamentos = { balance: (service) => balance(ctx, service), methods: METHODS };
   },
 };
