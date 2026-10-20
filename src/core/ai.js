@@ -102,7 +102,43 @@ export function createAi(ctx) {
     return (await answer({ audio }, question)).texto;
   }
 
-  return { enabled, understand, transcribe, answer };
+  // Gate pass / pedido de serviço em PDF (ou foto de documento): tira os dados do serviço.
+  async function readDocument({ buffer, mime }) {
+    const a = await askGemini(ctx, {
+      prompt: `Este documento chegou para uma empresa de guincho nos EUA. Geralmente é um gate pass de leilão (CarMax, Manheim, Copart, IAA...) ou um pedido de reboque. Tire os dados do serviço, só o que estiver escrito, sem inventar:
+- veiculo: ano, marca, modelo e cor (ex.: "2020 Ram 1500 Classic branca").
+- vin: o VIN de 17 caracteres.
+- retirada: endereço completo onde o carro está para pegar ("Pick Up Details"/"Pickup Location"), começando pelo nome do lugar (ex.: "CarMax - Clermont, 16731 State Road 50, Clermont, FL 34711").
+- cliente: quem comprou/pediu ("Dealership", "Purchaser" ou "Buyer" — o nome da empresa); telefone: telefone desse cliente (só números), nunca o do leilão.
+- destino: endereço de entrega, se o documento disser; senão, o endereço do comprador.
+- valor: só se o documento disser o preço do reboque (em dólar).
+- observacoes: o que o motorista precisa saber, em português e curto: se o carro não liga ("no runner"), vaga/lote ("Lot Location"), horário de retirada, número do gate pass/release ID, stock #.
+- tipo: "gate pass", "pedido de serviço" ou "outro".`,
+      audio: buffer,
+      mimeType: mime,
+      schema: {
+        type: 'OBJECT',
+        properties: { tipo: { type: 'STRING' }, cliente: { type: 'STRING' }, telefone: { type: 'STRING' }, retirada: { type: 'STRING' }, destino: { type: 'STRING' }, veiculo: { type: 'STRING' }, vin: { type: 'STRING' }, valor: { type: 'NUMBER' }, observacoes: { type: 'STRING' } },
+      },
+    });
+    const str = (k, max = 300) => String(a[k] ?? '').trim().slice(0, max);
+    return {
+      tipo: str('tipo', 40),
+      vin: str('vin', 30).toUpperCase().replace(/[^A-Z0-9]/g, ''),
+      observacoes: str('observacoes', 500),
+      novo: {
+        cliente: str('cliente', 120),
+        telefone: str('telefone', 30).replace(/[^\d+]/g, ''),
+        retirada: str('retirada'),
+        destino: str('destino'),
+        veiculo: str('veiculo', 120),
+        milhas: null,
+        valor: Number.isFinite(Number(a.valor)) && Number(a.valor) > 0 ? Number(a.valor) : null,
+      },
+    };
+  }
+
+  return { enabled, understand, transcribe, answer, readDocument };
 }
 
 // O WhatsApp manda áudio como "audio/ogg; codecs=opus": o Gemini quer só "audio/ogg".

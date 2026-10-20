@@ -267,6 +267,13 @@ export default {
         if (!p || Date.now() - p.at > PENDENTE_MS) return null;
         return p;
       },
+      // VIN lido de outro jeito (ex.: gate pass em PDF): entra no próximo serviço criado.
+      remember(userId, raw) {
+        const check = validateVin(raw);
+        if (check.vin.length !== 17) return null;
+        pendentes.set(userId, { vin: check.vin, valid: check.valid, vehicle: null, at: Date.now() });
+        return check;
+      },
       // Chamado quando um serviço é criado: põe nele o VIN lido antes.
       async attachPending(user, service) {
         const p = this.pending(user.id);
