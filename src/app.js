@@ -25,10 +25,11 @@ import comissao from './modules/comissao/index.js';
 import backup from './modules/backup/index.js';
 import notificacoes from './modules/notificacoes/index.js';
 import voz from './modules/voz/index.js';
+import ajuda from './modules/ajuda/index.js';
 
 // Para criar um módulo novo: faça uma pasta em src/modules, exporte o objeto
 // do módulo (veja src/modules/README.md) e acrescente ele aqui.
-export const AVAILABLE_MODULES = { vin, fotos, pagamentos, despesas, whatsapp, planilha, manutencao, invoice, empresas, comissao, backup, notificacoes, voz };
+export const AVAILABLE_MODULES = { vin, fotos, pagamentos, despesas, whatsapp, planilha, manutencao, invoice, empresas, comissao, backup, notificacoes, voz, ajuda };
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
