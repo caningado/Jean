@@ -209,7 +209,7 @@ export function createBot(ctx) {
     if (conversation && conversation.flow !== 'ai_confirm' && ['ajuda', 'menu', 'help'].includes(simple)) {
       const step = ctx.flows[conversation.flow]?.steps[conversation.step];
       if (step) {
-        return finish([...prefix, ...[].concat(await runCommand(user, 'ajuda')), 'Você está no meio de um cadastro. Responda a pergunta, ou mande *cancelar*:', ...[].concat(step.ask(conversation.data, ctx))]);
+        return finish([...prefix, ...[].concat(await runCommand(user, 'ajuda')), 'Você está no meio do cadastro de um serviço. Responda a pergunta, ou mande *cancelar*:', ...[].concat(step.ask(conversation.data, ctx))]);
       }
     }
 

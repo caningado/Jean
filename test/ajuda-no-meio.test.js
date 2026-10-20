@@ -21,6 +21,6 @@ test('cadastro largado há mais de 6 horas é esquecido', async () => {
   ctx.db.prepare('UPDATE conversations SET updated_at = ? WHERE user_id = ?').run(old, user.id);
   const [reply] = await chat(ctx, DRIVER_PHONE, 'ajuda');
   assert.match(reply, /\*Comandos\*/);
-  assert.doesNotMatch(reply, /meio de um cadastro/);
+  assert.doesNotMatch(reply, /meio do cadastro/);
   assert.equal(ctx.bot.getConversation(user.id), null);
 });
