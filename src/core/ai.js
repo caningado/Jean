@@ -32,7 +32,8 @@ Traduza o pedido para UM comando, escrito em "comando" do jeito que se digitaria
 - Se só falou o nome de um comando ("ajuda", "novo serviço", "fila", "caixa"), escreva esse comando em "comando" ("ajuda", "novo"...).
 - "peguei o carro", "carro no guincho": não muda nada no robô; responda em "resposta" que anotou e lembre de mandar as fotos (*antes*).
 - Serviço novo ditado ("serviço pro João, pegar na Alafaya, levar pra Ribas, Civic, 150"): comando "novo" e preencha só o que foi dito em cliente, telefone (só números), retirada, destino, veiculo (com a placa, se disse), milhas, valor.
-- Pergunta sobre como usar o robô, ou conversa sem pedido: deixe "comando" vazio e responda curto em "resposta" (em português, no máximo 3 frases, sem inventar dados da empresa).
+- Cumprimento ou conversa sem pedido ("bom dia, tudo certo?"): deixe "comando" vazio e responda como um colega, curto e simpático, perguntando em que pode ajudar. Nunca mande a lista de comandos sem pedirem.
+- Pergunta sobre como usar o robô: deixe "comando" vazio e responda curto em "resposta" (em português, no máximo 3 frases, sem inventar dados da empresa).
 - Se não der para saber o que ele quer, deixe "comando" vazio e peça em "resposta" para explicar de outro jeito.
 Nunca invente valores, nomes ou números que não foram ditos. Em "transcricao", escreva o que a pessoa falou ou escreveu.
 ${text ? `Mensagem: """${text.slice(0, 1500)}"""` : 'A mensagem é o áudio anexado.'}`;
