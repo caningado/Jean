@@ -92,7 +92,11 @@ export async function processMessage(ctx, client, msg) {
   if (!Number(seen.changes)) return;
 
   const user = ctx.bot.findUser(msg.from);
-  if (!user) return handleOutsider(ctx, client, msg);
+  if (!user) {
+    ctx.log(`WhatsApp: mensagem de ${formatPhone(msg.from)}, que não está em Mais › Equipe (o robô não responde).`);
+    return handleOutsider(ctx, client, msg);
+  }
+  ctx.log(`WhatsApp: mensagem de ${user.name} (${formatPhone(msg.from)}), tipo ${msg.type}.`);
 
   let media = null;
   let audio = null;
@@ -105,6 +109,7 @@ export async function processMessage(ctx, client, msg) {
 
   const replies = await ctx.bot.handle({ phone: msg.from, text: msg.text, media, audio });
   for (const reply of replies) await client.sendText(msg.from, reply);
+  ctx.log(`WhatsApp: ${replies.length} resposta(s) enviada(s) para ${user.name}.`);
 }
 
 // Alguém de fora da equipe (cliente, amigo) mandou mensagem: só guarda o contato.
@@ -127,7 +132,10 @@ function publicRoutes(app, ctx) {
 
   app.post('/webhook/whatsapp', express.raw({ type: '*/*', limit: '2mb' }), (req, res) => {
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
-    if (!validSignature(raw, req.headers['x-hub-signature-256'], appSecret)) return res.sendStatus(401);
+    if (!validSignature(raw, req.headers['x-hub-signature-256'], appSecret)) {
+      ctx.log('WhatsApp: chegou mensagem com assinatura errada. Confira o WHATSAPP_APP_SECRET no Render (App settings › Basic › App secret).');
+      return res.sendStatus(401);
+    }
     // Responde logo para a Meta não reenviar; o processamento continua em seguida.
     res.sendStatus(200);
     let payload;
