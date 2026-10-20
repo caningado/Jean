@@ -7,7 +7,7 @@ export async function askGemini(ctx, opts, fetchImpl = globalThis.fetch) {
   } catch (err) {
     // Modelo pedido falhou (limite do plano grátis, nome trocado pelo Google...): tenta o modelo leve.
     const reserva = ctx.config.geminiVoiceModel;
-    if (!reserva || reserva === model || /timeout|aborted/i.test(err.message)) throw err;
+    if (!reserva || reserva === model) throw err;
     ctx.log?.(`Gemini: ${model} falhou (${err.message.slice(0, 120)}), usando ${reserva}`);
     return callGemini(ctx, { ...opts, model: reserva }, fetchImpl);
   }
