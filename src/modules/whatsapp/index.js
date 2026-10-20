@@ -12,7 +12,8 @@ const migrations = [
    );`,
 ];
 
-export function createWhatsAppClient(config, fetchImpl = fetch) {
+// isTeam(telefone): o robô só manda mensagem para quem é da equipe (ADM ou motorista ativo).
+export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () => false } = {}) {
   const { token, phoneNumberId, apiVersion } = config.whatsapp;
   const base = `https://graph.facebook.com/${apiVersion}`;
   const headers = { Authorization: `Bearer ${token}` };
@@ -21,6 +22,8 @@ export function createWhatsAppClient(config, fetchImpl = fetch) {
     configured: Boolean(token && phoneNumberId),
 
     async sendText(to, body) {
+      // Trava: nunca fala com cliente nem com ninguém de fora da equipe.
+      if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
       const res = await fetchImpl(`${base}/${phoneNumberId}/messages`, {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
@@ -104,31 +107,10 @@ export async function processMessage(ctx, client, msg) {
   for (const reply of replies) await client.sendText(msg.from, reply);
 }
 
-// Alguém de fora da equipe (cliente, amigo) mandou mensagem: guarda o contato e,
-// conforme WHATSAPP_RESPOSTA_FORA, nunca responde (padrão), responde no máximo 1 vez por dia ou sempre.
+// Alguém de fora da equipe (cliente, amigo) mandou mensagem: só guarda o contato.
+// O robô nunca responde: quem fala com cliente é o dono, pelo app WhatsApp Business.
 export async function handleOutsider(ctx, client, msg) {
-  const contact = ctx.data.contacts.findOrCreate({ phone: msg.from, name: msg.name, source: 'whatsapp' });
-  const mode = ctx.config.whatsapp.outsiderReply;
-  if (mode === 'nunca') return;
-  if (mode === 'diaria') {
-    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-    const earlier = ctx.db
-      .prepare('SELECT COUNT(*) AS n FROM whatsapp_messages WHERE phone = ? AND id <> ? AND received_at >= ?')
-      .get(msg.from, msg.id, since);
-    if (earlier.n > 0) return;
-  }
-  const owners = ctx.db.prepare("SELECT * FROM users WHERE role = 'dono' AND active = 1").all();
-  const text = msg.text || (msg.mediaId ? '[foto]' : `[${msg.type}]`);
-  for (const owner of owners) {
-    // Se o aviso falhar (ex.: o dono usa o próprio número do robô), a resposta ao cliente sai mesmo assim.
-    await client
-      .sendText(owner.phone, `📩 Mensagem de ${contact.name} (${formatPhone(contact.phone)}):\n${text}`)
-      .catch((err) => ctx.log('Não consegui avisar o ADM no WhatsApp', err));
-  }
-  await client.sendText(
-    msg.from,
-    `Thanks for contacting ${ctx.config.companyName}! We'll get back to you shortly.\nObrigado pela mensagem! Já vamos te responder.`
-  );
+  ctx.data.contacts.findOrCreate({ phone: msg.from, name: msg.name, source: 'whatsapp' });
 }
 
 function publicRoutes(app, ctx) {
@@ -166,7 +148,7 @@ export default {
   migrations,
   publicRoutes,
   setup(ctx) {
-    const client = createWhatsAppClient(ctx.config);
+    const client = createWhatsAppClient(ctx.config, fetch, { isTeam: (phone) => Boolean(ctx.bot.findUser(phone)) });
     ctx.api.whatsapp = { client };
     if (client.configured) {
       ctx.send = (to, text) => client.sendText(to, text);
