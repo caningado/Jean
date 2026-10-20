@@ -68,6 +68,17 @@ export async function runTick(ctx, now = new Date()) {
   }
 }
 
+// Tarefas urgentes que os módulos conferem a cada minuto (ex.: cobrar a pessoa de apoio).
+export async function runMinuteTick(ctx, now = new Date()) {
+  for (const m of ctx.loaded) {
+    try {
+      await m.minuteTick?.({ ctx, now });
+    } catch (err) {
+      ctx.log(`Erro na tarefa do módulo ${m.name}`, err);
+    }
+  }
+}
+
 // Algum módulo suspendeu os serviços deste usuário? Devolve a mensagem, ou null.
 export function servicesBlocked(ctx, user) {
   for (const m of ctx.loaded) {
@@ -85,4 +96,5 @@ export function startDaily(ctx) {
       .then(() => runTick(ctx));
   setTimeout(tick, 30_000).unref();
   setInterval(tick, 10 * 60_000).unref();
+  setInterval(() => runMinuteTick(ctx), 60_000).unref();
 }

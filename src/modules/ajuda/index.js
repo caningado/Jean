@@ -17,8 +17,8 @@ const migrations = [
    );`,
 ];
 
-// De quanto em quanto tempo cobra a pessoa de apoio enquanto o pedido está aberto.
-const REMIND_MS = 15 * 60000;
+// De quanto em quanto tempo cobra a pessoa de apoio enquanto o pedido está aberto (Caningado pediu 2 min).
+const REMIND_MS = 2 * 60000;
 // Mensagens seguidas da mesma pessoa entram no mesmo pedido.
 const SAME_MS = 15 * 60000;
 
@@ -115,12 +115,12 @@ const commands = [
   },
 ];
 
-// Cobra a pessoa de apoio enquanto tem pedido aberto.
-async function tick({ ctx, now = new Date() }) {
+// Cobra a pessoa de apoio enquanto tem pedido aberto (roda a cada minuto).
+async function minuteTick({ ctx, now = new Date() }) {
   const h = helper(ctx);
   if (!h) return;
   for (const req of openRequests(ctx)) {
-    if (now.getTime() - Date.parse(req.notified_at || req.created_at) < REMIND_MS - 60000) continue;
+    if (now.getTime() - Date.parse(req.notified_at || req.created_at) < REMIND_MS - 15000) continue;
     const mins = Math.round((now.getTime() - Date.parse(req.created_at)) / 60000);
     const waited = mins >= 60 ? `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}` : `${mins} min`;
     await send(ctx, h.phone, [`⏰ *Pedido de ajuda #${req.id} ainda aberto* (há ${waited})`, describe(ctx, req), '', `Quando resolver, mande *resolvido ${req.id}*.`].join('\n'));
@@ -133,7 +133,7 @@ export default {
   label: 'Ajuda (apoio)',
   migrations,
   commands,
-  tick,
+  minuteTick,
   setup(ctx) {
     ctx.api.ajuda = { pedir: (user, text, reason) => askHelp(ctx, user, text, reason) };
   },

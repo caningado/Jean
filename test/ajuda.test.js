@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeContext, chat, DRIVER_PHONE, OWNER_PHONE } from './helpers.js';
 import { hashPin } from '../src/lib/auth.js';
-import { runTick } from '../src/lib/daily.js';
+import { runMinuteTick } from '../src/lib/daily.js';
 
 const VIVIANE = '14073691819';
 
@@ -28,14 +28,18 @@ test('Jay não entendeu: chama a Viviane, junta as mensagens seguidas e cobra at
   assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM help_requests').get().n, 1);
   assert.match(sent[1].text, /Mais sobre o pedido de ajuda \*#1\*/);
 
-  // Cobrança: antes de 15 min não manda; depois manda.
+  // Cobrança: antes de 2 min não manda; depois manda a cada 2 min.
   const t0 = Date.now();
-  await runTick(ctx, new Date(t0 + 5 * 60000));
+  await runMinuteTick(ctx, new Date(t0 + 60000));
   assert.equal(sent.length, 2);
-  await runTick(ctx, new Date(t0 + 16 * 60000));
+  await runMinuteTick(ctx, new Date(t0 + 2 * 60000 + 5000));
   assert.equal(sent.length, 3);
   assert.match(sent[2].text, /⏰ \*Pedido de ajuda #1 ainda aberto\*/);
   assert.match(sent[2].text, /"xpto qwerty\nzzz www"/);
+  await runMinuteTick(ctx, new Date(t0 + 3 * 60000 + 5000));
+  assert.equal(sent.length, 3); // só 2 min depois da última cobrança
+  await runMinuteTick(ctx, new Date(t0 + 4 * 60000 + 5000));
+  assert.equal(sent.length, 4);
 
   // Motorista não fecha; a Viviane fecha e o motorista recebe aviso.
   [r] = await chat(ctx, DRIVER_PHONE, 'resolvido 1');
@@ -44,7 +48,7 @@ test('Jay não entendeu: chama a Viviane, junta as mensagens seguidas e cobra at
   assert.match(r, /Pedido #1 resolvido/);
   assert.ok(sent.some((m) => m.to === DRIVER_PHONE && /Viviane resolveu o seu pedido de ajuda \(#1\)/.test(m.text)));
   const before = sent.length;
-  await runTick(ctx, new Date(t0 + 60 * 60000));
+  await runMinuteTick(ctx, new Date(t0 + 60 * 60000));
   assert.equal(sent.length, before); // resolvido: para de cobrar
 });
 
