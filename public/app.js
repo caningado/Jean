@@ -914,13 +914,20 @@ screens.servico = async (params, id) => {
           <div><label>Forma</label><select name="method">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
         </div>
         <label class="payer hidden">Seguradora / motor club</label><input class="payer hidden" name="payer" placeholder="AAA, Agero, Honk…">
-        <div class="actions"><button>Registrar pagamento</button>${b?.open_cents ? '<button type="button" class="secondary" id="charge">Cobrar cliente</button>' : ''}${b?.open_cents && s.square ? '<button type="button" class="secondary" id="cardlink">💳 Link do cartão (+ taxa)</button>' : ''}</div>
+        <div class="actions"><button>Registrar pagamento</button>${b?.open_cents ? '<button type="button" class="secondary" id="charge">Cobrar cliente</button>' : ''}${b?.open_cents && s.square ? '<button type="button" class="secondary" id="cardlink">💳 Link do cartão (+ taxa)</button>' : ''}${b?.open_cents && s.square_pos ? '<button type="button" class="secondary" id="tappay">📲 Cartão por aproximação</button>' : ''}</div>
         <div id="cardlinkOut"></div>
       </form>
     </div>` : ''}
     ${has('invoice') ? `<a class="card linkcard" href="#/invoice/${s.id}"><span>🧾 Invoice para o cliente${s.invoice_number ? ` <span class="sub">nº ${s.invoice_number}</span>` : ''}</span><span>›</span></a>` : ''}`;
 
   const reload = () => screens.servico(params, id);
+  // Voltou do app Square POS (Tap to Pay).
+  const cartao = params.get('cartao');
+  if (cartao) {
+    toast(cartao === 'ok' ? '✅ Pagamento no cartão recebido' : `Não confirmei o pagamento no cartão: ${cartao}. Se o cliente pagou, registre em Pagamento.`);
+    params.delete('cartao');
+    history.replaceState(null, '', `#/servico/${id}`);
+  }
   const on = (sel, fn) => view.querySelector(sel) && (view.querySelector(sel).onclick = fn);
 
   const docsZone = view.querySelector('#docs-zone');
@@ -1126,6 +1133,16 @@ screens.servico = async (params, id) => {
         if (status) setTimeout(check, 4000);
       } catch (err) {
         out.innerHTML = '';
+        toast(err.message);
+      }
+    });
+    // Tap to Pay: abre o app Square POS com o valor + taxa; o cliente encosta o cartão no celular.
+    on('#tappay', async () => {
+      try {
+        const pos = await api(`/services/${id}/square-pos`, { method: 'POST' });
+        toast(`Cobrando ${money(pos.total_cents)} (inclui ${money(pos.fee_cents)} de taxa)`);
+        location.href = /iPhone|iPad|iPod/.test(navigator.userAgent) ? pos.ios : pos.android;
+      } catch (err) {
         toast(err.message);
       }
     });

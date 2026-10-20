@@ -134,3 +134,45 @@ test('mensagem ao cliente usa o número da invoice, não o número interno do se
   r = await chat(ctx, DRIVER_PHONE, 'cobrar');
   assert.match(r.flat().join('\n'), /\nInvoice #2610007\nAmount due: \$210\.00/);
 });
+
+test('Tap to Pay: abre o Square POS com valor + taxa e, na volta, confere no Square antes de marcar pago', async (t) => {
+  const { ctx, service, sent } = setup({ SQUARE_APP_ID: 'sq0idp-abc' });
+  const paid = [];
+  ctx.square.listPayments = async () => paid;
+  ctx.square.retry = { tries: 2, wait: 10 };
+  const server = createApp(ctx).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const login = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: DRIVER_PHONE, pin: '5678' }) });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+
+  const pos = await (await fetch(`${base}/api/services/${service.id}/square-pos`, { method: 'POST', headers: { Cookie: cookie } })).json();
+  assert.equal(pos.total_cents, 21576); // 2.6% + $0.15
+  assert.match(pos.android, /^intent:#Intent;action=com\.squareup\.pos\.action\.CHARGE;package=com\.squareup;.*;end$/);
+  assert.match(pos.android, /;i\.com\.squareup\.pos\.TOTAL_AMOUNT=21576;/);
+  assert.match(pos.android, /;S\.com\.squareup\.pos\.CLIENT_ID=sq0idp-abc;/);
+  const data = JSON.parse(decodeURIComponent(pos.ios.split('data=')[1]));
+  assert.equal(data.amount_money.amount, 21576);
+  assert.match(data.callback_url, /\/square-pos\/volta$/);
+  const state = data.state;
+
+  // Volta dizendo "ok", mas o Square não tem o pagamento: não marca pago.
+  let r = await fetch(`${base}/square-pos/volta?com.squareup.pos.REQUEST_METADATA=${state}&com.squareup.pos.SERVER_TRANSACTION_ID=T1`, { redirect: 'manual' });
+  assert.match(r.headers.get('location'), new RegExp(`/#/servico/${service.id}\\?cartao=`));
+  assert.doesNotMatch(r.headers.get('location'), /cartao=ok/);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM payments').get().n, 0);
+
+  // Agora o pagamento existe no Square.
+  paid.push({ id: 'PAY1', order_id: 'T1', status: 'COMPLETED', total_money: { amount: 21576 } });
+  r = await fetch(`${base}/square-pos/volta?data=${encodeURIComponent(JSON.stringify({ status: 'ok', transaction_id: 'T1', state }))}`, { redirect: 'manual' });
+  assert.match(r.headers.get('location'), /cartao=ok/);
+  const pays = ctx.db.prepare('SELECT * FROM payments').all();
+  assert.equal(pays.length, 1);
+  assert.equal(pays[0].amount_cents, 21000);
+  assert.equal(pays[0].payer, 'Square (Tap to Pay)');
+  assert.ok(sent.some((m) => /Tap to Pay/.test(m.text)));
+  // Voltar de novo não duplica.
+  await fetch(`${base}/square-pos/volta?data=${encodeURIComponent(JSON.stringify({ status: 'ok', transaction_id: 'T1', state }))}`, { redirect: 'manual' });
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM payments').get().n, 1);
+});

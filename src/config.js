@@ -61,6 +61,11 @@ export function loadConfig(overrides = {}) {
       webhookKey: env.SQUARE_WEBHOOK_KEY || '',
       // Taxa inicial do cartão (link de pagamento online). Depois o sistema aprende a real todo dia.
       feePct: Number(env.SQUARE_TAXA) > 0 ? Number(env.SQUARE_TAXA) : 3.3,
+      // Tap to Pay (cartão encostado no celular) pelo app Square POS: Application ID do app no Square Developer.
+      appId: env.SQUARE_APP_ID || '',
+      // Taxa do pagamento presencial (menor que a do link).
+      posFeePct: Number(env.SQUARE_TAXA_PRESENCIAL) > 0 ? Number(env.SQUARE_TAXA_PRESENCIAL) : 2.6,
+      posFeeFixedCents: env.SQUARE_TAXA_PRESENCIAL_FIXA != null && env.SQUARE_TAXA_PRESENCIAL_FIXA !== '' ? Math.round(Number(env.SQUARE_TAXA_PRESENCIAL_FIXA) * 100) : 15,
       feeFixedCents: env.SQUARE_TAXA_FIXA != null && env.SQUARE_TAXA_FIXA !== '' ? Math.round(Number(env.SQUARE_TAXA_FIXA) * 100) : 30,
     },
     overdueDays: Number(env.COBRANCA_DIAS) > 0 ? Number(env.COBRANCA_DIAS) : 7,

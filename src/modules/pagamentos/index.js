@@ -5,6 +5,7 @@ import { checkMoney, ValidationError } from '../../lib/validate.js';
 import express from 'express';
 import { createSquare, validSquareSignature } from '../../lib/square.js';
 import { qrSvg } from '../../lib/qrcode.js';
+import crypto from 'node:crypto';
 
 export const METHODS = {
   zelle: 'Zelle',
@@ -49,6 +50,19 @@ const migrations = [
      created_at TEXT NOT NULL
    );
    CREATE INDEX square_links_order ON square_links(order_id);`,
+  // Cobranças pelo Tap to Pay (app Square POS): o "state" volta do app e liga ao serviço.
+  `CREATE TABLE square_pos (
+     id INTEGER PRIMARY KEY,
+     state TEXT NOT NULL UNIQUE,
+     service_id INTEGER NOT NULL REFERENCES services(id),
+     user_id INTEGER REFERENCES users(id),
+     base_cents INTEGER NOT NULL,
+     fee_cents INTEGER NOT NULL,
+     total_cents INTEGER NOT NULL,
+     square_payment_id TEXT,
+     payment_id INTEGER REFERENCES payments(id),
+     created_at TEXT NOT NULL
+   );`,
 ];
 
 // Formas de pagamento que ficam na mão do motorista até ele entregar ao dono.
@@ -259,8 +273,13 @@ export async function squarePaid(ctx, payment) {
   const amountCents = link.amount_cents;
   const row = addPayment(ctx, { serviceId: service.id, amountCents, method: 'cartao', payer: 'Square' });
   ctx.db.prepare('UPDATE square_links SET payment_id = ? WHERE order_id = ?').run(row.id, payment.order_id);
+  await notifyCardPaid(ctx, service, amountCents, 'Square');
+  return row;
+}
+
+async function notifyCardPaid(ctx, service, amountCents, how) {
   const left = balance(ctx, service).open_cents;
-  const text = `💳 ${service.contact_name || 'Cliente'} pagou ${formatMoney(amountCents)} com cartão (Square) no serviço #${service.id}.${left ? `\nAinda falta ${formatMoney(left)}.` : '\nServiço quitado ✅'}`;
+  const text = `💳 ${service.contact_name || 'Cliente'} pagou ${formatMoney(amountCents)} com cartão (${how}) no serviço #${service.id}.${left ? `\nAinda falta ${formatMoney(left)}.` : '\nServiço quitado ✅'}`;
   const people = ctx.db.prepare("SELECT * FROM users WHERE active = 1 AND (role = 'dono' OR id = ?)").all(service.driver_id || 0);
   for (const person of people) {
     try {
@@ -269,7 +288,77 @@ export async function squarePaid(ctx, payment) {
       ctx.log(`Não consegui avisar ${person.name} do pagamento no Square`, err);
     }
   }
-  return row;
+}
+
+// ---------- Tap to Pay: o cliente encosta o cartão no celular do motorista (app Square POS) ----------
+
+export function withPosFee(ctx, baseCents) {
+  const { posFeePct: pct, posFeeFixedCents: fixed } = ctx.config.square;
+  const total = Math.ceil((baseCents + fixed) / (1 - pct / 100));
+  return { base_cents: baseCents, fee_cents: total - baseCents, total_cents: total };
+}
+
+// Links que abrem o app Square POS já com o valor, no Android e no iPhone.
+export function posUrls(ctx, { state, totalCents, note, callbackUrl }) {
+  const appId = ctx.config.square.appId;
+  const android =
+    'intent:#Intent;action=com.squareup.pos.action.CHARGE;package=com.squareup;' +
+    [
+      `S.com.squareup.pos.WEB_CALLBACK_URI=${encodeURIComponent(callbackUrl)}`,
+      `S.com.squareup.pos.CLIENT_ID=${appId}`,
+      'S.com.squareup.pos.API_VERSION=v2.0',
+      `i.com.squareup.pos.TOTAL_AMOUNT=${totalCents}`,
+      'S.com.squareup.pos.CURRENCY_CODE=USD',
+      'S.com.squareup.pos.TENDER_TYPES=com.squareup.pos.TENDER_CARD',
+      `S.com.squareup.pos.REQUEST_METADATA=${state}`,
+      `S.com.squareup.pos.NOTE=${encodeURIComponent(note)}`,
+    ].join(';') +
+    ';end';
+  const data = {
+    amount_money: { amount: totalCents, currency_code: 'USD' },
+    callback_url: callbackUrl,
+    client_id: appId,
+    version: '1.3',
+    notes: note,
+    state,
+    options: { supported_tender_types: ['CREDIT_CARD'] },
+  };
+  return { android, ios: `square-commerce-v1://payment/create?data=${encodeURIComponent(JSON.stringify(data))}` };
+}
+
+// Volta do app Square POS. Não confia só no que vem na URL: confere no Square se o pagamento existe.
+export async function posReturn(ctx, query, { tries = 4, wait = 2000 } = {}) {
+  let state = query['com.squareup.pos.REQUEST_METADATA'];
+  let error = query['com.squareup.pos.ERROR_CODE'];
+  let txId = query['com.squareup.pos.SERVER_TRANSACTION_ID'];
+  if (query.data) {
+    try {
+      const d = JSON.parse(query.data);
+      state = d.state;
+      txId = d.transaction_id;
+      if (d.status && d.status !== 'ok') error = d.error_code || d.status;
+    } catch {
+      return { ok: false, reason: 'resposta estranha do Square' };
+    }
+  }
+  const row = state && ctx.db.prepare('SELECT * FROM square_pos WHERE state = ?').get(String(state));
+  if (!row) return { ok: false, reason: 'cobrança não encontrada' };
+  if (row.payment_id) return { ok: true, serviceId: row.service_id };
+  if (error) return { ok: false, serviceId: row.service_id, reason: String(error) };
+  const used = new Set(ctx.db.prepare('SELECT square_payment_id FROM square_pos WHERE square_payment_id IS NOT NULL').all().map((r) => r.square_payment_id));
+  for (let i = 0; i < tries; i++) {
+    const payments = await ctx.square.listPayments(new Date(new Date(row.created_at).getTime() - 60000).toISOString());
+    const done = payments.filter((p) => p.status === 'COMPLETED' && !used.has(p.id) && p.total_money?.amount === row.total_cents);
+    const found = done.find((p) => txId && (p.order_id === txId || p.id === txId)) || done[0];
+    if (found) {
+      const pay = addPayment(ctx, { serviceId: row.service_id, amountCents: row.base_cents, method: 'cartao', payer: 'Square (Tap to Pay)', userId: row.user_id });
+      ctx.db.prepare('UPDATE square_pos SET square_payment_id = ?, payment_id = ? WHERE id = ?').run(found.id, pay.id, row.id);
+      await notifyCardPaid(ctx, ctx.data.services.get(row.service_id), row.base_cents, 'Tap to Pay');
+      return { ok: true, serviceId: row.service_id };
+    }
+    if (i < tries - 1) await new Promise((r) => setTimeout(r, wait));
+  }
+  return { ok: false, serviceId: row.service_id, reason: 'o Square ainda não mostrou o pagamento' };
 }
 
 // Dias desde o serviço (conta da entrega, ou da criação se ainda não entregou).
@@ -492,6 +581,8 @@ function routes(api, ctx) {
     res.status(201).json(collectCash(ctx, { driverId: driver.driver_id, amountCents, ownerId: req.user.id }));
   });
 
+  posRoutes(api, ctx);
+
   api.get('/services/:id/charge', async (req, res) => {
     const service = ctx.data.services.get(Number(req.params.id));
     if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
@@ -520,7 +611,37 @@ function routes(api, ctx) {
   });
 }
 
+function posRoutes(api, ctx) {
+  // Botão "Cartão por aproximação": abre o app Square POS com valor + taxa.
+  api.post('/services/:id/square-pos', (req, res) => {
+    const service = ctx.data.services.get(Number(req.params.id));
+    if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
+    if (!ctx.square?.configured || !ctx.config.square.appId) throw new HttpError(400, 'O Tap to Pay ainda não está ligado (SQUARE_APP_ID no Render).');
+    const amount = balance(ctx, service).open_cents;
+    if (!amount) throw new HttpError(400, 'Esse serviço não tem valor para receber.');
+    const price = withPosFee(ctx, amount);
+    const state = crypto.randomUUID();
+    ctx.db
+      .prepare('INSERT INTO square_pos (state, service_id, user_id, base_cents, fee_cents, total_cents, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(state, service.id, req.user.id, price.base_cents, price.fee_cents, price.total_cents, nowIso());
+    const callbackUrl = `https://${req.get('host')}/square-pos/volta`;
+    res.json({ ...price, ...posUrls(ctx, { state, totalCents: price.total_cents, note: `${ctx.config.companyName} – ${chargeWhat(ctx, service)}`, callbackUrl }) });
+  });
+}
+
 function publicRoutes(app, ctx) {
+  // O app Square POS volta para cá depois de cobrar.
+  app.get('/square-pos/volta', async (req, res, next) => {
+    try {
+      const r = await posReturn(ctx, req.query, ctx.square.retry);
+      if (!r.ok) ctx.log('Tap to Pay: não consegui confirmar o pagamento', r.reason);
+      const back = r.serviceId ? `/#/servico/${r.serviceId}` : '/#/';
+      res.redirect(`${back}${back.includes('?') ? '&' : '?'}cartao=${r.ok ? 'ok' : encodeURIComponent(r.reason)}`);
+    } catch (err) {
+      next(err);
+    }
+  });
+
   // Aviso do Square quando o cliente paga pelo link. Só vale com a chave de assinatura.
   app.post('/webhook/square', express.raw({ type: '*/*', limit: '1mb' }), (req, res) => {
     const key = ctx.config.square.webhookKey;
@@ -651,7 +772,7 @@ export default {
   summary,
   summaryLines,
   serviceHint: '💵 Pagamento: *pago 250 zelle* (ou dinheiro, cartão, cheque, aaa...). Para cobrar o cliente: *cobrar*.',
-  serviceDetail: ({ ctx, service }) => ({ payments: listPayments(ctx, service.id), balance: balance(ctx, service), square: Boolean(ctx.square?.configured) }),
+  serviceDetail: ({ ctx, service }) => ({ payments: listPayments(ctx, service.id), balance: balance(ctx, service), square: Boolean(ctx.square?.configured), square_pos: Boolean(ctx.square?.configured && ctx.config.square.appId) }),
   async daily({ ctx }) {
     try {
       await updateCardFee(ctx);
