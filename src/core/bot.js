@@ -6,6 +6,7 @@ import path from 'node:path';
 import { normalizePhone, simplify, nowIso, formatPhone } from '../lib/util.js';
 import { ValidationError } from '../lib/validate.js';
 import { servicesBlocked } from '../lib/daily.js';
+import { guessService, looksLikeService } from '../lib/servico-texto.js';
 import { createAi, CONFIRM_FIRST } from './ai.js';
 
 const GREETING = /^(oi+|ola|opa|e ai|eai|fala|bom dia|boa tarde|boa noite|hello|hi|hey|good morning)( (pessoal|robo|robozinho|tudo bem|tudo bom|td bem))?[\s!.,?]*$/;
@@ -202,6 +203,9 @@ export function createBot(ctx) {
       heard = await ai.understand(user, { text, audio, situacao: situation(user) });
     } catch (err) {
       ctx.log('Robô: falha no Gemini', err.message);
+      // Plano B: mensagens encaminhadas com cara de serviço viram serviço novo mesmo sem a inteligência.
+      const novo = !audio && !getConversation(user.id) ? guessService(text) : null;
+      if (novo && looksLikeService(novo)) return startNewService(user, novo);
       return audio ? 'Não consegui ouvir o áudio agora. Tente de novo ou escreva.' : 'A inteligência não respondeu agora. Tente de novo daqui a pouco, ou mande *ajuda* para ver os comandos.';
     }
     const said = audio && heard.transcricao ? `🎤 Ouvi: "${heard.transcricao}"` : null;
@@ -364,6 +368,7 @@ export function createBot(ctx) {
       const natural = ai.enabled() && simple.split(/\s+/).length > 4;
       if (typed && !natural) reply = await runCommand(user, text);
       else if (ai.enabled() && simple) reply = await askAi(user, { text });
+      else if (looksLikeService(guessService(text))) reply = await startNewService(user, guessService(text));
       else reply = 'Não entendi. Mande *ajuda* para ver os comandos.';
     }
 
