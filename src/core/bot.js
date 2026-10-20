@@ -176,7 +176,7 @@ export function createBot(ctx) {
       heard = await ai.understand(user, { text, audio });
     } catch (err) {
       ctx.log('Robô: falha no Gemini', err.message);
-      return audio ? 'Não consegui ouvir o áudio agora. Tente de novo ou escreva.' : 'Não entendi. Mande *ajuda* para ver os comandos.';
+      return audio ? 'Não consegui ouvir o áudio agora. Tente de novo ou escreva.' : 'A inteligência não respondeu agora. Tente de novo daqui a pouco, ou mande *ajuda* para ver os comandos.';
     }
     const said = audio && heard.transcricao ? `🎤 Ouvi: "${heard.transcricao}"` : null;
     // Falou o próprio comando ("ajuda", "novo serviço") e o Gemini não preencheu: usa o que ele ouviu.
