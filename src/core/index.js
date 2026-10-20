@@ -928,9 +928,11 @@ function routes(api, ctx) {
     // Cancelados não aparecem na lista (ficam guardados no histórico e no backup).
     const list = data.services.list({ status, driverId, since, doneSince, hideCancelled: !status, withQueue: status === 'aberto', noDriver: status === 'pendente' && req.user.role === 'dono' && !req.query.driver, limit: Number(req.query.limit) || (start ? 2000 : 100) });
     // Pago ou não (para pintar a linha): só serviço com valor, em andamento ou entregue.
+    // Serviço free conta como pago (fundo verde).
     const pag = ctx.api.pagamentos;
     res.json(
       list.map((s) => {
+        if (s.price_cents === 0 && ['aberto', 'concluido'].includes(s.status)) return { ...s, paid: true };
         if (!pag || !s.price_cents || !['aberto', 'concluido'].includes(s.status)) return s;
         return { ...s, paid: pag.balance(s).received_cents >= s.price_cents };
       })
