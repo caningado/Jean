@@ -4,6 +4,7 @@ import { parseMoney, formatMoney, simplify, nowIso, HttpError } from '../../lib/
 import { checkMoney, ValidationError } from '../../lib/validate.js';
 import express from 'express';
 import { createSquare, validSquareSignature } from '../../lib/square.js';
+import { qrSvg } from '../../lib/qrcode.js';
 
 export const METHODS = {
   zelle: 'Zelle',
@@ -508,7 +509,14 @@ function routes(api, ctx) {
     if (!amount) throw new HttpError(400, 'Esse serviço não tem valor para receber.');
     const card = await cardLink(ctx, service, amount);
     if (!card) throw new HttpError(502, 'O Square não criou o link agora. Tente de novo daqui a pouco.');
-    res.json({ ...card, message: cardMessage(ctx, service, card), fee: cardFee(ctx) });
+    // QR code para o cliente pagar na hora, com a câmera do celular dele.
+    let qr = null;
+    try {
+      qr = await qrSvg(card.url);
+    } catch (err) {
+      ctx.log('Não consegui gerar o QR code do link', err.message);
+    }
+    res.json({ ...card, qr_svg: qr, message: cardMessage(ctx, service, card), fee: cardFee(ctx) });
   });
 }
 
