@@ -326,7 +326,7 @@ export function createBot(ctx) {
       if (pending) return finish([...prefix, `${greeting(user)} Vamos continuar de onde paramos:`, ...[].concat(pending.ask(conversation.data, ctx))]);
       return finish([
         ...prefix,
-        `${greeting(user)} Em que posso ajudar?${ai.enabled() ? ' Pode escrever ou mandar áudio do seu jeito, por exemplo: _serviço pro João, pegar na Alafaya, levar pra Ribas, 150_.' : ''}`,
+        `${greeting(user)} Aqui é o ${ctx.config.roboNome}. Em que posso ajudar?${ai.enabled() ? ' Pode escrever ou mandar áudio do seu jeito, por exemplo: _serviço pro João, pegar na Alafaya, levar pra Ribas, 150_.' : ''}`,
       ]);
     }
 
