@@ -6,6 +6,7 @@ import { hashPin, verifyPin, signToken } from '../lib/auth.js';
 import { collectAlerts, servicesBlocked } from '../lib/daily.js';
 import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkMoney, isMapReference } from '../lib/validate.js';
 import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfWeekIso, startOfMonthIso, startOfYearIso, formatPhone, dayFormatter } from '../lib/util.js';
+import { speak, toWav, textoParaFala, MAX_FALA } from '../lib/tts.js';
 
 const migrations = [
   `CREATE TABLE users (
@@ -1155,7 +1156,17 @@ function routes(api, ctx) {
   api.post('/bot/simulate/audio', express.raw({ type: 'audio/*', limit: '15mb' }), async (req, res) => {
     if (!Buffer.isBuffer(req.body) || req.body.length < 500) throw new HttpError(400, 'Não ouvi nada. Segure o microfone enquanto fala.');
     const replies = await ctx.bot.handle({ phone: req.user.phone, audio: { buffer: req.body, mime: req.headers['content-type'] } });
-    res.json({ replies });
+    // Igual ao WhatsApp: quem fala recebe a resposta também em áudio (.wav, o navegador toca).
+    let voz = null;
+    const fala = textoParaFala(replies.join('\n'));
+    if (ctx.config.roboVoz && ctx.config.geminiApiKey && fala && fala.length <= MAX_FALA) {
+      try {
+        voz = toWav(await speak(ctx, fala)).toString('base64');
+      } catch (err) {
+        ctx.log('Robô: não consegui responder em áudio', err.message);
+      }
+    }
+    res.json({ replies, voz });
   });
 }
 

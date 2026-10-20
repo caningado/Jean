@@ -48,6 +48,8 @@ Com `GEMINI_API_KEY`, o robô também entende **texto livre e áudio** ("abastec
 "serviço pra Ana, pegar na Alafaya, levar pra Ribas"): o Gemini traduz para um desses comandos.
 O que mexe em dinheiro ou fecha serviço (`entregue`, `pago`, `gasto`, `recolhi`, `fiz`, `odometro`,
 `empresa`) só acontece depois de um *sim*. No cadastro de serviço, o áudio vira a resposta da pergunta.
+Quem manda áudio recebe a resposta também em áudio (voz do Gemini; respostas compridas ficam só
+no texto). `ROBO_VOZ=off` desliga. A imagem Docker instala o `ffmpeg` para gerar a mensagem de voz.
 
 Quem não é da equipe (clientes, amigos) e manda mensagem para o número do robô vira contato,
 mas o robô **nunca responde**: só o dono responde clientes, pelo app WhatsApp Business.
