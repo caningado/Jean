@@ -43,6 +43,9 @@ export function loadConfig(overrides = {}) {
       verifyToken: env.WHATSAPP_VERIFY_TOKEN || '',
       appSecret: env.WHATSAPP_APP_SECRET || '',
       apiVersion: env.WHATSAPP_API_VERSION || 'v21.0',
+      // Mensagens de texto que chegam juntas (encaminhadas, cartão de contato) esperam este tempo
+      // e viram uma só, para o robô entender o serviço inteiro.
+      juntarMs: env.WHATSAPP_JUNTAR_MS != null && env.WHATSAPP_JUNTAR_MS !== '' ? Number(env.WHATSAPP_JUNTAR_MS) : 3000,
       // Resposta automática para quem não é da equipe: diaria (padrão), nunca ou sempre.
       // Padrão: o robô nunca responde clientes (só o dono responde, pelo WhatsApp Business).
     },

@@ -97,6 +97,14 @@ export function extractMessages(payload) {
           const { latitude, longitude, name, address } = m.location;
           const label = [name, address].filter(Boolean).join(', ');
           msg.text = `${label ? label + ' ' : ''}(${latitude}, ${longitude})`;
+        } else if (m.type === 'contacts' && m.contacts?.length) {
+          // Cartão de contato (o cliente que mandou o serviço): vira texto com nome e telefone.
+          msg.text = m.contacts
+            .map((c) => {
+              const phone = c.phones?.find((p) => p.wa_id)?.wa_id || c.phones?.[0]?.phone || '';
+              return `Contato do cliente: ${c.name?.formatted_name || [c.name?.first_name, c.name?.last_name].filter(Boolean).join(' ') || 'sem nome'}${phone ? ` ${phone}` : ''}`;
+            })
+            .join('\n');
         } else if (m.type === 'button') msg.text = m.button?.text || '';
         else if (m.type === 'interactive') msg.text = m.interactive?.button_reply?.title || m.interactive?.list_reply?.title || '';
         out.push(msg);
@@ -118,20 +126,58 @@ export async function processMessage(ctx, client, msg) {
   }
   ctx.log(`WhatsApp: mensagem de ${user.name} (${formatPhone(msg.from)}), tipo ${msg.type}.`);
 
-  let media = null;
-  let audio = null;
-  if (msg.audio) audio = await client.downloadMedia(msg.mediaId);
-  else if (msg.mediaId) media = await client.downloadMedia(msg.mediaId);
-  else if (!msg.text) {
-    await client.sendText(msg.from, 'Por enquanto eu entendo texto, áudio e fotos. Mande *ajuda* para ver os comandos.');
-    return;
+  if (!msg.audio && !msg.mediaId) {
+    if (!msg.text) {
+      await client.sendText(msg.from, 'Por enquanto eu entendo texto, áudio e fotos. Mande *ajuda* para ver os comandos.');
+      return;
+    }
+    return queueText(ctx, client, user, msg);
   }
+  // Foto ou áudio: antes, responde os textos que estavam esperando (a ordem importa).
+  await flushTexts(ctx, client, msg.from);
+  const audio = msg.audio ? await client.downloadMedia(msg.mediaId) : null;
+  const media = msg.audio ? null : await client.downloadMedia(msg.mediaId);
+  await answer(ctx, client, user, { phone: msg.from, text: msg.text, media, audio });
+}
 
-  const replies = await ctx.bot.handle({ phone: msg.from, text: msg.text, media, audio });
-  for (const reply of replies) await client.sendText(msg.from, reply);
+async function answer(ctx, client, user, input) {
+  const replies = await ctx.bot.handle(input);
+  for (const reply of replies) await client.sendText(input.phone, reply);
   ctx.log(`WhatsApp: ${replies.length} resposta(s) enviada(s) para ${user.name}.`);
   // Quem mandou áudio recebe a resposta também em áudio (o texto continua indo, para quem prefere ler).
-  if (audio) await replyByVoice(ctx, client, msg.from, replies);
+  if (input.audio) await replyByVoice(ctx, client, input.phone, replies);
+}
+
+// Textos que chegam em sequência (várias mensagens encaminhadas de uma vez, o cartão do contato,
+// o valor digitado logo depois) esperam uns segundos e vão juntos para o robô, como uma mensagem só.
+const waiting = new WeakMap();
+function queueText(ctx, client, user, msg) {
+  const wait = ctx.config.whatsapp.juntarMs;
+  if (!(wait > 0)) return answer(ctx, client, user, { phone: msg.from, text: msg.text });
+  if (!waiting.has(ctx)) waiting.set(ctx, new Map());
+  const byPhone = waiting.get(ctx);
+  let batch = byPhone.get(msg.from);
+  if (!batch) {
+    batch = { user, texts: [], done: [] };
+    byPhone.set(msg.from, batch);
+  }
+  batch.texts.push(msg.text);
+  clearTimeout(batch.timer);
+  batch.timer = setTimeout(() => flushTexts(ctx, client, msg.from).catch((err) => ctx.log('Erro ao processar mensagem do WhatsApp', err)), wait);
+  return new Promise((resolve) => batch.done.push(resolve));
+}
+
+async function flushTexts(ctx, client, phone) {
+  const batch = waiting.get(ctx)?.get(phone);
+  if (!batch) return;
+  waiting.get(ctx).delete(phone);
+  clearTimeout(batch.timer);
+  try {
+    if (batch.texts.length > 1) ctx.log(`WhatsApp: ${batch.texts.length} mensagens de ${batch.user.name} juntas numa só.`);
+    await answer(ctx, client, batch.user, { phone, text: batch.texts.join('\n') });
+  } finally {
+    batch.done.forEach((resolve) => resolve());
+  }
 }
 
 export async function replyByVoice(ctx, client, to, replies, voice = { speak, toOgg }) {
