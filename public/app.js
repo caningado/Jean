@@ -3114,7 +3114,7 @@ async function scanBarcode() {
       <div class="scanner-mask"><div class="scanner-box"><i></i><i></i><i></i><i></i><div class="scanner-line"></div></div></div>
       <button class="scanner-close" data-act="close" aria-label="Fechar">✕</button>
     </div>
-    <p class="scanner-tip">Código de barras do VIN <strong>dentro do retângulo</strong>, deitado e de perto. Se for só o VIN escrito (etiqueta ou para-brisa), toque em <strong>📸 Ler as letras</strong>.</p>
+    <p class="scanner-tip">Aponte para o VIN (código de barras <strong>dentro do retângulo</strong> ou o número escrito), de perto e sem reflexo. Eu tento ler os dois sozinho; se demorar, toque em <strong>📸 Ler as letras</strong>.</p>
     <p class="scanner-status">Abrindo a câmera…</p>
     <div class="scanner-actions">
       <button class="secondary" data-act="torch" hidden>🔦 Lanterna</button>
@@ -3224,14 +3224,22 @@ async function scanBarcode() {
     }
 
     // Ao mesmo tempo, tira fotos sozinho (com foco e resolução de foto) e manda para o
-    // servidor ler o código de barras, como o botão 📸 faz. Para depois de umas 10 fotos.
+    // servidor ler o código de barras. Sem código de barras, a partir da 3ª foto manda
+    // também para ler as letras (como o botão 📸), no máximo 3 vezes. Para depois de umas 10 fotos.
     (async () => {
       await new Promise((r) => setTimeout(r, 2000));
+      let letters = 0;
       for (let n = 0; n < 10 && !done; n++) {
         const image = await stillPhoto({ max: 2000, quality: 0.85, quiet: true });
         if (done || !image) break;
-        const read = await api('/vin/read?so=codigo', { method: 'POST', raw: image, type: 'image/jpeg' }).catch(() => null);
+        const full = n >= 2 && n % 2 === 0 && letters < 3;
+        if (full) {
+          letters++;
+          if (/^(Procurando|Não achei)/.test(status.textContent)) status.textContent = 'Lendo as letras do VIN…';
+        }
+        const read = await api(full ? '/vin/read' : '/vin/read?so=codigo', { method: 'POST', raw: image, type: 'image/jpeg' }).catch(() => null);
         if (read?.vin && !done) return finish(read.vin);
+        if (full && !done && status.textContent === 'Lendo as letras do VIN…') status.textContent = 'Ainda não consegui. Chegue mais perto do VIN, sem reflexo.';
         await new Promise((r) => setTimeout(r, 1500));
       }
     })();
