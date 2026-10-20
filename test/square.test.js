@@ -63,6 +63,7 @@ test('painel: botão Link do cartão e aviso do Square marcam o serviço como pa
   assert.equal(card.total_cents, 21748);
   assert.equal(card.url, 'https://square.link/u/1');
   assert.match(card.message, /Pay securely by card/);
+  assert.match(card.qr_svg, /^<svg[\s\S]*<\/svg>\s*$/); // QR para o cliente pagar na hora
   assert.equal((await (await fetch(`${base}/api/services/${service.id}`, { headers: { Cookie: cookie } })).json()).square, true);
 
   const event = JSON.stringify({ type: 'payment.updated', data: { object: { payment: { id: 'P1', order_id: 'ORD1', status: 'COMPLETED', amount_money: { amount: 21748 } } } } });

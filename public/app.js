@@ -1104,9 +1104,26 @@ screens.servico = async (params, id) => {
         const card = await api(`/services/${id}/square-link`, { method: 'POST' });
         out.innerHTML = `<p>Serviço ${money(card.base_cents)} + taxa ${money(card.fee_cents)} = <strong>${money(card.total_cents)}</strong>
           <span class="sub">(taxa ${card.fee.pct}% + ${money(card.fee.fixed_cents)}${card.fee.updated_at ? ', atualizada ' + when(card.fee.updated_at) : ''})</span></p>
+          ${card.qr_svg ? `<div class="qr-pagar"><div class="qr-box">${card.qr_svg}</div><p class="sub">Cliente do lado? Ele aponta a câmera do celular para o QR e paga com o cartão.</p><p class="sub" id="cardlinkStatus">Esperando o pagamento…</p></div>` : ''}
           <p><a href="${esc(card.url)}" target="_blank" rel="noopener">${esc(card.url)}</a></p>
           <div class="actions"><button type="button" class="secondary" id="cardlinkSend">Mandar para o cliente</button></div>`;
         out.querySelector('#cardlinkSend').onclick = () => shareText(card.message, s.contact_phone);
+        // Enquanto o QR está na tela, confere se o Square já avisou o pagamento (até 15 min).
+        const status = out.querySelector('#cardlinkStatus');
+        const until = Date.now() + 15 * 60000;
+        const check = async () => {
+          if (!status.isConnected || Date.now() > until) return;
+          try {
+            const now = await api(`/services/${id}`);
+            if (!now.balance?.open_cents) {
+              status.innerHTML = '<strong>✅ Pago! Pode liberar o cliente.</strong>';
+              toast('Pagamento recebido no cartão');
+              return setTimeout(reload, 2500);
+            }
+          } catch {}
+          setTimeout(check, 4000);
+        };
+        if (status) setTimeout(check, 4000);
       } catch (err) {
         out.innerHTML = '';
         toast(err.message);
