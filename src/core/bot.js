@@ -170,10 +170,20 @@ export function createBot(ctx) {
   }
 
   // Mensagem que não é comando (ou áudio): o Gemini diz qual comando a pessoa quis.
+  // O que a inteligência precisa saber para responder perguntas ("qual o VIN?", "pra onde levo?").
+  function situation(user) {
+    const lines = [];
+    const service = ctx.data.services.active(user);
+    lines.push(service ? `Serviço aberto dele:\n${ctx.data.services.describe(service, user)}` : 'Ele não tem serviço aberto agora.');
+    const vin = ctx.api.vin?.pending(user.id);
+    if (vin) lines.push(`Último VIN que ele mandou em foto (ainda sem serviço): ${vin.vin}${vin.vehicle ? ` (${vin.vehicle})` : ''}.`);
+    return lines.join('\n');
+  }
+
   async function askAi(user, { text = '', audio = null }) {
     let heard;
     try {
-      heard = await ai.understand(user, { text, audio });
+      heard = await ai.understand(user, { text, audio, situacao: situation(user) });
     } catch (err) {
       ctx.log('Robô: falha no Gemini', err.message);
       return audio ? 'Não consegui ouvir o áudio agora. Tente de novo ou escreva.' : 'A inteligência não respondeu agora. Tente de novo daqui a pouco, ou mande *ajuda* para ver os comandos.';
