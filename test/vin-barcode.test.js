@@ -85,3 +85,19 @@ test('painel: "Ler da foto" lê o código de barras e o leitor do iPhone é serv
     assert.ok((await res.arrayBuffer()).byteLength > 10000, file);
   }
 });
+
+test('foto sem legenda com código de barras de VIN: entende que é o VIN, sem perguntar o tipo', async () => {
+  const ctx = makeContext();
+  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'pular', 'sim');
+  const media = { buffer: await barcodePng(VIN, 'Code39'), mime: 'image/png' };
+  const [reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media });
+  assert.match(reply, new RegExp(`Li o VIN: \\*${VIN}\\*`));
+});
+
+test('foto de VIN sem serviço aberto é lida pelo código de barras', async () => {
+  const ctx = makeContext();
+  const media = { buffer: await barcodePng(VIN, 'Code39'), mime: 'image/png' };
+  const [reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media });
+  assert.match(reply, new RegExp(`VIN: \\*${VIN}\\*`));
+  assert.match(reply, /Não tem serviço aberto/);
+});
