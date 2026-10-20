@@ -92,6 +92,43 @@ test('Robô com Gemini: áudio vira comando, e no meio do cadastro vira a respos
   assert.match(r.at(-1), /telefone/);
 });
 
+test('Robô com Gemini: comando falado ("ajuda", "Novo serviço.") funciona mesmo se o Gemini não preencher o comando', async (t) => {
+  const ctx = makeContext({ GEMINI_API_KEY: 'k' });
+  const g = fakeGemini(t);
+  const audio = { buffer: Buffer.from('ogg'), mime: 'audio/ogg' };
+  g.answers.push({ comando: '', transcricao: 'ajuda' });
+  let r = await ctx.bot.handle({ phone: DRIVER_PHONE, audio });
+  assert.equal(r[0], '🎤 Ouvi: "ajuda"');
+  assert.match(r.join('\n'), /\*Comandos\*/);
+
+  g.answers.push({ comando: '', transcricao: 'Novo serviço.' });
+  r = await ctx.bot.handle({ phone: DRIVER_PHONE, audio });
+  assert.match(r.at(-1), /telefone/);
+  assert.equal(ctx.bot.getConversation(ctx.bot.findUser(DRIVER_PHONE).id).flow, 'novo');
+});
+
+test('Robô com Gemini: no meio do cadastro, fala tudo fora de ordem e ele só pergunta o que falta', async (t) => {
+  const ctx = makeContext({ GEMINI_API_KEY: 'k' });
+  const g = fakeGemini(t);
+  await chat(ctx, DRIVER_PHONE, 'novo');
+  g.answers.push({ texto: 'Ana Lima', cliente: 'Ana Lima', retirada: '1200 Alafaya Trail, Oviedo', destino: 'Ribas Auto, Orlando', veiculo: 'Honda Civic', valor: 150 });
+  let r = await ctx.bot.handle({ phone: DRIVER_PHONE, audio: { buffer: Buffer.from('ogg'), mime: 'audio/ogg' } });
+  assert.equal(r[0], '🎤 Ouvi: "Ana Lima"');
+  assert.match(g.calls[0][1].text, /cadastrando um serviço/);
+  assert.match(r.at(-1), /celular|telefone/i); // cliente novo: pede o telefone dela
+  [r] = await chat(ctx, DRIVER_PHONE, '4075550123');
+  assert.match(r, /milhas/); // retirada, destino e carro já foram respondidos sozinhos
+  const data = ctx.bot.getConversation(ctx.bot.findUser(DRIVER_PHONE).id).data;
+  assert.equal(data.pickup, '1200 Alafaya Trail, Oviedo');
+  assert.equal(data.vehicle, 'Honda Civic');
+
+  // Escrito também: frase comprida no meio do cadastro
+  g.answers.push({ texto: 'pular', valor: 200 });
+  [r] = await chat(ctx, DRIVER_PHONE, 'nao sei as milhas mas cobra 200 dolares');
+  assert.match(r, /Confere\?/);
+  assert.match(r, /\$200\.00/);
+});
+
 test('Robô sem GEMINI_API_KEY: só os comandos de sempre', async (t) => {
   const ctx = makeContext();
   const g = fakeGemini(t);
