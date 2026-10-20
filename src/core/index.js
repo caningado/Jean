@@ -559,7 +559,7 @@ export function splitVehicle(text) {
 
 const commands = [
   {
-    names: ['ajuda', 'menu', 'oi', 'ola', 'help'],
+    names: ['ajuda', 'menu', 'help'],
     help: '*ajuda* – mostra esta lista',
     run: ({ ctx }) => ['*Comandos*', ...ctx.commands.map((c) => c.help).filter(Boolean)].join('\n'),
   },
