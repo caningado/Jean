@@ -6,6 +6,8 @@ import { ValidationError } from '../lib/validate.js';
 import { servicesBlocked } from '../lib/daily.js';
 import { createAi, CONFIRM_FIRST } from './ai.js';
 
+const GREETING = /^(oi+|ola|opa|e ai|eai|fala|bom dia|boa tarde|boa noite|hello|hi|hey|good morning)( (pessoal|robo|robozinho|tudo bem|tudo bom|td bem))?[\s!.,?]*$/;
+
 // Depois de tanto tempo parado, o cadastro pela metade é esquecido.
 const CONVERSA_VALE_MS = 6 * 60 * 60 * 1000;
 
@@ -260,6 +262,16 @@ export function createBot(ctx) {
       return [...prefix, 'Ok, cancelado. Mande *ajuda* para ver os comandos.'];
     }
 
+    // "oi", "bom dia": responde como gente, sem despejar a lista de comandos.
+    if (GREETING.test(simple.replace(/[!.,?;]+/g, ' ').replace(/\s+/g, ' ').trim())) {
+      const pending = conversation && conversation.flow !== 'ai_confirm' && ctx.flows[conversation.flow]?.steps[conversation.step];
+      if (pending) return finish([...prefix, `${greeting(user)} Vamos continuar de onde paramos:`, ...[].concat(pending.ask(conversation.data, ctx))]);
+      return finish([
+        ...prefix,
+        `${greeting(user)} Em que posso ajudar?${ai.enabled() ? ' Pode escrever ou mandar áudio do seu jeito, por exemplo: _serviço pro João, pegar na Alafaya, levar pra Ribas, 150_.' : ''}`,
+      ]);
+    }
+
     // "ajuda" no meio de um cadastro: mostra os comandos e repete a pergunta, sem perder o que já foi dito.
     if (conversation && conversation.flow !== 'ai_confirm' && ['ajuda', 'menu', 'help'].includes(simple)) {
       const step = ctx.flows[conversation.flow]?.steps[conversation.step];
@@ -298,6 +310,13 @@ export function createBot(ctx) {
     }
 
     return finish([...prefix, ...[].concat(reply)]);
+  }
+
+  // "Bom dia, Jean!" conforme a hora no fuso da empresa.
+  function greeting(user) {
+    const hour = Number(new Intl.DateTimeFormat('en-US', { hour: 'numeric', hourCycle: 'h23', timeZone: ctx.config.timeZone }).format(new Date()));
+    const part = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
+    return `${part}, ${String(user.name || '').split(' ')[0]}! 👋`;
   }
 
   const finish = (reply) => (Array.isArray(reply) ? reply : [reply]).filter(Boolean);
