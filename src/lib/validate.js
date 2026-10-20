@@ -1,7 +1,7 @@
 // Regras para não deixar entrar dado sem sentido (ex.: "23" como nome de cliente).
 // Usadas tanto pelo robô quanto pelo painel. Cada função devolve o valor limpo
 // ou lança ValidationError com uma mensagem pronta para mostrar ao usuário.
-import { normalizePhone } from './util.js';
+import { normalizePhone, parseMoney } from './util.js';
 
 export class ValidationError extends Error {
   constructor(message) {
@@ -61,10 +61,18 @@ export function checkMiles(raw) {
 }
 
 // Valor em centavos. max em dólares.
-export function checkMoney(cents, { max = 10000, what = 'O valor' } = {}) {
+export function checkMoney(cents, { max = 10000, what = 'O valor', zero = false } = {}) {
+  if (zero && cents === 0) return 0;
   if (cents == null || !Number.isFinite(cents) || cents <= 0) throw new ValidationError(`${what} precisa ser maior que zero. Ex: 150 ou 150.50`);
   if (cents > max * 100) throw new ValidationError(`${what} parece alto demais (máximo $${max.toLocaleString('en-US')}). Confira e mande de novo.`);
   return cents;
+}
+
+// Valor do serviço: aceita "free", "grátis" ou 0 (serviço sem cobrança).
+export const FREE = /^\s*(free|gr[aá]tis|de gra[cç]a|sem custo|no charge)\s*$/i;
+export function checkServicePrice(raw) {
+  if (FREE.test(String(raw ?? ''))) return 0;
+  return checkMoney(parseMoney(raw), { what: 'O valor do serviço', zero: true });
 }
 
 // Sites de mapa aceitos quando o motorista cola um link.

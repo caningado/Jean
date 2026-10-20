@@ -433,6 +433,8 @@ screens.login = async () => {
 };
 
 // Fundo verde claro = pago; vermelho claro = falta receber.
+// Serviço sem cobrança aparece como "Free".
+const priceText = (cents) => (cents === 0 ? 'Free' : money(cents));
 const payClass = (s) => (s.paid === true ? ' class="pago"' : s.paid === false ? ' class="nao-pago"' : '');
 
 screens.servicos = async (params) => {
@@ -510,7 +512,7 @@ screens.servicos = async (params) => {
                 <td class="route"><div>${short(s.pickup_name || s.pickup) || '<span class="sub">—</span>'}</div>${s.dropoff || s.dropoff_name ? `<div class="sub">→ ${short(s.dropoff_name || s.dropoff)}</div>` : ''}</td>
                 ${owner ? `<td>${esc(s.driver_name || '') || '<span class="sub">—</span>'}</td>` : ''}
                 <td class="nowrap">${when(s.created_at)}</td>
-                <td class="num">${s.price_cents != null ? money(s.price_cents) : '<span class="sub">—</span>'}</td>
+                <td class="num">${s.price_cents != null ? priceText(s.price_cents) : '<span class="sub">—</span>'}</td>
                 <td>${badge(s)}</td>
               </tr>`
             )
@@ -545,7 +547,7 @@ screens.servicos = async (params) => {
             <div><strong>#${num(s)} ${esc(s.contact_name || 'Sem cliente')}</strong>
               <div class="sub">${esc([s.vehicle, s.plate].filter(Boolean).join(' · ') || (s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa'))}</div>
               <div class="sub">${when(s.created_at)}${state.me.role === 'dono' && s.driver_name ? ' · ' + esc(s.driver_name) : ''}</div></div>
-            <div class="right">${s.price_cents != null ? money(s.price_cents) : ''}<br>${badge(s)}</div>
+            <div class="right">${s.price_cents != null ? priceText(s.price_cents) : ''}<br>${badge(s)}</div>
           </a></li>`
         )
         .join('')
@@ -584,7 +586,7 @@ screens.novo = async () => {
       </div>
       <div class="row2">
         <div><label>Milhas</label><input name="miles" type="number" step="0.1" inputmode="decimal"></div>
-        <div><label>Valor (US$)</label><input name="price" inputmode="decimal"></div>
+        <div><label>Valor (US$)</label><input name="price" inputmode="decimal" placeholder="0 = free"></div>
       </div>
       ${priced ? `<p class="sub">Tabela: ${money(pricing.baseCents)} + ${money(pricing.perMileCents)} por milha.</p>` : ''}
       ${drivers.length ? `<label>Motorista</label><select name="driver_id"><option value="fila" selected>⏳ Ninguém ainda (Pendente)</option>${drivers.filter((d) => d.active && drives(d)).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select><p class="sub">O serviço entra como Pendente. Escolha o motorista agora ou depois, na tela do serviço.</p>` : ''}
@@ -834,7 +836,7 @@ screens.servico = async (params, id) => {
       ${placeHtml('📍', s.pickup, s.pickup_name)}${placeHtml('🏁', s.dropoff, s.dropoff_name)}
       <p>🚗 ${esc([s.vehicle, s.plate].filter(Boolean).join(' · ') || 'Veículo não informado')}</p>
       ${s.miles != null ? `<p class="sub">${s.miles} milhas</p>` : ''}
-      <p class="big">${s.price_cents != null ? money(s.price_cents) : 'Sem valor'}</p>
+      <p class="big">${s.price_cents != null ? priceText(s.price_cents) : 'Sem valor'}</p>
       <p class="sub">${when(s.created_at)}${s.driver_name ? ' · ' + esc(s.driver_name) + (owner && s.driver_seq ? ` (nº ${s.driver_seq} do dia ${s.driver_ref_day.slice(8)}/${s.driver_ref_day.slice(5, 7)})` : '') : ''}</p>
       ${s.notes ? `<p>${esc(s.notes)}</p>` : ''}
       ${s.status === 'aberto' && STAGES[s.stage] ? `<p class="stage">${STAGES[s.stage]}</p>` : ''}
@@ -1130,7 +1132,7 @@ screens.editar = async (params, id) => {
       </div>
       <div class="row2">
         <div><label>Milhas</label><input name="miles" type="number" step="0.1" value="${s.miles ?? ''}"></div>
-        <div><label>Valor (US$)</label><input name="price" inputmode="decimal" value="${s.price_cents != null ? (s.price_cents / 100).toFixed(2) : ''}"></div>
+        <div><label>Valor (US$)</label><input name="price" inputmode="decimal" placeholder="0 = free" value="${s.price_cents != null ? (s.price_cents / 100).toFixed(2) : ''}"></div>
       </div>
       ${drivers.length ? `<label>Motorista</label><select name="driver_id">${s.driver_id ? '' : '<option value="" selected>Ninguém ainda (fila)</option>'}${drivers.filter((d) => d.id === s.driver_id || (d.active && drives(d))).map((d) => `<option value="${d.id}" ${d.id === s.driver_id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>` : ''}
       <label>Situação</label><select name="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === s.status ? 'selected' : ''}>${v}</option>`).join('')}</select>
@@ -1683,7 +1685,7 @@ screens.relatorio = async (params) => {
   const weekday = date.toLocaleDateString('pt-BR', { weekday: 'long' });
   const short = (t) => esc((t || '').replace(/https?:\/\/\S+/g, 'local no mapa'));
   const pay = (s) => {
-    if (!s.price_cents) return '<span class="sub">sem valor</span>';
+    if (!s.price_cents) return `<span class="sub">${s.price_cents === 0 ? 'free' : 'sem valor'}</span>`;
     const how = s.methods.length ? ` <span class="sub">${esc(s.methods.join(', '))}</span>` : '';
     if (s.received_cents >= s.price_cents) return `Pago${how}`;
     if (s.received_cents) return `Falta ${money(s.price_cents - s.received_cents)}${how}`;

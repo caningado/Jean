@@ -224,7 +224,7 @@ export function createCoreData(db, timeZone = 'America/New_York') {
       if (s.vehicle || s.plate) lines.push(`Veículo: ${[s.vehicle, s.plate].filter(Boolean).join(' · ')}`);
       if (s.vin) lines.push(`VIN: ${s.vin}`);
       if (s.miles != null) lines.push(`Milhas: ${s.miles}`);
-      if (s.price_cents != null) lines.push(`Valor: ${formatMoney(s.price_cents)}`);
+      if (s.price_cents != null) lines.push(`Valor: ${s.price_cents === 0 ? 'Free ($0)' : formatMoney(s.price_cents)}`);
       lines.push(`Situação: ${s.status === 'aberto' ? 'em andamento' : s.status === 'concluido' ? 'entregue' : s.status === 'pendente' ? 'pendente (na fila, sem motorista)' : s.status}`);
       return lines.join('\n');
     },

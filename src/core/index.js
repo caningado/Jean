@@ -4,7 +4,7 @@ import { FlowError } from './bot.js';
 import { repairEncodedNames } from './data.js';
 import { hashPin, verifyPin, signToken } from '../lib/auth.js';
 import { collectAlerts, servicesBlocked } from '../lib/daily.js';
-import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkMoney, isMapReference } from '../lib/validate.js';
+import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkServicePrice, FREE, isMapReference } from '../lib/validate.js';
 import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfWeekIso, startOfMonthIso, startOfYearIso, formatPhone, dayFormatter } from '../lib/util.js';
 import { speak, toWav, textoParaFala, MAX_FALA } from '../lib/tts.js';
 
@@ -373,7 +373,7 @@ function draftSummary(ctx, data) {
   if (data.dropoff) lines.push(`Destino: ${data.dropoff}`);
   if (vehicle) lines.push(`Veículo: ${[vehicle, plate].filter(Boolean).join(' · ')}`);
   if (data.miles != null) lines.push(`Milhas: ${data.miles}`);
-  if (data.price_cents != null) lines.push(`Valor: ${formatMoney(data.price_cents)}`);
+  if (data.price_cents != null) lines.push(`Valor: ${data.price_cents === 0 ? 'Free ($0)' : formatMoney(data.price_cents)}`);
   return lines.join('\n');
 }
 
@@ -493,13 +493,13 @@ const flows = {
           const suggestion = suggestPrice(ctx, data.miles);
           return suggestion != null
             ? `Qual o *valor* do serviço? Pela tabela dá ${formatMoney(suggestion)}. Mande *ok* para aceitar, outro valor, ou *pular*.`
-            : 'Qual o *valor* do serviço em dólar? (ou *pular*)';
+            : 'Qual o *valor* do serviço em dólar? (*free* se não cobrar, ou *pular*)';
         },
         parse(text, { ctx, data }) {
           const suggestion = suggestPrice(ctx, data.miles);
           if (simplify(text) === 'ok' && suggestion != null) return suggestion;
-          if (!/^\$?\s*[\d.,]+\s*$/.test(text.trim())) throw new FlowError('Mande só o valor em dólar. Ex: 150 ou 150.50');
-          return checkMoney(parseMoney(text), { what: 'O valor do serviço' });
+          if (!FREE.test(text) && !/^\$?\s*[\d.,]+\s*$/.test(text.trim())) throw new FlowError('Mande só o valor em dólar (Ex: 150 ou 150.50), ou *free* se não cobrar.');
+          return checkServicePrice(text);
         },
       },
       {
@@ -708,7 +708,7 @@ function serviceFields(body, { partial = false } = {}) {
   if (has('vehicle')) out.vehicle = optional(body.vehicle, checkVehicle);
   if (has('plate')) out.plate = optional(body.plate, checkPlate);
   if (has('miles')) out.miles = optional(body.miles, checkMiles);
-  if (has('price')) out.price_cents = optional(body.price, (v) => checkMoney(parseMoney(v), { what: 'O valor do serviço' }));
+  if (has('price')) out.price_cents = optional(body.price, checkServicePrice);
   if (has('notes')) out.notes = blank(body.notes) ? null : String(body.notes).trim().slice(0, 1000);
   if (partial && body.status !== undefined) {
     if (!['pendente', 'aberto', 'concluido', 'cancelado'].includes(body.status)) throw new HttpError(400, 'Situação inválida.');
