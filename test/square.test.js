@@ -41,7 +41,8 @@ test('taxa do cartão: o cliente paga a taxa e a empresa recebe o valor cheio', 
 test('robô: *link* manda o link do cartão com a taxa; *cobrar* junta Zelle e cartão, sem criar link novo', async () => {
   const { ctx } = setup({ ZELLE_CONTACT: 'pay@jj.com' });
   let r = await chat(ctx, DRIVER_PHONE, 'link');
-  assert.match(r.flat().join('\n'), /\$210\.00 \+ \$7\.48 card fee = \$217\.48\.\nPay by card here: https:\/\/square\.link\/u\/1/);
+  assert.match(r.flat().join('\n'), /Hi Daylon! Thank you for choosing Towing J&J\.\n\nTowing service\nAmount: \$210\.00\nCard fee: \$7\.48\nTotal: \$217\.48\n\nPay securely by card: https:\/\/square\.link\/u\/1/);
+  assert.doesNotMatch(r.flat().join('\n'), /#1/);
   r = await chat(ctx, DRIVER_PHONE, 'cobrar');
   assert.match(r.flat().join('\n'), /Zelle to .*\nOr pay by card \(\$217\.48, includes \$7\.48 card fee\): https:\/\/square\.link\/u\/1/);
   assert.equal(ctx.square.links.length, 1);
@@ -61,7 +62,7 @@ test('painel: botão Link do cartão e aviso do Square marcam o serviço como pa
   const card = await res.json();
   assert.equal(card.total_cents, 21748);
   assert.equal(card.url, 'https://square.link/u/1');
-  assert.match(card.message, /Pay by card here/);
+  assert.match(card.message, /Pay securely by card/);
   assert.equal((await (await fetch(`${base}/api/services/${service.id}`, { headers: { Cookie: cookie } })).json()).square, true);
 
   const event = JSON.stringify({ type: 'payment.updated', data: { object: { payment: { id: 'P1', order_id: 'ORD1', status: 'COMPLETED', amount_money: { amount: 21748 } } } } });
@@ -121,4 +122,14 @@ test('cliente do Square: acha a loja e cria o link com valor em dólar', async (
   assert.deepEqual(body.quick_pay.price_money, { amount: 21748, currency: 'USD' });
   assert.equal(body.quick_pay.location_id, 'LOC1');
   assert.equal(calls[1].opts.headers.Authorization, 'Bearer tk');
+});
+
+test('mensagem ao cliente usa o número da invoice, não o número interno do serviço', async () => {
+  const { ctx, service } = setup();
+  ctx.db.prepare("UPDATE services SET vehicle = '2015 Honda Civic' WHERE id = ?").run(service.id);
+  let r = await chat(ctx, DRIVER_PHONE, 'link');
+  assert.match(r.flat().join('\n'), /\nTowing service – 2015 Honda Civic\n/);
+  ctx.db.prepare("INSERT INTO invoices (number, service_id, items, total_cents, issue_date, due_date, token, created_at) VALUES (2610007, ?, '[]', 21000, '2026-10-20', '2026-10-20', 'tk', '2026-10-20')").run(service.id);
+  r = await chat(ctx, DRIVER_PHONE, 'cobrar');
+  assert.match(r.flat().join('\n'), /\nInvoice #2610007\nAmount due: \$210\.00/);
 });

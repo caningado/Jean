@@ -145,18 +145,46 @@ const daysAgo = (iso) => {
 };
 
 // Mensagem pronta para o motorista encaminhar ao cliente (em inglês, pois o cliente está nos EUA).
+// Número da invoice do serviço (se o módulo de invoice estiver ligado e já tiver uma).
+function invoiceNumber(ctx, service) {
+  try {
+    return ctx.db.prepare('SELECT number FROM invoices WHERE service_id = ? ORDER BY id DESC LIMIT 1').get(service.id)?.number ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// O que está sendo cobrado, do jeito que o cliente entende: invoice, ou o carro.
+// O número do serviço é interno e não vai para o cliente.
+function chargeWhat(ctx, service) {
+  const inv = invoiceNumber(ctx, service);
+  if (inv) return `Invoice #${inv}`;
+  return service.vehicle ? `Towing service – ${service.vehicle}` : 'Towing service';
+}
+
+const hello = (ctx, service) => `Hi${service.contact_name ? ' ' + service.contact_name.split(' ')[0] : ''}! Thank you for choosing ${ctx.config.companyName}.`;
+
 export function chargeMessage(ctx, service, amountCents, card = null) {
   const { name, contact } = ctx.config.zelle;
-  const greeting = service.contact_name ? `Hi ${service.contact_name.split(' ')[0]}!` : 'Hi!';
-  const zelle = contact ? `\nYou can pay with Zelle to ${name || ctx.config.companyName} (${contact}).` : '';
-  const pay = card ? `\n${zelle ? 'Or pay' : 'You can pay'} by card (${formatMoney(card.total_cents)}, includes ${formatMoney(card.fee_cents)} card fee): ${card.url}` : '';
-  return `${greeting} The total for your tow service #${service.id} is ${formatMoney(amountCents)}.${zelle}${pay}\nThank you! – ${ctx.config.companyName}`;
+  const lines = [hello(ctx, service), '', chargeWhat(ctx, service), `Amount due: ${formatMoney(amountCents)}`];
+  if (contact || card) lines.push('');
+  if (contact) lines.push(`Pay with Zelle to ${name || ctx.config.companyName}: ${contact}`);
+  if (card) lines.push(`${contact ? 'Or pay' : 'Pay'} by card (${formatMoney(card.total_cents)}, includes ${formatMoney(card.fee_cents)} card fee): ${card.url}`);
+  return lines.join('\n');
 }
 
 // Mensagem só com o link do cartão (botão "Link do cartão").
 export function cardMessage(ctx, service, card) {
-  const greeting = service.contact_name ? `Hi ${service.contact_name.split(' ')[0]}!` : 'Hi!';
-  return `${greeting} Your tow service #${service.id} is ${formatMoney(card.base_cents)} + ${formatMoney(card.fee_cents)} card fee = ${formatMoney(card.total_cents)}.\nPay by card here: ${card.url}\nThank you! – ${ctx.config.companyName}`;
+  return [
+    hello(ctx, service),
+    '',
+    chargeWhat(ctx, service),
+    `Amount: ${formatMoney(card.base_cents)}`,
+    `Card fee: ${formatMoney(card.fee_cents)}`,
+    `Total: ${formatMoney(card.total_cents)}`,
+    '',
+    `Pay securely by card: ${card.url}`,
+  ].join('\n');
 }
 
 // Taxa do cartão do Square: começa com SQUARE_TAXA / SQUARE_TAXA_FIXA e é atualizada todo dia
@@ -187,7 +215,7 @@ export async function cardLink(ctx, service, baseCents) {
   try {
     const link = await ctx.square.createLink({
       amountCents: price.total_cents,
-      name: `${ctx.config.companyName} – tow service #${service.id}`,
+      name: `${ctx.config.companyName} – ${chargeWhat(ctx, service)}`,
       note: [service.contact_name, service.vehicle].filter(Boolean).join(' · '),
     });
     ctx.db
