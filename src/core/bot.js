@@ -6,6 +6,9 @@ import { ValidationError } from '../lib/validate.js';
 import { servicesBlocked } from '../lib/daily.js';
 import { createAi, CONFIRM_FIRST } from './ai.js';
 
+// Depois de tanto tempo parado, o cadastro pela metade é esquecido.
+const CONVERSA_VALE_MS = 6 * 60 * 60 * 1000;
+
 // Resposta inválida numa conversa: o robô mostra a mensagem e repete a pergunta.
 export class FlowError extends ValidationError {}
 
@@ -173,6 +176,11 @@ export function createBot(ctx) {
     }
 
     let conversation = getConversation(user.id);
+    // Cadastro largado pela metade há horas: começa do zero (senão "ajuda" vira resposta de pergunta velha).
+    if (conversation && Date.now() - Date.parse(conversation.updated_at) > CONVERSA_VALE_MS) {
+      clearConversation(user.id);
+      conversation = null;
+    }
     let prefix = [];
     if (audio) {
       if (!ai.enabled()) return ['Por enquanto eu entendo texto e fotos. Mande *ajuda* para ver os comandos.'];
@@ -195,6 +203,14 @@ export function createBot(ctx) {
     if (['cancelar', 'sair', 'parar'].includes(simple)) {
       clearConversation(user.id);
       return [...prefix, 'Ok, cancelado. Mande *ajuda* para ver os comandos.'];
+    }
+
+    // "ajuda" no meio de um cadastro: mostra os comandos e repete a pergunta, sem perder o que já foi dito.
+    if (conversation && conversation.flow !== 'ai_confirm' && ['ajuda', 'menu', 'help'].includes(simple)) {
+      const step = ctx.flows[conversation.flow]?.steps[conversation.step];
+      if (step) {
+        return finish([...prefix, ...[].concat(await runCommand(user, 'ajuda')), 'Você está no meio do cadastro de um serviço. Responda a pergunta, ou mande *cancelar*:', ...[].concat(step.ask(conversation.data, ctx))]);
+      }
     }
 
     // Comando que o Gemini entendeu esperando o "sim".
