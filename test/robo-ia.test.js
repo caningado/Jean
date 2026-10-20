@@ -101,3 +101,23 @@ test('Robô sem GEMINI_API_KEY: só os comandos de sempre', async (t) => {
   assert.match(a[0], /texto e fotos/);
   assert.equal(g.calls.length, 0);
 });
+
+test('Testar o robô: áudio pelo painel vai para o robô igual ao WhatsApp', async (t) => {
+  const { createApp } = await import('../src/app.js');
+  const { OWNER_PHONE } = await import('./helpers.js');
+  const ctx = makeContext({ GEMINI_API_KEY: 'k' });
+  const g = fakeGemini(t);
+  const server = createApp(ctx).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const real = globalThis.fetch;
+  const login = await real(`${base}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: OWNER_PHONE, pin: '1234' }) });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  g.answers.push({ comando: 'resumo', transcricao: 'como foi hoje' });
+  const res = await real(`${base}/api/bot/simulate/audio`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'audio/wav' }, body: Buffer.alloc(2000, 1) });
+  const { replies } = await res.json();
+  assert.equal(replies[0], '🎤 Ouvi: "como foi hoje"');
+  assert.match(replies[1], /🤖 \*resumo\*/);
+  assert.equal(g.calls[0][0].inline_data.mime_type, 'audio/wav');
+});

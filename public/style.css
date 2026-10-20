@@ -493,3 +493,5 @@ body.has-fab main { padding-bottom: 72px; }
   .voice-bubble { bottom: 100px; right: 24px; }
 }
 @media print { button.fab-mic, .voice-bubble { display: none !important; } }
+button.chat-mic { width: 44px; height: 44px; flex: none; }
+button.chat-mic svg { width: 22px; height: 22px; }

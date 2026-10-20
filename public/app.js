@@ -2637,7 +2637,7 @@ screens.robo = async () => {
   view.innerHTML = `
     <p class="sub">Funciona igual ao WhatsApp, usando o seu número. Comece com <strong>ajuda</strong> ou <strong>novo</strong>.</p>
     <div class="chat" id="chat"></div>
-    <form class="chat-input" id="f"><input name="text" autocomplete="off" placeholder="Mensagem"><button>Enviar</button></form>`;
+    <form class="chat-input" id="f"><input name="text" autocomplete="off" placeholder="Mensagem"><button>Enviar</button>${has('voz') && (await voiceEnabled()) ? `<button type="button" class="mic chat-mic" id="mic" aria-label="Mandar áudio">${MIC_SVG}</button>` : ''}</form>`;
   const chat = view.querySelector('#chat');
   const add = (text, who) => {
     const div = document.createElement('div');
@@ -2659,6 +2659,23 @@ screens.robo = async () => {
       add(err.message, 'bot');
     }
   };
+  // Áudio: segure o microfone e fale, como a mensagem de voz do WhatsApp.
+  const mic = view.querySelector('#mic');
+  if (mic) {
+    const input = view.querySelector('#f').text;
+    const hint = input.placeholder;
+    // "Ouvindo…" fica no campo de texto; aviso de erro vira balão do robô.
+    const setStatus = (text) => {
+      const working = /^(🔴|Entendendo)/.test(text);
+      input.placeholder = working ? text : hint;
+      if (text && !working) add(text, 'bot');
+    };
+    wireMic(mic, setStatus, async (audio) => {
+      add('🎤 (áudio)', 'me');
+      const { replies } = await api('/bot/simulate/audio', { method: 'POST', raw: audio, type: audio.type });
+      replies.forEach((r) => add(r.replace(/\*/g, ''), 'bot'));
+    }, 60000);
+  }
 };
 
 screens.sair = async () => {

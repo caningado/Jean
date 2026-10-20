@@ -1150,6 +1150,13 @@ function routes(api, ctx) {
     const replies = await ctx.bot.handle({ phone: req.user.phone, text: String(req.body?.text || '') });
     res.json({ replies });
   });
+
+  // Simulador com áudio (como a mensagem de voz do WhatsApp). O robô entende com o Gemini.
+  api.post('/bot/simulate/audio', express.raw({ type: 'audio/*', limit: '15mb' }), async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || req.body.length < 500) throw new HttpError(400, 'Não ouvi nada. Segure o microfone enquanto fala.');
+    const replies = await ctx.bot.handle({ phone: req.user.phone, audio: { buffer: req.body, mime: req.headers['content-type'] } });
+    res.json({ replies });
+  });
 }
 
 // Rotas sem login: primeiro acesso e login.
