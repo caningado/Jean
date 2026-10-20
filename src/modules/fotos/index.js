@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import express from 'express';
 import { FlowError } from '../../core/bot.js';
 import { simplify, nowIso, HttpError } from '../../lib/util.js';
+import { readVinBarcode } from '../../lib/barcode.js';
 
 const KINDS = { antes: 'antes', depois: 'depois', vin: 'vin', outro: 'outro' };
 const KIND_LABEL = { antes: 'antes', depois: 'depois', vin: 'VIN', outro: 'sem tipo' };
@@ -159,9 +160,18 @@ function currentMode(ctx, userId) {
 
 async function onMedia({ ctx, user, media, caption }) {
   const service = ctx.data.services.active(user);
-  if (!service) return 'Nenhum serviço em andamento, então não guardei a foto. Mande *novo* para começar um serviço.';
+  if (!service) {
+    // Sem serviço: pode ser só para ler o VIN ("lê esse VIN pra mim").
+    const read = ctx.api.vin && (await ctx.api.vin.readLoose(user, media.buffer, media.mime));
+    if (read) return read;
+    return ctx.api.vin
+      ? 'Não achei um VIN nessa foto e não tem serviço aberto, então não guardei. Para ler um VIN, tire de perto, reto e sem reflexo. Para guardar fotos do carro, mande *novo* primeiro.'
+      : 'Nenhum serviço em andamento, então não guardei a foto. Mande *novo* para começar um serviço.';
+  }
 
-  const kind = kindFromText(caption) || currentMode(ctx, user.id) || 'outro';
+  let kind = kindFromText(caption) || currentMode(ctx, user.id) || 'outro';
+  // Foto sem legenda com código de barras de VIN: é a etiqueta do VIN, não precisa perguntar.
+  if (kind === 'outro' && ctx.api.vin && (await readVinBarcode(media.buffer).catch(() => null))) kind = 'vin';
   if (kind !== 'outro') setMode(ctx, user.id, kind);
   const angle = kind === 'antes' || kind === 'depois' ? angleFromText(caption) || nextAngle(ctx, service.id, kind) : null;
   savePhoto(ctx, { serviceId: service.id, kind, angle, buffer: media.buffer, mime: media.mime, userId: user.id });

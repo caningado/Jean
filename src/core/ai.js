@@ -22,9 +22,18 @@ const SCHEMA = {
   },
 };
 
-function prompt(ctx, user, text) {
+// O que o robô faz além dos comandos, para a inteligência responder perguntas sem dizer "não entendi".
+const SABE_FAZER = `- Lê o VIN de uma foto: é só mandar a foto da etiqueta (porta do motorista, para-brisa ou documento), com ou sem serviço aberto; mostra o carro (ano, marca, modelo). Sem serviço aberto, guarda o VIN e coloca no próximo serviço criado.
+- Guarda fotos do carro antes (retirada) e depois (entrega) no serviço aberto.
+- Entende áudio e responde por voz quando recebe áudio.
+- Cadastra um serviço ditado de uma vez, em qualquer ordem (cliente, telefone, onde pegar, para onde levar, carro, milhas, valor).
+- Registra pagamento, despesa, dinheiro em mãos, odômetro, e faz invoice em PDF; o painel do celular mostra tudo.`;
+
+function prompt(ctx, user, text, situacao = '') {
   const list = ctx.commands.map((c) => c.help).filter(Boolean).join('\n');
   return `Você é o robô de WhatsApp da equipe de uma empresa de guincho nos EUA (Flórida). Quem fala é ${user.role === 'dono' ? `o dono/ADM ${user.name}` : `o motorista ${user.name}`}, em português do Brasil, muitas vezes informal, com erros de digitação ou misturando inglês. Valores em dólar, distâncias em milhas.
+O que o robô sabe fazer:
+${SABE_FAZER}
 Os comandos que o robô entende são estes (o primeiro trecho em *negrito* é o jeito de escrever):
 ${list}
 
@@ -33,18 +42,19 @@ Traduza o pedido para UM comando, escrito em "comando" do jeito que se digitaria
 - "peguei o carro", "carro no guincho": não muda nada no robô; responda em "resposta" que anotou e lembre de mandar as fotos (*antes*).
 - Serviço novo ditado ("serviço pro João, pegar na Alafaya, levar pra Ribas, Civic, 150"): comando "novo" e preencha só o que foi dito em cliente, telefone (só números), retirada, destino, veiculo (com a placa, se disse), milhas, valor.
 - Cumprimento ou conversa sem pedido ("bom dia, tudo certo?"): deixe "comando" vazio e responda como um colega, curto e simpático, perguntando em que pode ajudar. Nunca mande a lista de comandos sem pedirem.
-- Pergunta sobre como usar o robô: deixe "comando" vazio e responda curto em "resposta" (em português, no máximo 3 frases, sem inventar dados da empresa).
-- Se não der para saber o que ele quer, deixe "comando" vazio e peça em "resposta" para explicar de outro jeito.
+- Pergunta ("você consegue...?", "como faço...?", "qual o VIN?", "qual o endereço?"): deixe "comando" vazio e RESPONDA a pergunta em "resposta", de forma natural e útil, como um colega (português, no máximo 3 frases). Use o que o robô sabe fazer e a situação abaixo. Se a resposta não estiver na situação, diga onde achar (comando ou painel); nunca invente dados.
+- Só se não der mesmo para saber o que ele quer, deixe "comando" vazio e pergunte em "resposta" o que ele quis dizer, citando o que você entendeu.
+- "resposta" nunca fica vazia quando "comando" estiver vazio.
 Nunca invente valores, nomes ou números que não foram ditos. Em "transcricao", escreva o que a pessoa falou ou escreveu.
-${text ? `Mensagem: """${text.slice(0, 1500)}"""` : 'A mensagem é o áudio anexado.'}`;
+${situacao ? `Situação agora:\n${situacao}\n` : ''}${text ? `Mensagem: """${text.slice(0, 1500)}"""` : 'A mensagem é o áudio anexado.'}`;
 }
 
 export function createAi(ctx) {
   const enabled = () => Boolean(ctx.config.geminiApiKey);
 
   // Texto livre ou áudio -> { comando, novo, resposta, transcricao }.
-  async function understand(user, { text = '', audio = null }) {
-    const a = await askGemini(ctx, { prompt: prompt(ctx, user, text), audio: audio?.buffer, mimeType: audioType(audio?.mime), schema: SCHEMA });
+  async function understand(user, { text = '', audio = null, situacao = '' }) {
+    const a = await askGemini(ctx, { prompt: prompt(ctx, user, text, situacao), audio: audio?.buffer, mimeType: audioType(audio?.mime), schema: SCHEMA });
     const str = (k, max = 300) => String(a[k] ?? '').trim().slice(0, max);
     const num = (k) => (Number.isFinite(Number(a[k])) && Number(a[k]) > 0 ? Number(a[k]) : null);
     return {

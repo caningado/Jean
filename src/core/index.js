@@ -518,7 +518,7 @@ const flows = {
         ? client.id
         : ctx.data.contacts.findOrCreate({ phone: client.phone || null, name: client.name, source: 'whatsapp' }).id;
       const { vehicle, plate } = splitVehicle(data.vehicle);
-      const service = ctx.data.services.create({
+      let service = ctx.data.services.create({
         contact_id: contactId,
         pickup: data.pickup,
         dropoff: data.dropoff,
@@ -529,6 +529,9 @@ const flows = {
         driver_id: user.id,
       }, user.id);
       ctx.data.services.setActive(user.id, service.id);
+      // VIN lido de uma foto antes de abrir o serviço.
+      const withVin = await ctx.api.vin?.attachPending(user, service);
+      if (withVin) service = withVin;
       const hints = ctx.serviceHints.length ? '\n\n' + ctx.serviceHints.join('\n') : '';
       return `✅ Serviço #${ctx.data.services.ref(service, user)} criado.\n\n${ctx.data.services.describe(service, user)}${hints}\nQuando entregar, mande *entregue*.`;
     },

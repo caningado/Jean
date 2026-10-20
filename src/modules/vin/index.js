@@ -110,6 +110,16 @@ export async function readVinFromImage(ctx, buffer, mimeType) {
       if (vin) return { vin, source: 'gemini' };
     } catch (err) {
       ctx.log?.('Falha ao ler o VIN com o Gemini', err);
+      // Modelo lotado ou lento: tenta o outro modelo do Gemini antes do leitor grátis.
+      const reserva = ctx.config.geminiVoiceModel;
+      if (reserva && reserva !== ctx.config.geminiModel) {
+        try {
+          const vin = await readVinGemini({ ...ctx, config: { ...ctx.config, geminiModel: reserva } }, buffer, mimeType);
+          if (vin) return { vin, source: 'gemini' };
+        } catch (err2) {
+          ctx.log?.('Falha ao ler o VIN com o Gemini (reserva)', err2);
+        }
+      }
     }
   }
   if (ctx.config.vinOcr !== false) {
@@ -235,6 +245,9 @@ function routes(api, ctx) {
   });
 }
 
+// VIN lido de foto sem serviço aberto: fica guardado um tempo e entra no próximo serviço criado.
+const PENDENTE_MS = 2 * 3600 * 1000;
+
 export default {
   name: 'vin',
   label: 'VIN',
@@ -243,10 +256,43 @@ export default {
   routes,
   serviceHint: '🔎 VIN: mande *vin* + número, ou a foto da etiqueta com a legenda *vin*.',
   setup(ctx) {
+    const pendentes = new Map();
     ctx.api.vin = {
       validate: validateVin,
       decode: decodeVin,
       readFromImage: (buffer, mime) => readVinFromImage(ctx, buffer, mime),
+      // Último VIN lido sem serviço (para o robô responder "qual VIN?").
+      pending(userId) {
+        const p = pendentes.get(userId);
+        if (!p || Date.now() - p.at > PENDENTE_MS) return null;
+        return p;
+      },
+      // Chamado quando um serviço é criado: põe nele o VIN lido antes.
+      async attachPending(user, service) {
+        const p = this.pending(user.id);
+        pendentes.delete(user.id);
+        if (!p || service.vin) return null;
+        return (await saveVin(ctx, service, p.vin)).service;
+      },
+      // Foto sem serviço aberto: lê o VIN mesmo assim, mostra o carro e guarda para o próximo serviço.
+      async readLoose(user, buffer, mime) {
+        let result;
+        try {
+          result = await readVinFromImage(ctx, buffer, mime);
+        } catch (err) {
+          ctx.log('Falha ao ler VIN da foto', err);
+          result = { vin: null };
+        }
+        if (!result.vin) return null;
+        const check = validateVin(result.vin);
+        const info = await decodeVin(check.vin);
+        const vehicle = describeVehicle(info);
+        pendentes.set(user.id, { vin: check.vin, valid: check.valid, vehicle, at: Date.now() });
+        return [
+          `🔎 VIN: *${check.vin}*${check.valid ? '' : ' (o dígito verificador não bateu, confira)'}${vehicle ? `\nVeículo: ${vehicle}` : ''}`,
+          'Não tem serviço aberto agora. Quando você mandar *novo*, eu já coloco esse VIN no serviço.',
+        ].join('\n');
+      },
       // Usado pelo módulo de fotos: lê a foto e pede confirmação ao motorista.
       async askConfirmation(user, service, buffer, mime) {
         let result;
