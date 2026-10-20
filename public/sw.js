@@ -1,6 +1,6 @@
 // Guarda a "casca" do app para abrir rápido, mesmo com sinal fraco.
 // Os dados (/api) sempre vêm do servidor.
-const CACHE = 'guincho-v115';
+const CACHE = 'guincho-v116';
 const SHELL = ['/', '/index.html', '/manutencao.html', '/app.js', '/style.css', '/icon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {

@@ -1,8 +1,11 @@
 // Módulo WhatsApp: liga o robô à API oficial do WhatsApp Business (Meta Cloud API).
 // Recebe as mensagens da equipe pelo webhook, passa para o robô e manda as respostas.
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { normalizePhone, nowIso, formatPhone } from '../../lib/util.js';
+import { normalizePhone, nowIso, formatPhone, HttpError } from '../../lib/util.js';
 import { speak, toOgg, textoParaFala, MAX_FALA } from '../../lib/tts.js';
 
 const migrations = [
@@ -50,6 +53,24 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
         body: JSON.stringify({ messaging_product: 'whatsapp', to: normalizePhone(to), type: 'audio', audio: { id } }),
       });
       if (!res.ok) throw new Error(`WhatsApp respondeu ${res.status}: ${await res.text()}`);
+      return true;
+    },
+
+    // Foto do perfil do número do robô: sobe a imagem na Meta (upload em partes) e grava no perfil.
+    async setProfilePhoto(buffer, mime = 'image/png') {
+      const call = async (url, opts, what) => {
+        const res = await fetchImpl(url, opts);
+        if (!res.ok) throw new Error(`WhatsApp (${what}) respondeu ${res.status}: ${await res.text()}`);
+        return res.json();
+      };
+      const appId = config.whatsapp.appId || (await call(`${base}/app`, { headers }, 'achar o app')).id;
+      const session = await call(`${base}/${appId}/uploads?file_length=${buffer.length}&file_type=${encodeURIComponent(mime)}`, { method: 'POST', headers }, 'abrir upload');
+      const { h } = await call(`${base}/${session.id}`, { method: 'POST', headers: { Authorization: `OAuth ${token}`, file_offset: '0' }, body: buffer }, 'subir foto');
+      await call(
+        `${base}/${phoneNumberId}/whatsapp_business_profile`,
+        { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ messaging_product: 'whatsapp', profile_picture_handle: h }) },
+        'gravar foto'
+      );
       return true;
     },
 
@@ -204,6 +225,24 @@ export async function handleOutsider(ctx, client, msg) {
   ctx.data.contacts.findOrCreate({ phone: msg.from, name: msg.name, source: 'whatsapp' });
 }
 
+const JAY_FOTO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'public', 'jay.png');
+
+function routes(api, ctx) {
+  // Botão no painel (Testar o Jay): põe a carinha do Jay como foto do número do robô.
+  api.post('/whatsapp/foto-jay', async (req, res) => {
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM troca a foto do robô.');
+    const client = ctx.api.whatsapp.client;
+    if (!client.configured) throw new HttpError(400, 'O WhatsApp ainda não está ligado (WHATSAPP_TOKEN no Render).');
+    try {
+      await client.setProfilePhoto(fs.readFileSync(JAY_FOTO), 'image/png');
+    } catch (err) {
+      ctx.log('WhatsApp: não consegui trocar a foto do robô', err.message);
+      throw new HttpError(502, `A Meta não aceitou a foto: ${err.message.slice(0, 300)}`);
+    }
+    res.json({ ok: true });
+  });
+}
+
 function publicRoutes(app, ctx) {
   const { verifyToken, appSecret } = ctx.config.whatsapp;
   const client = ctx.api.whatsapp.client;
@@ -240,6 +279,7 @@ export default {
   name: 'whatsapp',
   label: 'WhatsApp',
   migrations,
+  routes,
   publicRoutes,
   setup(ctx) {
     const client = createWhatsAppClient(ctx.config, fetch, { isTeam: (phone) => Boolean(ctx.bot.findUser(phone)) });

@@ -2637,9 +2637,23 @@ screens.robo = async () => {
   }
   setScreen('Testar o Jay', { tab: 'mais', back: '#/mais' });
   view.innerHTML = `
+    <div class="jay-foto"><img src="/jay.png" alt="Jay" width="72" height="72"><button type="button" class="btn" id="foto-jay">Usar esta foto no WhatsApp do Jay</button></div>
     <p class="sub">Funciona igual ao WhatsApp, usando o seu número. Comece com <strong>ajuda</strong> ou <strong>novo</strong>.</p>
     <div class="chat" id="chat"></div>
     <form class="chat-input" id="f"><input name="text" autocomplete="off" placeholder="Mensagem"><button>Enviar</button>${has('voz') && (await voiceEnabled()) ? `<button type="button" class="mic chat-mic" id="mic" aria-label="Mandar áudio">${MIC_SVG}</button>` : ''}</form>`;
+  view.querySelector('#foto-jay').onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Trocando a foto…';
+    try {
+      await api('/whatsapp/foto-jay', { method: 'POST' });
+      btn.textContent = '✅ Foto trocada! Pode levar alguns minutos para aparecer.';
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'Tentar de novo';
+      toast(err.message);
+    }
+  };
   const chat = view.querySelector('#chat');
   const add = (text, who) => {
     const div = document.createElement('div');

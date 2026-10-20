@@ -495,3 +495,7 @@ body.has-fab main { padding-bottom: 72px; }
 @media print { button.fab-mic, .voice-bubble { display: none !important; } }
 button.chat-mic { width: 44px; height: 44px; flex: none; }
 button.chat-mic svg { width: 22px; height: 22px; }
+
+/* Foto do Jay na tela de testar o robô */
+.jay-foto { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.jay-foto img { border-radius: 50%; flex: none; }
