@@ -53,6 +53,7 @@ function fakeGeo(ctx) {
     '12 main st framingham': ['12 Main St, Framingham, MA 01701'],
     'main st': ['Main St, Framingham, Massachusetts', 'Main St, Worcester, Massachusetts', 'Main St, Boston, Massachusetts'],
     '45 elm st worcester': ['45 Elm St, Worcester, MA 01609'],
+    '3241 bella vista dr': ['3241 Bella Vista Dr, Kissimmee, FL 34746'],
   };
   ctx.geo = {
     lookups: [],
@@ -162,4 +163,38 @@ test('painel: confere o endereço ao salvar e sugere enquanto digita', async (t)
   assert.equal(r.status, 200);
   r = await call(`/services/${r.body.id}`, 'PATCH', { dropoff: '45 elm st worcester' });
   assert.equal(r.body.dropoff, '45 Elm St, Worcester, MA 01609');
+});
+
+test('só na Flórida: Census filtra o estado e tenta de novo com FL; mapa aberto também', async () => {
+  const calls = [];
+  const geo = createGeocoder({
+    state: 'FL',
+    fetchImpl: async (url) => {
+      calls.push(decodeURIComponent(url));
+      if (url.includes('census')) {
+        if (url.includes('%2C%20FL')) return json({ result: { addressMatches: [{ matchedAddress: '3241 BELLA VISTA DR, KISSIMMEE, FL, 34746', coordinates: { x: -81.4, y: 28.3 } }] } });
+        return json({ result: { addressMatches: [{ matchedAddress: '3241 BELLA VISTA DR, BELLA VISTA, AR, 72715', coordinates: { x: -94, y: 36 } }] } });
+      }
+      return json({
+        features: [
+          { properties: { countrycode: 'US', name: 'Leyland Dr', city: 'Bella Vista', state: 'Arkansas' }, geometry: { coordinates: [-94, 36] } },
+          { properties: { countrycode: 'US', name: 'Bella Vista Park', city: 'Orlando', state: 'Florida' }, geometry: { coordinates: [-81.4, 28.5] } },
+        ],
+      });
+    },
+  });
+  const r = await geo.lookup('3241 Bella vista Dr');
+  assert.deepEqual(r.matches.map((m) => m.label), ['3241 Bella Vista Dr, Kissimmee, FL 34746']);
+  assert.ok(calls.some((u) => u.includes('3241 Bella vista Dr, FL')));
+  const park = await geo.lookup('bella vista park');
+  assert.deepEqual(park.matches.map((m) => m.label), ['Bella Vista Park, Orlando, Florida']);
+  assert.match(calls.at(-1), /lat=28\.5&lon=-81\.4/);
+});
+
+test('robô: endereço sem cidade achado no mapa pede confirmação, e dá para digitar outro', async () => {
+  const ctx = fakeGeo(makeContext({ PRICE_BASE: '0', PRICE_PER_MILE: '0' }));
+  const r = await chat(ctx, DRIVER_PHONE, 'novo', 'John Smith', 'pular', '3241 Bella vista Dr', '12 main st framingham', 'pular', 'pular', 'pular', 'pular', 'sim');
+  assert.match(r[3], /Achei no mapa: \*3241 Bella Vista Dr, Kissimmee, FL 34746\*\nÉ esse\? Mande \*1\*/);
+  assert.match(r[4], /Achei no mapa: \*12 Main St, Framingham, MA 01701\*/); // digitou outro, com cidade: aceita
+  assert.equal(ctx.data.services.get(1).pickup, '12 Main St, Framingham, MA 01701');
 });

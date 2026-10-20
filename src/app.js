@@ -73,7 +73,7 @@ export function createContext(config) {
     log: (...args) => console.log(new Date().toISOString(), ...args),
     has: (name) => loaded.some((m) => m.name === name),
     // Procura endereços no mapa (null = desligado).
-    geo: config.geocoder ? createGeocoder() : null,
+    geo: config.geocoder ? createGeocoder({ state: config.geoEstado }) : null,
   };
 
   for (const mod of loaded) migrate(db, mod.name, mod.migrations);
