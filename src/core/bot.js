@@ -1,7 +1,7 @@
 // O "cérebro" do robô. Não sabe nada de WhatsApp: recebe uma mensagem
 // (telefone + texto ou foto) e devolve as respostas. O módulo whatsapp é só
 // o meio de transporte, e o simulador do painel usa este mesmo código.
-import { normalizePhone, simplify, nowIso } from '../lib/util.js';
+import { normalizePhone, simplify, nowIso, formatPhone } from '../lib/util.js';
 import { ValidationError } from '../lib/validate.js';
 import { servicesBlocked } from '../lib/daily.js';
 import { createAi, CONFIRM_FIRST } from './ai.js';
@@ -115,7 +115,18 @@ export function createBot(ctx) {
     if (conversation?.flow !== 'novo') return [].concat(reply);
     conversation.data._prefill = novoAnswers(novo);
     saveConversation(user.id, 'novo', conversation.step, conversation.data);
-    return autoAnswer(user, reply);
+    // Mostra o que entendeu, para a pessoa conferir antes das perguntas que faltam.
+    const seen = [
+      novo.cliente && `Cliente: ${novo.cliente}${novo.telefone ? ` (${formatPhone(novo.telefone)})` : ''}`,
+      !novo.cliente && novo.telefone && `Telefone: ${formatPhone(novo.telefone)}`,
+      novo.retirada && `Pegar: ${novo.retirada}`,
+      novo.destino && `Levar: ${novo.destino}`,
+      novo.veiculo && `Carro: ${novo.veiculo}`,
+      novo.milhas != null && `Milhas: ${novo.milhas}`,
+      novo.valor != null && `Valor: $${novo.valor}`,
+    ].filter(Boolean);
+    const intro = seen.length >= 2 ? [`📝 Novo serviço. Entendi:\n${seen.join('\n')}`] : [];
+    return [...intro, ...(await autoAnswer(user, reply))];
   }
 
   // O que o Gemini tirou da fala -> respostas das perguntas do cadastro (pelas chaves das etapas).

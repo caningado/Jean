@@ -22,6 +22,7 @@ export function makeContext(overrides = {}) {
     ANTHROPIC_API_KEY: '',
     GEMINI_API_KEY: '',
     GEOCODER: 'off',
+    WHATSAPP_JUNTAR_MS: '0',
     VIN_OCR: 'off',
     ...overrides,
   });

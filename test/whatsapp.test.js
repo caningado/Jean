@@ -56,3 +56,33 @@ test('a equipe continua sendo atendida pelo robô', async () => {
   assert.ok(client.sent.length > 0);
   assert.equal(client.sent[0].to, DRIVER_PHONE);
 });
+
+test('mensagens encaminhadas juntas (endereços, carro, valor e cartão de contato) viram um serviço novo', async (t) => {
+  const { extractMessages } = await import('../src/modules/whatsapp/index.js');
+  const ctx = makeContext({ GEMINI_API_KEY: 'k', WHATSAPP_JUNTAR_MS: '50' });
+  const realFetch = globalThis.fetch;
+  t.after(() => (globalThis.fetch = realFetch));
+  const prompts = [];
+  globalThis.fetch = async (url, opts) => {
+    if (!String(url).includes('generativelanguage')) return realFetch(url, opts);
+    prompts.push(JSON.parse(opts.body).contents[0].parts.map((p) => p.text || '').join(' '));
+    const a = { comando: 'novo', cliente: 'Moita', telefone: '14075550111', retirada: 'Key Foods parking lot 701 SR 50 east, Clermont, Fl 34711', destino: '2840 Riverside Park Rd', veiculo: 'Kia Optima', valor: 180 };
+    return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(a) }] } }] });
+  };
+  const card = extractMessages({ entry: [{ changes: [{ value: { messages: [{ id: 'c1', from: DRIVER_PHONE, type: 'contacts', contacts: [{ name: { formatted_name: 'Moita' }, phones: [{ phone: '+1 (407) 555-0111', wa_id: '14075550111' }] }] }] } }] }] })[0];
+  assert.equal(card.text, 'Contato do cliente: Moita 14075550111');
+
+  const client = fakeClient();
+  await Promise.all([
+    processMessage(ctx, client, message(DRIVER_PHONE, 'Pickup:\nKey Foods parking lot 701 SR 50 east, Clermont, Fl 34711\nEntrega:\n2840 Riverside Park Rd')),
+    processMessage(ctx, client, message(DRIVER_PHONE, 'Um kia optima')),
+    processMessage(ctx, client, message(DRIVER_PHONE, '$180')),
+    processMessage(ctx, client, { ...card, id: 'c1' }),
+  ]);
+  assert.equal(prompts.length, 1); // uma pergunta só, com tudo junto
+  assert.match(prompts[0], /Pickup:[\s\S]*Um kia optima\n\$180\nContato do cliente: Moita 14075550111/);
+  const all = client.sent.map((m) => m.body).join('\n');
+  assert.doesNotMatch(all, /Não entendi/);
+  assert.match(all, /Novo serviço\. Entendi:\nCliente: Moita[\s\S]*Carro: Kia Optima\nValor: \$180/);
+  assert.match(all, /Quantas \*milhas\*/); // só pergunta o que falta
+});
