@@ -29,6 +29,7 @@ Os comandos que o robô entende são estes (o primeiro trecho em *negrito* é o 
 ${list}
 
 Traduza o pedido para UM comando, escrito em "comando" do jeito que se digitaria (ex.: "gasto 80 diesel", "pago 150 zelle", "odometro 123400", "entregue", "abrir 12", "resumo mes").
+- Se só falou o nome de um comando ("ajuda", "novo serviço", "fila", "caixa"), escreva esse comando em "comando" ("ajuda", "novo"...).
 - "peguei o carro", "carro no guincho": não muda nada no robô; responda em "resposta" que anotou e lembre de mandar as fotos (*antes*).
 - Serviço novo ditado ("serviço pro João, pegar na Alafaya, levar pra Ribas, Civic, 150"): comando "novo" e preencha só o que foi dito em cliente, telefone (só números), retirada, destino, veiculo (com a placa, se disse), milhas, valor.
 - Pergunta sobre como usar o robô, ou conversa sem pedido: deixe "comando" vazio e responda curto em "resposta" (em português, no máximo 3 frases, sem inventar dados da empresa).
@@ -42,7 +43,7 @@ export function createAi(ctx) {
 
   // Texto livre ou áudio -> { comando, novo, resposta, transcricao }.
   async function understand(user, { text = '', audio = null }) {
-    const a = await askGemini(ctx, { prompt: prompt(ctx, user, text), audio: audio?.buffer, mimeType: audioType(audio?.mime), schema: SCHEMA });
+    const a = await askGemini(ctx, { prompt: prompt(ctx, user, text), audio: audio?.buffer, mimeType: audioType(audio?.mime), schema: SCHEMA, model: ctx.config.geminiModel });
     const str = (k, max = 300) => String(a[k] ?? '').trim().slice(0, max);
     const num = (k) => (Number.isFinite(Number(a[k])) && Number(a[k]) > 0 ? Number(a[k]) : null);
     return {
@@ -61,18 +62,36 @@ export function createAi(ctx) {
     };
   }
 
-  // Áudio respondendo uma pergunta do robô: devolve só o texto da resposta.
-  async function transcribe(audio, question) {
+  // Resposta a uma pergunta do robô (áudio, ou texto comprido no cadastro de serviço).
+  // Devolve { texto, novo }: "texto" é a resposta da pergunta; no cadastro de serviço, "novo" traz
+  // o resto que a pessoa já falou junto (destino, carro, valor...), para o robô não perguntar de novo.
+  async function answer({ audio = null, text = '' }, question, { service = false } = {}) {
+    const fields = service
+      ? { cliente: { type: 'STRING' }, telefone: { type: 'STRING' }, retirada: { type: 'STRING' }, destino: { type: 'STRING' }, veiculo: { type: 'STRING' }, milhas: { type: 'NUMBER' }, valor: { type: 'NUMBER' } }
+      : {};
     const a = await askGemini(ctx, {
-      prompt: `Um motorista de guincho (EUA, fala português do Brasil, às vezes inglês) respondeu por áudio esta pergunta do robô:\n"""${String(question).slice(0, 800)}"""\nEscreva em "texto" só a resposta dele, do jeito mais curto que o robô entende (ex.: um endereço, "Honda Civic ABC1234", "150", "sim", "pular", "1"). Números por extenso viram algarismos.`,
-      audio: audio.buffer,
-      mimeType: audioType(audio.mime),
-      schema: { type: 'OBJECT', properties: { texto: { type: 'STRING' } } },
+      prompt: `Um motorista de guincho (EUA, fala português do Brasil, às vezes inglês) respondeu ${audio ? 'por áudio' : 'por escrito'} esta pergunta do robô:\n"""${String(question).slice(0, 800)}"""\n${text ? `Resposta: """${text.slice(0, 1500)}"""\n` : ''}Escreva em "texto" só a resposta dele para essa pergunta, do jeito mais curto que o robô entende (ex.: o endereço completo como ele disse, "Honda Civic ABC1234", "150", "sim", "pular", "1"). Números por extenso viram algarismos.${service ? '\nEle está cadastrando um serviço de guincho e pode ter falado mais coisas de uma vez, fora de ordem. Preencha também, só com o que ele disse: cliente (nome), telefone (só números), retirada (onde pegar), destino (para onde levar), veiculo (com a placa, se disse), milhas, valor (em dólar). Nunca invente.' : ''}`,
+      audio: audio?.buffer,
+      mimeType: audio ? audioType(audio.mime) : '',
+      schema: { type: 'OBJECT', properties: { texto: { type: 'STRING' }, ...fields } },
+      model: ctx.config.geminiModel,
     });
-    return String(a.texto || '').trim().slice(0, 500);
+    const str = (k, max = 300) => String(a[k] ?? '').trim().slice(0, max);
+    const num = (k) => (Number.isFinite(Number(a[k])) && Number(a[k]) > 0 ? Number(a[k]) : null);
+    return {
+      texto: str('texto', 500),
+      novo: service
+        ? { cliente: str('cliente', 120), telefone: str('telefone', 30).replace(/[^\d+]/g, ''), retirada: str('retirada'), destino: str('destino'), veiculo: str('veiculo', 120), milhas: num('milhas'), valor: num('valor') }
+        : null,
+    };
   }
 
-  return { enabled, understand, transcribe };
+  // Áudio respondendo uma pergunta do robô: devolve só o texto da resposta.
+  async function transcribe(audio, question) {
+    return (await answer({ audio }, question)).texto;
+  }
+
+  return { enabled, understand, transcribe, answer };
 }
 
 // O WhatsApp manda áudio como "audio/ogg; codecs=opus": o Gemini quer só "audio/ogg".

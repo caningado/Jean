@@ -108,6 +108,16 @@ export function createBot(ctx) {
   // Serviço novo ditado: começa o cadastro e já responde as perguntas com o que foi dito.
   // Para na primeira pergunta sem resposta (ou com resposta que não passou), como uma conversa.
   async function startNewService(user, novo) {
+    const reply = await runCommand(user, 'novo');
+    const conversation = getConversation(user.id);
+    if (conversation?.flow !== 'novo') return [].concat(reply);
+    conversation.data._prefill = novoAnswers(novo);
+    saveConversation(user.id, 'novo', conversation.step, conversation.data);
+    return autoAnswer(user, reply);
+  }
+
+  // O que o Gemini tirou da fala -> respostas das perguntas do cadastro (pelas chaves das etapas).
+  function novoAnswers(novo) {
     const answers = {
       client: novo.telefone || novo.cliente || undefined,
       client_name: novo.telefone && novo.cliente ? novo.cliente : undefined,
@@ -118,12 +128,27 @@ export function createBot(ctx) {
       miles: novo.milhas != null ? String(novo.milhas) : undefined,
       price_cents: novo.valor != null ? String(novo.valor) : undefined,
     };
-    const reply = await runCommand(user, 'novo');
-    const conversation = getConversation(user.id);
-    if (conversation?.flow !== 'novo') return [].concat(reply);
-    conversation.data._prefill = Object.fromEntries(Object.entries(answers).filter(([, v]) => v !== undefined));
-    saveConversation(user.id, 'novo', conversation.step, conversation.data);
-    return autoAnswer(user, reply);
+    return Object.fromEntries(Object.entries(answers).filter(([, v]) => v !== undefined));
+  }
+
+  // No meio do cadastro de serviço a pessoa falou várias coisas de uma vez (fora de ordem):
+  // guarda o resto para responder sozinho as próximas perguntas. Devolve a resposta da pergunta atual.
+  async function answerWithExtras(user, conversation, { audio = null, text = '' }, question) {
+    const heard = await ai.answer({ audio, text }, question, { service: conversation.flow === 'novo' });
+    if (heard.novo) {
+      const key = ctx.flows.novo.steps[conversation.step]?.key;
+      const extras = novoAnswers(heard.novo);
+      delete extras[key];
+      if (key === 'client') {
+        delete extras.client_name;
+        delete extras.client_phone;
+      }
+      if (Object.keys(extras).length) {
+        conversation.data._prefill = { ...(conversation.data._prefill || {}), ...extras };
+        saveConversation(user.id, conversation.flow, conversation.step, conversation.data);
+      }
+    }
+    return heard.texto;
   }
 
   // Responde sozinho as perguntas do cadastro que já têm resposta guardada (data._prefill),
@@ -154,6 +179,11 @@ export function createBot(ctx) {
       return audio ? 'Não consegui ouvir o áudio agora. Tente de novo ou escreva.' : 'Não entendi. Mande *ajuda* para ver os comandos.';
     }
     const said = audio && heard.transcricao ? `🎤 Ouvi: "${heard.transcricao}"` : null;
+    // Falou o próprio comando ("ajuda", "novo serviço") e o Gemini não preencheu: usa o que ele ouviu.
+    if (!heard.comando && audio) {
+      const spoken = simplify(heard.transcricao).replace(/[.!?,;:]+/g, ' ').trim();
+      if (spoken && spoken.split(/\s+/).length <= 4 && findCommand(spoken.split(/\s+/)[0])) heard.comando = spoken;
+    }
     const word = simplify(heard.comando).split(/\s+/)[0];
     const command = word && findCommand(word);
     if (!command) return [said, heard.resposta || 'Não entendi. Pode explicar de outro jeito? Ou mande *ajuda* para ver os comandos.'];
@@ -189,13 +219,28 @@ export function createBot(ctx) {
       if (!question) return finish(await askAi(user, { audio }));
       // No meio de um cadastro (ou de um "sim?"): o áudio é a resposta da pergunta.
       try {
-        text = await ai.transcribe(audio, question);
+        text = conversation?.flow === 'novo' ? await answerWithExtras(user, conversation, { audio }, question) : await ai.transcribe(audio, question);
       } catch (err) {
         ctx.log('Robô: falha no Gemini', err.message);
         return ['Não consegui ouvir o áudio agora. Tente de novo ou escreva.'];
       }
       if (!text) return ['Não entendi o áudio. Pode repetir ou escrever?'];
       prefix = [`🎤 Ouvi: "${text}"`];
+    }
+
+    // Texto comprido no meio do cadastro de serviço ("Civic prata, pegar na Alafaya, levar pra Ribas"):
+    // o Gemini separa a resposta da pergunta e guarda o resto para as próximas.
+    if (!audio && !media && conversation?.flow === 'novo' && ai.enabled() && simplify(text).split(/\s+/).length > 4 && !['cancelar', 'sair', 'parar'].includes(simplify(text))) {
+      const step = ctx.flows.novo.steps[conversation.step];
+      if (step) {
+        try {
+          const answer = await answerWithExtras(user, conversation, { text }, [].concat(step.ask(conversation.data, ctx)).join('\n'));
+          if (answer) text = answer;
+        } catch (err) {
+          ctx.log('Robô: falha no Gemini', err.message);
+        }
+        conversation = getConversation(user.id);
+      }
     }
 
     const simple = simplify(text);
