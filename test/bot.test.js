@@ -160,7 +160,7 @@ test('o robô recusa respostas sem sentido e repete a pergunta', async () => {
     '20000 milhas',
     '15',
     '99999',
-    '0',
+    'cento e oitenta',
     '180',
     'talvez',
     'sim'
@@ -177,7 +177,7 @@ test('o robô recusa respostas sem sentido e repete a pergunta', async () => {
   assert.match(r[13], /Milhas inválidas/);
   assert.match(r[14], /Milhas inválidas/);
   assert.match(r[16], /alto demais/);
-  assert.match(r[17], /maior que zero/);
+  assert.match(r[17], /Mande só o valor em dólar/);
   assert.match(r[18], /Confere\?/);
   assert.match(r[19], /Mande \*sim\* para salvar/);
   assert.match(r[20], /Serviço #1 criado/);

@@ -50,6 +50,9 @@ test('lista de serviços diz se está pago', async (t) => {
   const pago = await json('POST', '/services', { contact_name: 'Pago', pickup: '12 Main St, Orlando FL', price: 100, driver_id: driver.id });
   const devendo = await json('POST', '/services', { contact_name: 'Devendo', pickup: '12 Main St, Orlando FL', price: 80, driver_id: driver.id });
   const semValor = await json('POST', '/services', { contact_name: 'Sem valor', pickup: '12 Main St, Orlando FL', driver_id: driver.id });
+  const free = await json('POST', '/services', { contact_name: 'Free', pickup: '12 Main St, Orlando FL', price: '0', driver_id: driver.id });
+  assert.equal(free.price_cents, 0);
+  ctx.db.prepare("UPDATE services SET status = 'concluido' WHERE id = ?").run(free.id);
   // Passados para o motorista entram na fila dele; começa os dois.
   await json('PATCH', `/services/${pago.id}`, { status: 'aberto' });
   await json('PATCH', `/services/${devendo.id}`, { status: 'aberto' });
@@ -59,4 +62,5 @@ test('lista de serviços diz se está pago', async (t) => {
   assert.equal(by[pago.id], true);
   assert.equal(by[devendo.id], false);
   assert.equal(by[semValor.id], undefined);
+  assert.equal(by[free.id], true); // free fica verde, como pago
 });
