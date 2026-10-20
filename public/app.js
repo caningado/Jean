@@ -2672,8 +2672,18 @@ screens.robo = async () => {
     };
     wireMic(mic, setStatus, async (audio) => {
       add('🎤 (áudio)', 'me');
-      const { replies } = await api('/bot/simulate/audio', { method: 'POST', raw: audio, type: audio.type });
+      const { replies, voz } = await api('/bot/simulate/audio', { method: 'POST', raw: audio, type: audio.type });
       replies.forEach((r) => add(r.replace(/\*/g, ''), 'bot'));
+      // Resposta em áudio, como o robô faz no WhatsApp quando a pessoa manda áudio.
+      if (voz) {
+        const player = document.createElement('audio');
+        player.className = 'bubble bot';
+        player.controls = true;
+        player.src = `data:audio/wav;base64,${voz}`;
+        chat.appendChild(player);
+        player.scrollIntoView({ block: 'end' });
+        player.play().catch(() => {});
+      }
     }, 60000);
   }
 };

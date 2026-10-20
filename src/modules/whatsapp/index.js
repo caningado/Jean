@@ -3,6 +3,7 @@
 import crypto from 'node:crypto';
 import express from 'express';
 import { normalizePhone, nowIso, formatPhone } from '../../lib/util.js';
+import { speak, toOgg, textoParaFala, MAX_FALA } from '../../lib/tts.js';
 
 const migrations = [
   `CREATE TABLE whatsapp_messages (
@@ -28,6 +29,25 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ messaging_product: 'whatsapp', to: normalizePhone(to), type: 'text', text: { body: body.slice(0, 4096) } }),
+      });
+      if (!res.ok) throw new Error(`WhatsApp respondeu ${res.status}: ${await res.text()}`);
+      return true;
+    },
+
+    // Mensagem de voz (.ogg Opus): sobe o arquivo na Meta e manda como áudio.
+    async sendAudio(to, ogg) {
+      if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
+      const form = new FormData();
+      form.append('messaging_product', 'whatsapp');
+      form.append('type', 'audio/ogg');
+      form.append('file', new Blob([ogg], { type: 'audio/ogg' }), 'voz.ogg');
+      const up = await fetchImpl(`${base}/${phoneNumberId}/media`, { method: 'POST', headers, body: form });
+      if (!up.ok) throw new Error(`WhatsApp (subir áudio) respondeu ${up.status}: ${await up.text()}`);
+      const { id } = await up.json();
+      const res = await fetchImpl(`${base}/${phoneNumberId}/messages`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messaging_product: 'whatsapp', to: normalizePhone(to), type: 'audio', audio: { id } }),
       });
       if (!res.ok) throw new Error(`WhatsApp respondeu ${res.status}: ${await res.text()}`);
       return true;
@@ -110,6 +130,19 @@ export async function processMessage(ctx, client, msg) {
   const replies = await ctx.bot.handle({ phone: msg.from, text: msg.text, media, audio });
   for (const reply of replies) await client.sendText(msg.from, reply);
   ctx.log(`WhatsApp: ${replies.length} resposta(s) enviada(s) para ${user.name}.`);
+  // Quem mandou áudio recebe a resposta também em áudio (o texto continua indo, para quem prefere ler).
+  if (audio) await replyByVoice(ctx, client, msg.from, replies);
+}
+
+export async function replyByVoice(ctx, client, to, replies, voice = { speak, toOgg }) {
+  if (!ctx.config.roboVoz || !ctx.config.geminiApiKey || !client.sendAudio) return;
+  const fala = textoParaFala(replies.join('\n'));
+  if (!fala || fala.length > MAX_FALA) return;
+  try {
+    await client.sendAudio(to, await voice.toOgg(await voice.speak(ctx, fala)));
+  } catch (err) {
+    ctx.log('WhatsApp: não consegui responder em áudio', err.message);
+  }
 }
 
 // Alguém de fora da equipe (cliente, amigo) mandou mensagem: só guarda o contato.
