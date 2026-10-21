@@ -1,6 +1,6 @@
 // Módulo de pagamentos: Zelle, dinheiro, cartão, cheque e seguradora/motor club.
 // Guarda quem recebeu (para saber quanto dinheiro está com cada motorista) e o que falta receber.
-import { parseMoney, formatMoney, simplify, nowIso, HttpError } from '../../lib/util.js';
+import { parseMoney, formatMoney, simplify, nowIso, HttpError, startOfDayIso } from '../../lib/util.js';
 import { checkMoney, ValidationError } from '../../lib/validate.js';
 import express from 'express';
 import { createSquare, validSquareSignature } from '../../lib/square.js';
@@ -436,6 +436,24 @@ const commands = [
       return `💵 Recolhido ${formatMoney(amountCents)} de ${driver.name}.\n${left}`;
     },
   },
+  {
+    names: ['recebidos', 'conferir'],
+    help: '*recebidos* – (ADM) pagamentos de hoje de serviços de dias anteriores, para conferir com o caixa e o banco',
+    run({ ctx, user, args }) {
+      if (user.role !== 'dono') return 'Só o ADM vê essa lista.';
+      let dia;
+      if (simplify(args.join(' ')) === 'ontem') dia = new Intl.DateTimeFormat('en-CA', { timeZone: ctx.config.timeZone }).format(new Date(Date.now() - 86400000));
+      const r = receivedEarlier(ctx, dia);
+      const when = dia ? 'ontem' : 'hoje';
+      if (!r.list.length) return `Nenhum pagamento recebido ${when} de serviços de dias anteriores. 👍`;
+      const date = (iso) => new Intl.DateTimeFormat('pt-BR', { timeZone: ctx.config.timeZone, day: '2-digit', month: '2-digit' }).format(new Date(iso));
+      const lines = r.list.map(
+        (p) => `• #${p.service_id} ${p.contact_name || p.vehicle || ''} (serviço de ${date(p.service_created_at)}) – ${formatMoney(p.amount_cents)} ${METHODS[p.method]}${p.payer ? ` (${p.payer})` : ''}${p.received_by_name ? ` – ${p.received_by_name}` : ''}`
+      );
+      const totals = Object.entries(r.by_method).map(([m, v]) => `  ${METHODS[m]}: ${formatMoney(v)}`);
+      return [`*Recebidos ${when} de serviços anteriores*`, ...lines, '', '*Total por forma*', ...totals, `*Total: ${formatMoney(r.total_cents)}*`].join('\n');
+    },
+  },
 ];
 
 function canSee(user, service) {
@@ -446,6 +464,35 @@ function listPayments(ctx, serviceId) {
   return ctx.db
     .prepare('SELECT p.*, u.name AS received_by_name FROM payments p LEFT JOIN users u ON u.id = p.received_by WHERE service_id = ? ORDER BY p.id')
     .all(serviceId);
+}
+
+// Dia no fuso da empresa (AAAA-MM-DD) -> início e fim em ISO. Sem dia válido, usa hoje.
+function dayRange(ctx, dia) {
+  const tz = ctx.config.timeZone;
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(dia || '')) ? String(dia) : today;
+  const [y, m, d] = day.split('-').map(Number);
+  if (!y || m < 1 || m > 12 || d < 1 || d > 31) throw new HttpError(400, 'Data inválida.');
+  // Meio-dia UTC ainda é o mesmo dia no fuso dos EUA.
+  return { day, today, start: startOfDayIso(tz, new Date(Date.UTC(y, m - 1, d, 12))), end: startOfDayIso(tz, new Date(Date.UTC(y, m - 1, d + 1, 12))) };
+}
+
+// Pagamentos recebidos no dia de serviços abertos antes desse dia: para o ADM conferir com o caixa e o banco.
+function receivedEarlier(ctx, dia) {
+  const { day, today, start, end } = dayRange(ctx, dia);
+  const list = ctx.db
+    .prepare(
+      `SELECT p.id, p.service_id, p.amount_cents, p.method, p.payer, p.received_at, s.created_at AS service_created_at,
+              c.name AS contact_name, s.vehicle, u.name AS received_by_name
+       FROM payments p JOIN services s ON s.id = p.service_id
+       LEFT JOIN contacts c ON c.id = s.contact_id LEFT JOIN users u ON u.id = p.received_by
+       WHERE p.status = 'recebido' AND p.received_at >= ? AND p.received_at < ? AND s.created_at < ?
+       ORDER BY p.received_at, p.id`
+    )
+    .all(start, end, start);
+  const byMethod = {};
+  for (const p of list) byMethod[p.method] = (byMethod[p.method] || 0) + p.amount_cents;
+  return { day, today, list, by_method: byMethod, total_cents: list.reduce((sum, p) => sum + p.amount_cents, 0) };
 }
 
 function routes(api, ctx) {
@@ -472,6 +519,11 @@ function routes(api, ctx) {
     if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode apagar pagamentos.');
     ctx.db.prepare('DELETE FROM payments WHERE id = ?').run(Number(req.params.id));
     res.json({ ok: true });
+  });
+
+  api.get('/payments/recebidos', (req, res) => {
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM vê essa lista.');
+    res.json(receivedEarlier(ctx, req.query.dia));
   });
 
   api.get('/payments/pending', (req, res) => {
