@@ -197,10 +197,12 @@ export function createBot(ctx) {
     return lines.join('\n');
   }
 
-  // O Jay não conseguiu: chama a pessoa de apoio (módulo ajuda) e avisa quem estava falando.
-  async function withHelp(user, text, reason, replies) {
+  // O Jay não conseguiu: passa para a pessoa de apoio (módulo ajuda) resolver. Quem estava falando
+  // não precisa ajudar nem explicar de novo: só recebe a solução depois (pedido do Caningado 21/10).
+  // Sem pessoa de apoio, fica a resposta normal (replies). "said" = o "🎤 Ouvi" do áudio.
+  async function withHelp(user, text, reason, replies, said = null) {
     const note = await ctx.api.ajuda?.pedir(user, text, reason);
-    return note ? [...[].concat(replies).filter(Boolean), note] : replies;
+    return note ? [said, note].filter(Boolean) : [said, ...[].concat(replies)].filter(Boolean);
   }
 
   async function askAi(user, { text = '', audio = null }) {
@@ -227,8 +229,8 @@ export function createBot(ctx) {
     }
     const word = simplify(heard.comando).split(/\s+/)[0];
     const command = word && findCommand(word);
-    if (!command && !heard.resposta) return withHelp(user, heard.transcricao || text || '(áudio)', 'o Jay não entendeu', [said, 'Não entendi. Pode explicar de outro jeito? Ou mande *ajuda* para ver os comandos.']);
-    if (!command) return heard.duvida ? withHelp(user, heard.transcricao || text || '(áudio)', 'o Jay não soube resolver', [said, heard.resposta]) : [said, heard.resposta];
+    if (!command && !heard.resposta) return withHelp(user, heard.transcricao || text || '(áudio)', 'o Jay não entendeu', 'Não entendi. Pode explicar de outro jeito? Ou mande *ajuda* para ver os comandos.', said);
+    if (!command) return heard.duvida ? withHelp(user, heard.transcricao || text || '(áudio)', 'o Jay não soube resolver', heard.resposta, said) : [said, heard.resposta];
     if (command.names[0] === 'novo') return [said, ...(await startNewService(user, heard.novo))];
     // Escreveu o comando certinho (só que comprido): faz direto, sem pedir "sim".
     if (!audio && simplify(heard.comando) === simplify(text)) return runCommand(user, text);
@@ -396,5 +398,35 @@ export function createBot(ctx) {
 
   const finish = (reply) => (Array.isArray(reply) ? reply : [reply]).filter(Boolean);
 
-  return { handle, startFlow, findUser, clearConversation, getConversation };
+  // Texto com cara de serviço (ex.: a resposta da Viviane a um pedido de ajuda) vira serviço novo
+  // para "user", no mesmo padrão do WhatsApp. Devolve as respostas, ou null se não é serviço.
+  async function serviceFromText(user, text) {
+    let novo = null;
+    if (ai.enabled()) {
+      try {
+        const heard = await ai.understand(user, { text, situacao: situation(user) });
+        if (simplify(heard.comando).split(/\s+/)[0] === 'novo') novo = heard.novo;
+      } catch (err) {
+        ctx.log('Robô: falha no Gemini', err.message);
+      }
+    }
+    if (!novo) {
+      const guess = guessService(text);
+      if (looksLikeService(guess)) novo = guess;
+    }
+    if (!novo) return null;
+    clearConversation(user.id);
+    let reply = [].concat(await startNewService(user, novo)).filter(Boolean);
+    // Quem mandou já conferiu (a Viviane): pula o que é opcional e salva sem perguntar de novo.
+    // Só para se faltar algo obrigatório; aí a pergunta fica para quem vai fazer o serviço.
+    for (let i = 0; i < 12; i++) {
+      const conversation = getConversation(user.id);
+      const step = conversation?.flow === 'novo' && ctx.flows.novo.steps[conversation.step];
+      if (!step || (!step.optional && step.key !== 'confirmed')) break;
+      reply = [].concat(await autoAnswer(user, await continueFlow(user, conversation, step.key === 'confirmed' ? 'sim' : 'pular'))).filter(Boolean);
+    }
+    return reply;
+  }
+
+  return { handle, startFlow, findUser, clearConversation, getConversation, serviceFromText };
 }

@@ -11,12 +11,26 @@ const PLACE_WORDS = /\b(rd|road|st|street|ave|avenue|blvd|dr|drive|hwy|highway|l
 // Palavras soltas que são rótulo, não dado.
 const LABELS = /^(pegar|retirar|retirada|buscar|deixar|levar|entregar|destino|origem|from|to|pickup|drop ?off|cliente|carro|valor|pre[cç]o|telefone|phone|ok|oi|ola|olá)\s*:?\s*$/i;
 
+// "Pegar: 123 Main St" / "Drop off: ...": o rótulo diz se é retirada ou destino.
+const PICK_LABEL = /^(pegar|retirar|retirada|buscar|origem|from|pick ?up)\s*:\s*(.+)$/i;
+const DROP_LABEL = /^(deixar|levar|entregar|entrega|destino|to|drop ?off)\s*:\s*(.+)$/i;
+
 export function guessService(text) {
   const novo = {};
   const places = [];
   for (const raw of String(text || '').split('\n')) {
     let line = raw.trim();
     if (!line) continue;
+    const pick = line.match(PICK_LABEL);
+    const drop = !pick && line.match(DROP_LABEL);
+    if (pick && !novo.retirada) {
+      novo.retirada = pick[2].trim();
+      continue;
+    }
+    if (drop && !novo.destino) {
+      novo.destino = drop[2].trim();
+      continue;
+    }
     const contact = line.match(/^Contato do cliente:\s*(.*)$/i);
     if (contact) line = contact[1];
     const phone = line.match(PHONE);
@@ -39,8 +53,8 @@ export function guessService(text) {
     // Linha curta que sobrou (ex.: "Colorado", "2015 Honda Civic"): provavelmente o carro.
     if (!novo.veiculo && line.split(/\s+/).length <= 5 && line.length <= 40) novo.veiculo = line;
   }
-  if (places[0]) novo.retirada = places[0];
-  if (places[1]) novo.destino = places[1];
+  if (!novo.retirada && places.length) novo.retirada = places.shift();
+  if (!novo.destino && places.length) novo.destino = places.shift();
   return novo;
 }
 
