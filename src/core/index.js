@@ -617,7 +617,7 @@ const commands = [
     help: '*endereços* – endereços com apelido (oficinas, lojas...)',
     run({ ctx }) {
       const list = ctx.db.prepare('SELECT * FROM saved_places ORDER BY nickname COLLATE NOCASE').all();
-      if (!list.length) return 'Nenhum endereço com apelido ainda. O ADM cadastra no painel, em Mais › 📍 Endereços com apelido.';
+      if (!list.length) return 'Nenhum endereço com apelido ainda. O ADM cadastra no painel, em Menu › 📍 Endereços com apelido.';
       return ['📍 *Endereços com apelido*', ...list.map((p) => `• *${p.nickname}* – ${p.address}`), '', 'Na retirada ou no destino, é só mandar o apelido.'].join('\n');
     },
   },

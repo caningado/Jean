@@ -504,3 +504,8 @@ button.chat-mic svg { width: 22px; height: 22px; }
 .qr-pagar { text-align: center; margin: 12px 0; }
 .qr-box { display: inline-block; background: #fff; padding: 12px; border-radius: 12px; }
 .qr-box svg { width: 220px; height: 220px; display: block; }
+
+/* Pendências: marcar vários e procurar */
+.list li[hidden] { display: none; }
+.list label.pick { display: flex; align-items: center; padding-right: 8px; }
+.list label.pick input { width: 22px; height: 22px; margin: 0; }

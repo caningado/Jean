@@ -273,7 +273,7 @@ function statusText(trucks) {
     .join('\n\n');
 }
 
-const NO_TRUCK = 'Nenhum caminhão cadastrado. O ADM cadastra no painel, em *Mais → 🔧 Caminhões*.';
+const NO_TRUCK = 'Nenhum caminhão cadastrado. O ADM cadastra no painel, em *Menu → 🔧 Caminhões*.';
 
 const commands = [
   {
@@ -760,7 +760,7 @@ function blockServices({ ctx, user }) {
   if (!row) return null;
   const missing = missingMileage(ctx, user.id, row.week);
   if (!missing.length) return null;
-  return `🚫 Sua lista de serviços está suspensa até você mandar a milhagem do ${missing.map((t) => t.name).join(' e ')}.\nMande: *${mileageExample(missing)}* (ou no painel, em Mais › Caminhões).`;
+  return `🚫 Sua lista de serviços está suspensa até você mandar a milhagem do ${missing.map((t) => t.name).join(' e ')}.\nMande: *${mileageExample(missing)}* (ou no painel, em Menu › Caminhões).`;
 }
 
 // Roda a cada 10 minutos.

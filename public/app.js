@@ -1618,12 +1618,64 @@ screens.pendentes = async () => {
   const list = await api('/payments/pending');
   const late = list.filter((s) => s.overdue).length;
   const age = (d) => (d === 0 ? 'hoje' : d === 1 ? 'há 1 dia' : `há ${d} dias`);
-  view.innerHTML = `${late ? `<div class="card alerts"><strong>⚠️ ${late === 1 ? '1 atrasado' : `${late} atrasados`}</strong><div class="sub">Abra o serviço e toque em <strong>Cobrar cliente</strong> para mandar a mensagem com o Zelle.</div></div>` : ''}<div class="card"><ul class="list">${
+  const words = (s) => plain([state.me.role === 'dono' ? s.id : '', s.contact_name, s.contact_phone, s.vehicle, s.plate, s.payer, s.driver_name].filter(Boolean).join(' '));
+  view.innerHTML = `${late ? `<div class="card alerts"><strong>⚠️ ${late === 1 ? '1 atrasado' : `${late} atrasados`}</strong><div class="sub">Abra o serviço e toque em <strong>Cobrar cliente</strong> para mandar a mensagem com o Zelle. Pagou só uma parte? Abra o serviço e mude o valor.</div></div>` : ''}
+    ${list.length ? '<div class="card"><input type="search" id="busca" placeholder="🔎 Nome, final do celular, carro ou placa"><div class="sub" id="soma"></div></div>' : ''}
+    <div class="card"><ul class="list">${
     list.length
-      ? list.map((s) => `<li${s.overdue ? ' class="late"' : ''}><a href="#/servico/${s.id}"><div><strong>${s.overdue ? '⚠️ ' : ''}${esc(s.contact_name || s.vehicle || 'Serviço')}</strong><div class="sub">${when(s.completed_at || s.created_at)} · ${age(s.days)}</div></div>
-          <div class="right">${s.open_cents ? 'Cliente ' + money(s.open_cents) : ''}${s.to_receive_cents ? '<br>Seguradora ' + money(s.to_receive_cents) : ''}</div></a></li>`).join('')
+      ? list.map((s) => `<li data-w="${esc(words(s))}" class="${s.overdue ? 'late' : ''}"><div class="row"><label class="pick">${s.open_cents ? `<input type="checkbox" value="${s.id}" data-open="${s.open_cents}">` : ''}</label><a href="#/servico/${s.id}" style="flex:1"><div><strong>${s.overdue ? '⚠️ ' : ''}${numTag(s)}${esc(s.contact_name || s.vehicle || 'Serviço')}</strong><div class="sub">${s.vehicle && s.contact_name ? `${esc(s.vehicle)} · ` : ''}${when(s.completed_at || s.created_at)} · ${age(s.days)}</div></div>
+          <div class="right">${s.open_cents ? 'Cliente ' + money(s.open_cents) : ''}${s.to_receive_cents ? '<br>Seguradora ' + money(s.to_receive_cents) : ''}</div></a></div></li>`).join('')
       : '<li class="empty">Nada pendente 👍</li>'
-  }</ul></div>`;
+  }</ul></div>
+    ${list.some((s) => s.open_cents) ? `<form class="card" id="lote"><h2>Dar baixa nos marcados</h2><div class="sub" id="loteInfo"></div>
+      <label>Forma</label><select name="method">${Object.entries(METHODS).filter(([k]) => k !== 'seguradora').map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
+      <div class="actions"><button>✅ Marcar como pagos</button><button type="button" class="secondary" id="todos">Marcar todos da lista</button></div></form>` : ''}`;
+  const items = [...view.querySelectorAll('li[data-w]')];
+  const boxes = () => [...view.querySelectorAll('input[type=checkbox]')];
+  // Só conta o que está aparecendo: o que a busca escondeu não é pago sem querer.
+  const picked = () => boxes().filter((b) => b.checked && !b.closest('li').hidden);
+  const form = view.querySelector('#lote');
+  const refresh = () => {
+    const shown = items.filter((li) => !li.hidden);
+    const owed = shown.reduce((sum, li) => sum + Number(li.querySelector('input')?.dataset.open || 0), 0);
+    const soma = view.querySelector('#soma');
+    if (soma) soma.textContent = `${shown.length} serviço(s) · clientes devem ${money(owed)}`;
+    if (!form) return;
+    const marked = picked();
+    form.querySelector('button:not([type])').disabled = !marked.length;
+    form.querySelector('#loteInfo').textContent = marked.length
+      ? `${marked.length} serviço(s) · ${money(marked.reduce((sum, b) => sum + Number(b.dataset.open), 0))} (o valor que falta em cada um)`
+      : 'Marque os serviços na lista acima. Pagou só uma parte? Abra o serviço e mude o valor.';
+  };
+  const busca = view.querySelector('#busca');
+  if (busca)
+    busca.oninput = () => {
+      const q = plain(busca.value).split(' ').filter(Boolean);
+      for (const li of items) li.hidden = !q.every((w) => li.dataset.w.includes(w));
+      refresh();
+    };
+  boxes().forEach((b) => (b.onchange = refresh));
+  if (form) {
+    form.querySelector('#todos').onclick = () => {
+      items.forEach((li) => !li.hidden && li.querySelector('input') && (li.querySelector('input').checked = true));
+      refresh();
+    };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const ids = picked().map((b) => Number(b.value));
+      if (!ids.length) return;
+      const { method } = formData(form);
+      if (!confirm(`Marcar ${ids.length} serviço(s) como pagos por ${METHODS[method]}?`)) return;
+      try {
+        const r = await api('/payments/lote', { method: 'POST', body: { service_ids: ids, method } });
+        toast(`✅ ${r.count} serviço(s) pagos: ${money(r.total_cents)}`);
+        screens.pendentes();
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+  }
+  refresh();
 };
 
 const setTheme = (t) => {
@@ -1707,7 +1759,7 @@ async function pushCard() {
 }
 
 screens.mais = async () => {
-  setScreen('Mais', { tab: 'mais' });
+  setScreen('Menu', { tab: 'mais' });
   view.innerHTML = `
     <div class="card"><p><strong>${esc(state.me.name)}</strong><br><span class="sub">${phoneFmt(state.me.phone)} · ${state.me.role === 'dono' ? 'ADM' : 'Motorista'}</span></p></div>
     <div class="card"><ul class="list">
@@ -1788,7 +1840,7 @@ screens.relatorio = async (params) => {
   view.innerHTML = `
     <div class="card no-print"><label>Dia</label>
       <div class="copyrow"><input type="date" id="dia" value="${r.day}" max="${r.today}"><button id="imprimir">🖨 Imprimir</button></div>
-      <p class="sub">Sai uma folha para cada empresa. A empresa de cada motorista fica em Mais › Equipe.</p>
+      <p class="sub">Sai uma folha para cada empresa. A empresa de cada motorista fica em Menu › Equipe.</p>
     </div>
     ${r.reports.map(sheet).join('')}`;
   view.querySelector('#dia').onchange = (e) => e.target.value && (location.hash = `#/relatorio?dia=${e.target.value}`);
@@ -2116,7 +2168,7 @@ screens.invoice = async (params, id) => {
       <h3>Itens</h3><div id="items">${inv.items.map(itemRow).join('')}</div>
       <button type="button" class="secondary" id="addItem">+ Item (milhas extras, espera, pedágio…)</button>
       <label>Observação (opcional)</label><textarea name="notes" rows="2">${esc(inv.notes || '')}</textarea>
-      <p class="sub">O invoice sai em inglês, com o logo e os dados da empresa (Mais › Dados da empresa). Se o serviço já foi pago, sai com "PAID".</p>
+      <p class="sub">O invoice sai em inglês, com o logo e os dados da empresa (Menu › Dados da empresa). Se o serviço já foi pago, sai com "PAID".</p>
       <button class="block">${editing ? 'Salvar' : 'Criar invoice'}</button>
     </form>` : ''}`;
   const form = view.querySelector('#f');
@@ -2434,7 +2486,7 @@ screens.comissao = async (params) => {
             .map((d) => `<li><a href="#/motorista/${d.id}?mes=${data.mes}"><div><strong>${esc(d.name)}</strong>${d.active ? '' : ' <span class="badge cancelado">desativado</span>'}<div class="sub">Faturou ${money(d.revenue_cents)} · ${d.pct}%</div></div>
               <div class="right"><strong>${money(d.commission_cents)}</strong><div class="sub">${d.settlement_cents > 0 ? `falta ${money(d.settlement_cents)}` : 'em dia ✅'}</div></div></a></li>`)
             .join('')
-        : '<li class="empty">Nenhum motorista. Cadastre em Mais › Equipe.</li>'
+        : '<li class="empty">Nenhum motorista. Cadastre em Menu › Equipe.</li>'
     }</ul></div>
     <details class="card"><summary>Faixas de porcentagem</summary>
       <form id="faixas">

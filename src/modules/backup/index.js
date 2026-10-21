@@ -151,7 +151,7 @@ function publicRoutes(app, ctx) {
   app.get('/backup/:token.zip', async (req, res, next) => {
     try {
       if (!validToken(ctx, req.params.token)) {
-        res.status(404).send('Link vencido. Peça um backup novo no painel (Mais › Backup).');
+        res.status(404).send('Link vencido. Peça um backup novo no painel (Menu › Backup).');
         return;
       }
       await sendBackup(ctx, res);
@@ -180,7 +180,7 @@ async function daily({ ctx, day }) {
     '💾 *Backup semanal*',
     `Toque no link para baixar (cerca de ${mb} MB) e salve no Google Drive:`,
     link,
-    `O link vale por ${LINK_DAYS} dias. Também dá para baixar a qualquer hora no painel, em Mais › Backup.`,
+    `O link vale por ${LINK_DAYS} dias. Também dá para baixar a qualquer hora no painel, em Menu › Backup.`,
   ].join('\n');
   for (const owner of ctx.db.prepare("SELECT * FROM users WHERE role = 'dono' AND active = 1").all()) {
     try {

@@ -1,0 +1,44 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createApp } from '../src/app.js';
+import { makeContext, chat, OWNER_PHONE } from './helpers.js';
+
+test('Pendências: procurar quem deve, pagar vários de uma vez e pagamento parcial', async (t) => {
+  const ctx = makeContext({ GEOCODER: 'off' });
+  const server = createApp(ctx).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const cookie = (await fetch(`${base}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: OWNER_PHONE, pin: '1234' }) }))
+    .headers.get('set-cookie')
+    .split(';')[0];
+  const call = (method, path, body) => fetch(`${base}/api${path}`, { method, headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+  const json = (...a) => call(...a).then((r) => r.json());
+
+  const a = await json('POST', '/services', { contact_name: 'Ana Souza', contact_phone: '4075552697', pickup: '12 Main St, Orlando FL', price: '500' });
+  const b = await json('POST', '/services', { contact_name: 'Bia Lima', pickup: '12 Main St, Orlando FL', price: '150' });
+  const c = await json('POST', '/services', { contact_name: 'Caio Reis', pickup: '12 Main St, Orlando FL', price: '90' });
+
+  // Parcial: devia 500, pagou 200.
+  await json('POST', `/services/${a.id}/payments`, { amount: '200', method: 'zelle' });
+  let pend = await json('GET', '/payments/pending');
+  assert.equal(pend.find((s) => s.id === a.id).open_cents, 30000);
+
+  const [busca] = await chat(ctx, OWNER_PHONE, 'pendentes ana');
+  assert.match(busca, /Ana Souza – falta \$300\.00/);
+  assert.doesNotMatch(busca, /Bia/);
+  const [fone] = await chat(ctx, OWNER_PHONE, 'pendentes 2697');
+  assert.match(fone, /Ana Souza/);
+  assert.match(fone, /Total que deve: \$300\.00/);
+  const [nada] = await chat(ctx, OWNER_PHONE, 'pendentes zeca');
+  assert.match(nada, /Ninguém com "zeca"/);
+
+  // Vários de uma vez: paga o que falta em cada um.
+  const r = await json('POST', '/payments/lote', { service_ids: [a.id, b.id], method: 'zelle' });
+  assert.deepEqual(r, { count: 2, total_cents: 45000 });
+  pend = await json('GET', '/payments/pending');
+  assert.deepEqual(pend.map((s) => s.id), [c.id]);
+  // De novo não paga duas vezes.
+  assert.equal((await json('POST', '/payments/lote', { service_ids: [a.id], method: 'zelle' })).count, 0);
+  assert.equal((await call('POST', '/payments/lote', { service_ids: [c.id], method: 'seguradora' })).status, 400);
+});
