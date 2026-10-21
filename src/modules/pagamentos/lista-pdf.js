@@ -67,7 +67,9 @@ export function renderPendingList({ company, logo, list, today, search, showIds 
     const car = [s.vehicle || '–', s.plate ? `Placa ${s.plate}` : ''].filter(Boolean);
     const extra = s.to_receive_cents ? `${s.payer || 'Seguradora'}: ${usd(s.to_receive_cents)}` : '';
     const lines = Math.max(who.length, car.length + (extra ? 1 : 0), showIds ? 2 : 1);
-    const h = 14 + lines * 11;
+    // Pagamentos parciais já feitos, com a data (pedido do Caningado 21/10).
+    const paid = s.paid_list || [];
+    const h = 14 + lines * 11 + (paid.length ? 4 + paid.length * 11 : 0);
     need(h);
     if (i % 2 === 1) doc.rect(L, y, W, h).fill(SOFT);
     const ty = y + 7;
@@ -84,6 +86,12 @@ export function renderPendingList({ company, logo, list, today, search, showIds 
     doc.font('Helvetica').fontSize(9).fillColor(DARK).text(amount(s.price_cents), cols[3].x, ty, { width: cols[3].w, align: 'right', lineBreak: false });
     doc.fillColor(GRAY).text(s.received_cents ? amount(s.received_cents) : '–', cols[4].x, ty, { width: cols[4].w, align: 'right', lineBreak: false });
     doc.font('Helvetica-Bold').fillColor(s.open_cents ? DARK : GRAY).text(s.open_cents ? amount(s.open_cents) : '–', cols[5].x, ty, { width: cols[5].w, align: 'right', lineBreak: false });
+    let py = ty + lines * 11 + 4;
+    for (const p of paid) {
+      doc.font('Helvetica').fontSize(8).fillColor('#15803D').text(`Pago em ${shortDate(p.day)} · ${p.method}${p.payer ? ` (${p.payer})` : ''}`, cols[1].x, py, { width: cols[3].x - cols[1].x, lineBreak: false, ellipsis: true });
+      doc.text(amount(p.amount_cents), cols[4].x, py, { width: cols[4].w, align: 'right', lineBreak: false });
+      py += 11;
+    }
     y += h;
   });
 

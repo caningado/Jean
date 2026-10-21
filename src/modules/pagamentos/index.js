@@ -581,7 +581,13 @@ function routes(api, ctx) {
     const day = dayFormatter(ctx.config.timeZone);
     const list = searchPending(pendingList(ctx, owner ? null : req.user.id), search)
       .sort((a, b) => b.days - a.days || a.id - b.id)
-      .map((s) => ({ ...s, day: day(s.completed_at || s.created_at) }));
+      .map((s) => ({
+        ...s,
+        day: day(s.completed_at || s.created_at),
+        paid_list: listPayments(ctx, s.id)
+          .filter((p) => p.status === 'recebido')
+          .map((p) => ({ day: day(p.received_at), method: METHODS[p.method] || p.method, payer: p.payer, amount_cents: p.amount_cents })),
+      }));
     const pdf = await renderPendingList({
       company: ctx.api.invoice?.getCompany() || { name: ctx.config.companyName },
       logo: ctx.api.invoice ? ctx.api.invoice.logo() : null,
