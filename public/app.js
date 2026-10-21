@@ -320,6 +320,10 @@ const drives = (u) => u.role === 'motorista' || u.drives;
 function num(s) {
   return state.me?.role !== 'dono' && s.driver_id === state.me?.id && s.driver_seq ? s.driver_seq : s.id;
 }
+// O número do serviço é interno: só o ADM vê no painel (pedido do Caningado 21/10). Ex.: "#58 " ou "".
+function numTag(s) {
+  return state.me?.role === 'dono' ? `#${typeof s === 'object' ? num(s) : s} ` : '';
+}
 
 function setScreen(title, { tab = null, back = null } = {}) {
   titleEl.textContent = title;
@@ -555,7 +559,7 @@ screens.servicos = async (params) => {
     ? list
         .map(
           (s) => `<li${payClass(s)}><a href="#/servico/${s.id}">
-            <div><strong>#${num(s)} ${esc(s.contact_name || 'Sem cliente')}</strong>
+            <div><strong>${numTag(s)}${esc(s.contact_name || 'Sem cliente')}</strong>
               <div class="sub">${esc([s.vehicle, s.plate].filter(Boolean).join(' · ') || (s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa'))}</div>
               <div class="sub">${when(s.created_at)}${state.me.role === 'dono' && s.driver_name ? ' · ' + esc(s.driver_name) : ''}</div></div>
             <div class="right">${s.price_cents != null ? priceText(s.price_cents) : ''}<br>${badge(s)}</div>
@@ -664,7 +668,7 @@ screens.novo = async () => {
     }
     picked.hidden = false;
     picked.innerHTML = `✅ ${esc(c.name)}${c.company_name ? ` · 🏢 ${esc(c.company_name)}` : ''}${
-      c.last ? `<br>Último serviço (#${c.last.id}, ${when(c.last.created_at).split(',')[0]}): ${esc([c.last.vehicle, c.last.plate].filter(Boolean).join(' · ') || 'sem veículo')}${filled.length ? ` <em>(${filled.join(' e ')} preenchido${filled.length > 1 ? 's' : ''})</em>` : ''}` : ''
+      c.last ? `<br>Último serviço (${numTag(c.last.id)}${when(c.last.created_at).split(',')[0]}): ${esc([c.last.vehicle, c.last.plate].filter(Boolean).join(' · ') || 'sem veículo')}${filled.length ? ` <em>(${filled.join(' e ')} preenchido${filled.length > 1 ? 's' : ''})</em>` : ''}` : ''
     }`;
     box.hidden = true;
     phoneBox.hidden = true;
@@ -812,11 +816,11 @@ screens.novo = async () => {
       const failed = [];
       for (const [i, file] of pendingDocs.entries()) await uploadDoc(service.id, file, i).catch(() => failed.push(file));
       if (failed.length) {
-        toast(`Serviço #${num(service)} criado, mas ${failed.length} arquivo(s) não foram. Anexe de novo na tela do serviço.`);
+        toast(`Serviço ${numTag(service)}criado, mas ${failed.length} arquivo(s) não foram. Anexe de novo na tela do serviço.`);
         location.hash = `#/servico/${service.id}`;
         return;
       }
-      toast(queued(service) ? (service.driver_id === state.me.id ? `Serviço #${num(service)} na sua fila. Toque em Começar quando for fazer.` : `Serviço #${num(service)} na fila de ${service.driver_name || 'motorista'}`) : service.status === 'pendente' ? `Serviço #${num(service)} na fila` : `Serviço #${num(service)} criado`);
+      toast(queued(service) ? (service.driver_id === state.me.id ? `Serviço ${numTag(service)}na sua fila. Toque em Começar quando for fazer.` : `Serviço ${numTag(service)}na fila de ${service.driver_name || 'motorista'}`) : service.status === 'pendente' ? `Serviço #${num(service)} na fila` : `Serviço #${num(service)} criado`);
       location.hash = `#/servico/${service.id}`;
     } catch (err) {
       toast(err.message);
@@ -830,7 +834,7 @@ screens.novo = async () => {
 screens.servico = async (params, id) => {
   setScreen('Serviço', { tab: 'servicos', back: '#/servicos' });
   const s = await api(`/services/${id}`);
-  setScreen(`Serviço #${num(s)}`, { tab: 'servicos', back: '#/servicos' });
+  setScreen(`Serviço ${numTag(s)}`.trim(), { tab: 'servicos', back: '#/servicos' });
   const owner = state.me.role === 'dono';
   const drivers = owner && s.status === 'pendente' ? await api('/users') : [];
   const voice = has('voz') && ['pendente', 'aberto'].includes(s.status) && (s.driver_id === state.me.id || (owner && s.driver_id)) && (await voiceEnabled());
@@ -997,7 +1001,7 @@ screens.servico = async (params, id) => {
   });
   on('#cancel', async () => {
     const motivo = await dialog({
-      title: `Cancelar o serviço #${num(s)}?`,
+      title: `Cancelar o serviço ${numTag(s)}`.trim() + '?',
       text: 'Escreva o motivo, se quiser (ex.: cliente desistiu).',
       input: { multiline: true, placeholder: 'Motivo (opcional)' },
       ok: 'Cancelar serviço',
@@ -1155,7 +1159,7 @@ screens.servico = async (params, id) => {
 screens.editar = async (params, id) => {
   setScreen('Editar', { tab: 'servicos', back: `#/servico/${id}` });
   const s = await api(`/services/${id}`);
-  setScreen(`Editar #${num(s)}`, { tab: 'servicos', back: `#/servico/${id}` });
+  setScreen(state.me.role === 'dono' ? `Editar #${num(s)}` : 'Editar serviço', { tab: 'servicos', back: `#/servico/${id}` });
   const drivers = state.me.role === 'dono' ? await api('/users') : [];
   view.innerHTML = `
     <form class="card" id="f">
@@ -1568,7 +1572,7 @@ async function cashCard(box) {
   box.innerHTML = `<div class="card cash"><h2>💵 Dinheiro em mãos</h2><ul class="list">${list
     .map(
       (d) => `<li><div class="row"><div><strong>${owner ? esc(d.name) : 'Com você'}</strong><div class="sub">${lastText(d)}</div>
-          ${d.payments.length ? `<details><summary class="sub">Ver ${d.payments.length === 1 ? "o pagamento" : `os ${d.payments.length} pagamentos`}</summary><ul class="sub">${d.payments.map((p) => `<li>#${p.service_id} ${esc(p.contact_name || '')} · ${METHODS[p.method]} ${money(p.amount_cents)} · ${when(p.received_at)}</li>`).join('')}</ul></details>` : ''}</div>
+          ${d.payments.length ? `<details><summary class="sub">Ver ${d.payments.length === 1 ? "o pagamento" : `os ${d.payments.length} pagamentos`}</summary><ul class="sub">${d.payments.map((p) => `<li>${numTag(p.service_id)}${esc(p.contact_name || '')} · ${METHODS[p.method]} ${money(p.amount_cents)} · ${when(p.received_at)}</li>`).join('')}</ul></details>` : ''}</div>
         <div class="right"><div class="big">${money(d.in_hand_cents)}</div>
           ${owner && d.in_hand_cents > 0 ? `<button class="secondary small" data-collect="${d.driver_id}">Recolhi</button>` : ''}</div></div></li>`
     )
@@ -3633,7 +3637,7 @@ async function assistantVoice(audio, setStatus) {
     if (r.confirmar) {
       voiceFeedback('Confirme o cancelamento', true);
       setStatus('Cancelar o serviço? Confirme na tela.');
-      if (!(await ask(`Cancelar o serviço #${num(r.service)}?`, { ok: 'Confirmar cancelamento', cancel: 'Não cancelar', danger: true }))) return setStatus('Cancelamento desfeito. Nada mudou.');
+      if (!(await ask(`Cancelar o serviço ${numTag(r.service)}`.trim() + '?', { ok: 'Confirmar cancelamento', cancel: 'Não cancelar', danger: true }))) return setStatus('Cancelamento desfeito. Nada mudou.');
       await api('/voice-command/confirmar', { method: 'POST', body: { servico: r.service_id, acao: 'cancelar_servico' } });
       voiceFeedback('Status atualizado: serviço cancelado', true);
       setStatus('Status atualizado: Serviço cancelado');
@@ -3641,7 +3645,7 @@ async function assistantVoice(audio, setStatus) {
     }
     const text = `Status atualizado: ${r.label}`;
     voiceFeedback(text, true);
-    setStatus([`${text} (serviço #${num(r.service)})`, ...(r.notices || [])].join(' · '));
+    setStatus([state.me.role === 'dono' ? `${text} (serviço #${num(r.service)})` : text, ...(r.notices || [])].join(' · '));
     return refresh();
   }
   if (r.intencao === 'pagamento') return go(`#/servico/${r.service_id}`, 'pagamento', r);
