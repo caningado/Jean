@@ -37,6 +37,25 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
       return true;
     },
 
+    // Foto (ex.: a que o Jay não entendeu, para a pessoa de apoio ver).
+    async sendImage(to, buffer, mime = 'image/jpeg', caption = '') {
+      if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
+      const form = new FormData();
+      form.append('messaging_product', 'whatsapp');
+      form.append('type', mime);
+      form.append('file', new Blob([buffer], { type: mime }), mime === 'image/png' ? 'foto.png' : 'foto.jpg');
+      const up = await fetchImpl(`${base}/${phoneNumberId}/media`, { method: 'POST', headers, body: form });
+      if (!up.ok) throw new Error(`WhatsApp (subir foto) respondeu ${up.status}: ${await up.text()}`);
+      const { id } = await up.json();
+      const res = await fetchImpl(`${base}/${phoneNumberId}/messages`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messaging_product: 'whatsapp', to: normalizePhone(to), type: 'image', image: { id, caption: caption.slice(0, 1000) } }),
+      });
+      if (!res.ok) throw new Error(`WhatsApp respondeu ${res.status}: ${await res.text()}`);
+      return true;
+    },
+
     // Mensagem de voz (.ogg Opus): sobe o arquivo na Meta e manda como áudio.
     async sendAudio(to, ogg) {
       if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
@@ -299,6 +318,7 @@ export default {
     ctx.whatsappFailures = new Map(); // último erro de entrega da Meta por telefone
     if (client.configured) {
       ctx.send = (to, text) => client.sendText(to, text);
+      ctx.sendImage = (to, buffer, mime, caption) => client.sendImage(to, buffer, mime, caption);
     } else {
       ctx.log('WhatsApp não configurado (WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID). Use o simulador no painel.');
     }

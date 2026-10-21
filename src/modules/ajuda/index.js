@@ -65,7 +65,7 @@ function describe(ctx, req) {
 }
 
 // Pede ajuda. Devolve o aviso para quem estava falando com o Jay (ou null se não tem apoio configurado).
-export async function askHelp(ctx, user, text, reason) {
+export async function askHelp(ctx, user, text, reason, photo = null) {
   const h = helper(ctx);
   // A própria pessoa de apoio travou com o Jay: não tem para quem passar (o ADM não ajuda, só recebe a solução).
   if (!h || h.phone === user.phone) return null;
@@ -85,6 +85,14 @@ export async function askHelp(ctx, user, text, reason) {
       .run(user.id, text || '(sem texto)', reason || null, now, now, h.phone);
     req = ctx.db.prepare('SELECT * FROM help_requests WHERE id = ?').get(Number(info.lastInsertRowid));
     await send(ctx, h.phone, await converse(ctx, h, req, `🆘 *O Jay precisa de ajuda* (pedido #${req.id})`));
+  }
+  // Foto que o Jay não entendeu: vai junto para ela ver.
+  if (photo && ctx.sendImage) {
+    try {
+      await ctx.sendImage(h.phone, photo.buffer, photo.mime, `📷 Foto do pedido #${req.id}, mandada por ${user.name}`);
+    } catch (err) {
+      ctx.log(`Ajuda: não consegui mandar a foto para ${formatPhone(h.phone)}`, err.message);
+    }
   }
   return `🙋 Não consegui resolver isso sozinho. Passei para ${firstName(h.name)} resolver, e eu te mando a solução aqui. Não precisa fazer nada.`;
 }
@@ -310,6 +318,6 @@ export default {
   routes,
   minuteTick,
   setup(ctx) {
-    ctx.api.ajuda = { pedir: (user, text, reason) => askHelp(ctx, user, text, reason) };
+    ctx.api.ajuda = { pedir: (user, text, reason, photo) => askHelp(ctx, user, text, reason, photo), ativo: () => Boolean(helper(ctx)) };
   },
 };

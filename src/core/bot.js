@@ -7,6 +7,7 @@ import { normalizePhone, simplify, nowIso, formatPhone } from '../lib/util.js';
 import { ValidationError } from '../lib/validate.js';
 import { servicesBlocked } from '../lib/daily.js';
 import { guessService, looksLikeService } from '../lib/servico-texto.js';
+import { readPhotoText } from '../lib/foto-texto.js';
 import { createAi, CONFIRM_FIRST } from './ai.js';
 
 const GREETING = /^(oi+|ola|opa|e ai|eai|fala|bom dia|boa tarde|boa noite|hello|hi|hey|good morning)( (pessoal|robo|robozinho|tudo bem|tudo bom|td bem))?[\s!.,?]*$/;
@@ -197,11 +198,14 @@ export function createBot(ctx) {
     return lines.join('\n');
   }
 
+  // Foto que chegou nesta mensagem (por pessoa/mensagem), para ir junto num pedido de ajuda.
+  const photoOf = new WeakMap();
+
   // O Jay não conseguiu: passa para a pessoa de apoio (módulo ajuda) resolver. Quem estava falando
   // não precisa ajudar nem explicar de novo: só recebe a solução depois (pedido do Caningado 21/10).
   // Sem pessoa de apoio, fica a resposta normal (replies). "said" = o "🎤 Ouvi" do áudio.
   async function withHelp(user, text, reason, replies, said = null) {
-    const note = await ctx.api.ajuda?.pedir(user, text, reason);
+    const note = await ctx.api.ajuda?.pedir(user, text, reason, photoOf.get(user));
     return note ? [said, note].filter(Boolean) : [said, ...[].concat(replies)].filter(Boolean);
   }
 
@@ -316,6 +320,25 @@ export function createBot(ctx) {
       prefix = [`🎤 Ouvi: "${text}"`];
     }
 
+    // Foto sem legenda que é um endereço (print do mapa, pedido de serviço): o Jay lê e segue
+    // como se a pessoa tivesse digitado o texto. VIN e fotos do carro seguem o caminho normal.
+    // Não entendeu a foto (ou o endereço nela): pede ajuda à Viviane e manda a foto junto.
+    if (media) photoOf.set(user, media);
+    if (media && !text.trim() && ai.enabled() && /^image\//.test(media.mime || 'image/') && !ctx.api.fotos?.mode?.(user.id)) {
+      try {
+        const read = await readPhotoText(ctx, media.buffer, media.mime);
+        if (read.tipo === 'endereco' && read.texto) {
+          text = read.texto;
+          media = null;
+          prefix = [...prefix, `📝 Li na foto:\n${read.texto}`];
+        } else if (read.tipo === 'endereco') {
+          return finish([...prefix, ...(await withHelp(user, '(mandou uma foto)', 'o Jay não conseguiu ler o endereço da foto', 'Não consegui ler o endereço dessa foto. Pode escrever?'))]);
+        }
+      } catch (err) {
+        ctx.log('Robô: não consegui ler a foto com o Gemini', err.message);
+      }
+    }
+
     // Texto comprido no meio do cadastro de serviço ("Civic prata, pegar na Alafaya, levar pra Ribas"):
     // o Gemini separa a resposta da pergunta e guarda o resto para as próximas.
     if (!audio && !media && conversation?.flow === 'novo' && ai.enabled() && simplify(text).split(/\s+/).length > 4 && !['cancelar', 'sair', 'parar'].includes(simplify(text))) {
@@ -363,13 +386,14 @@ export function createBot(ctx) {
       conversation = null;
     }
 
+
     let reply = null;
     if (media) {
       for (const handler of ctx.mediaHandlers) {
         reply = await handler({ ctx, user, media, caption: text });
         if (reply) break;
       }
-      reply ??= 'Recebi a imagem, mas não sei o que fazer com ela.';
+      reply ??= await withHelp(user, text || '(mandou uma foto)', 'o Jay não entendeu a foto', 'Recebi a imagem, mas não sei o que fazer com ela.');
     } else if (conversation) {
       reply = await continueFlow(user, conversation, text);
       if (reply != null) reply = await autoAnswer(user, reply);
