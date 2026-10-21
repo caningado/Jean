@@ -1453,6 +1453,7 @@ screens.resumo = async (params) => {
     ${state.me.role !== 'dono' && s.open_cents != null ? `<div class="card"><h2>Minhas pendências</h2><p>${s.open_cents || s.to_receive_cents ? `Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}` : 'Nada pendente 👍'}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
     ${state.me.role === 'dono' && (s.open_cents || s.to_receive_cents) ? `<div class="card"><h2>Pendências (todas)</h2><p>Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
     ${s.expenses_by_category && Object.keys(s.expenses_by_category).length ? `<div class="card"><h2>Despesas</h2><ul class="list">${Object.entries(s.expenses_by_category).map(([k, v]) => `<li><div class="row"><span>${CATEGORIES[k] || k}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}
+    ${has('pagamentos') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/recebidos"><span>✅ Conferir caixa e banco (recebidos de serviços anteriores)</span><span>›</span></a>' : ''}
     ${state.me.role === 'dono' ? '<a class="card linkcard" href="#/relatorio"><span>🖨 Relatório do dia para imprimir</span><span>›</span></a>' : ''}
     ${has('planilha') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/planilha"><span>📊 Planilha do Excel</span><span>›</span></a>' : ''}`;
   view.querySelectorAll('.segmented button').forEach((b) => {
@@ -1593,6 +1594,25 @@ async function cashCard(box) {
   });
 }
 
+// Pagamentos recebidos no dia de serviços de dias anteriores: o ADM confere com o caixa e o banco.
+screens.recebidos = async (params) => {
+  setScreen('Conferir caixa e banco', { tab: 'resumo', back: '#/resumo' });
+  const r = await api(`/payments/recebidos${params.get('dia') ? `?dia=${encodeURIComponent(params.get('dia'))}` : ''}`);
+  const day = (iso) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  view.innerHTML = `
+    <div class="card"><div class="sub">Pagamentos recebidos neste dia de serviços abertos em dias anteriores.</div>
+      <div class="copyrow"><input type="date" id="dia" value="${r.day}" max="${r.today}"></div></div>
+    <div class="card"><h2>Total por forma</h2><ul class="list">${
+      Object.entries(r.by_method).map(([k, v]) => `<li><div class="row"><span>${METHODS[k]}</span><span>${money(v)}</span></div></li>`).join('') || '<li class="empty">Nada recebido de serviços anteriores.</li>'
+    }${r.list.length ? `<li><div class="row"><strong>Total</strong><strong>${money(r.total_cents)}</strong></div></li>` : ''}</ul></div>
+    ${r.list.length ? `<div class="card"><h2>Pagamentos</h2><ul class="list">${r.list
+      .map((p) => `<li><a href="#/servico/${p.service_id}"><div><strong>#${p.service_id} ${esc(p.contact_name || p.vehicle || 'Serviço')}</strong>
+        <div class="sub">Serviço de ${day(p.service_created_at)} · recebido ${when(p.received_at)}${p.received_by_name ? ` por ${esc(p.received_by_name)}` : ''}${p.payer ? ` · ${esc(p.payer)}` : ''}</div></div>
+        <div class="right">${money(p.amount_cents)}<br><span class="sub">${METHODS[p.method] || esc(p.method)}</span></div></a></li>`)
+      .join('')}</ul></div>` : ''}`;
+  view.querySelector('#dia').onchange = (e) => e.target.value && (location.hash = `#/recebidos?dia=${e.target.value}`);
+};
+
 screens.pendentes = async () => {
   setScreen(state.me.role === 'dono' ? 'Pendências' : 'Minhas pendências', { tab: 'resumo', back: '#/resumo' });
   const list = await api('/payments/pending');
@@ -1696,6 +1716,7 @@ screens.mais = async () => {
       ${has('manutencao') ? '<li><a href="#/caminhoes"><span>🔧 Caminhões e manutenção</span><span>›</span></a></li>' : ''}
       ${has('comissao') ? `<li><a href="${state.me.role === 'dono' ? '#/comissao' : `#/motorista/${state.me.id}`}"><span>💰 ${state.me.role === 'dono' ? 'Pagamento dos motoristas' : 'Meus ganhos'}</span><span>›</span></a></li>` : ''}
       ${has('empresas') && state.me.role === 'dono' ? '<li><a href="#/empresas"><span>🏢 Empresas (oficinas, dealers) e extrato</span><span>›</span></a></li>' : ''}
+      ${has('pagamentos') && state.me.role === 'dono' ? '<li><a href="#/recebidos"><span>✅ Conferir caixa e banco</span><span>›</span></a></li>' : ''}
       ${state.me.role === 'dono' ? '<li><a href="#/relatorio"><span>🖨 Relatório do dia (imprimir)</span><span>›</span></a></li>' : ''}
       ${state.me.role === 'dono' ? '<li><a href="#/equipe"><span>👥 Equipe</span><span>›</span></a></li>' : ''}
       ${has('invoice') && state.me.role === 'dono' ? '<li><a href="#/empresa"><span>🏢 Dados da empresa (invoice)</span><span>›</span></a></li>' : ''}
