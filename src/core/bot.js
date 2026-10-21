@@ -228,7 +228,7 @@ export function createBot(ctx) {
     const word = simplify(heard.comando).split(/\s+/)[0];
     const command = word && findCommand(word);
     if (!command && !heard.resposta) return withHelp(user, heard.transcricao || text || '(áudio)', 'o Jay não entendeu', [said, 'Não entendi. Pode explicar de outro jeito? Ou mande *ajuda* para ver os comandos.']);
-    if (!command) return [said, heard.resposta];
+    if (!command) return heard.duvida ? withHelp(user, heard.transcricao || text || '(áudio)', 'o Jay não soube resolver', [said, heard.resposta]) : [said, heard.resposta];
     if (command.names[0] === 'novo') return [said, ...(await startNewService(user, heard.novo))];
     // Escreveu o comando certinho (só que comprido): faz direto, sem pedir "sim".
     if (!audio && simplify(heard.comando) === simplify(text)) return runCommand(user, text);

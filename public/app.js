@@ -2583,7 +2583,9 @@ function wireRole(form) {
 screens.equipe = async () => {
   setScreen('Equipe', { tab: 'mais', back: '#/mais' });
   const users = await api('/users');
+  const apoio = has('ajuda') ? await api('/ajuda/apoio').catch(() => null) : null;
   view.innerHTML = `
+    ${apoio ? apoioCard(apoio, users) : ''}
     <div class="card"><ul class="list">${users
       .map((u) => `<li><div class="row"><div><strong>${esc(u.name)}</strong> ${u.active ? '' : '<span class="badge cancelado">desativado</span>'}<div class="sub">${phoneFmt(u.phone)} · ${u.role === 'dono' ? (u.drives ? 'ADM e motorista' : 'ADM') : 'Motorista'}</div>
         <select class="firm-pick" data-firm="${u.id}" aria-label="Empresa de ${esc(u.name)}">${firmOptions(u.firm)}</select></div>
@@ -2648,6 +2650,7 @@ screens.equipe = async () => {
       screens.equipe();
     };
   });
+  if (apoio) wireApoio();
   // Empresa do motorista: os serviços dele saem na folha dessa empresa no relatório do dia.
   view.querySelectorAll('[data-firm]').forEach((sel) => {
     sel.onchange = async () => {
@@ -2660,6 +2663,67 @@ screens.equipe = async () => {
     };
   });
 };
+
+// Quem ajuda o Jay: recebe no WhatsApp os pedidos de ajuda quando o Jay não consegue resolver.
+function apoioCard(apoio, users) {
+  const falha =
+    apoio.falha === 'janela'
+      ? `⚠️ A Meta não entregou a última mensagem para ${esc(apoio.name || '')}. Peça para ela mandar um "oi" para o Jay e teste de novo.`
+      : apoio.falha
+        ? `⚠️ A Meta não entregou a última mensagem: ${esc(apoio.falha)}`
+        : '';
+  return `<div class="card" id="apoio">
+    <h2>🆘 Quem ajuda o Jay</h2>
+    <p class="sub">Quando o Jay não consegue resolver, ele manda o pedido para essa pessoa no WhatsApp e cobra a cada 2 minutos até ela mandar <strong>resolvido</strong>.</p>
+    <select id="apoio-pick"><option value="">Ninguém</option>${users
+      .filter((u) => u.active)
+      .map((u) => `<option value="${u.id}"${u.id === apoio.user_id ? ' selected' : ''}>${esc(u.name)} · ${phoneFmt(u.phone)}</option>`)
+      .join('')}</select>
+    ${apoio.missing ? `<p class="sub">O número ${phoneFmt(apoio.phone)} (do Render) não está na Equipe.</p>` : ''}
+    <div class="actions"><button class="secondary" id="apoio-teste"${apoio.user_id ? '' : ' disabled'}>Mandar mensagem de teste</button></div>
+    <p class="sub" id="apoio-msg">${falha}</p>
+  </div>`;
+}
+function wireApoio() {
+  const pick = view.querySelector('#apoio-pick');
+  const msg = view.querySelector('#apoio-msg');
+  const btn = view.querySelector('#apoio-teste');
+  pick.onchange = async () => {
+    try {
+      const r = await api('/ajuda/apoio', { method: 'PUT', body: { user_id: pick.value || null } });
+      btn.disabled = !r.user_id;
+      msg.textContent = '';
+      toast(r.name ? `${r.name} vai receber os pedidos de ajuda` : 'Ninguém recebe os pedidos de ajuda');
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  btn.onclick = async () => {
+    btn.disabled = true;
+    msg.textContent = 'Mandando…';
+    try {
+      const r = await api('/ajuda/teste', { method: 'POST' });
+      if (!r.ok) {
+        msg.textContent = `⚠️ Não consegui mandar: ${r.error}`;
+        return;
+      }
+      msg.textContent = `Mandei para ${r.name}. Conferindo se a Meta entregou…`;
+      // A Meta avisa a falha de entrega alguns segundos depois.
+      await new Promise((ok) => setTimeout(ok, 8000));
+      const a = await api('/ajuda/apoio');
+      msg.textContent =
+        a.falha === 'janela'
+          ? `⚠️ A Meta não entregou. ${r.name} precisa mandar um "oi" para o Jay primeiro (o número de teste só fala com quem escreveu nas últimas 24 h). Depois teste de novo.`
+          : a.falha
+            ? `⚠️ A Meta não entregou: ${a.falha}`
+            : `✅ Mandei para ${r.name}. Pergunte se chegou "Teste do pedido de ajuda".`;
+    } catch (err) {
+      msg.textContent = `⚠️ ${err.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+}
 
 function firmOptions(selected) {
   const firms = state.firms?.length ? state.firms : [{ id: 'jj', name: 'Towing J&J LLC' }, { id: 'vip', name: 'Towing VIP LLC' }];
