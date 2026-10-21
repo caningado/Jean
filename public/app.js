@@ -2725,6 +2725,13 @@ function wireApoio() {
   };
 }
 
+// O Jay é homem: usa uma voz masculina em português do aparelho, se tiver (senão fica a padrão).
+const MALE_VOICES = /felipe|daniel|antonio|ant[oô]nio|ricardo|fabio|f[aá]bio|donato|julio|j[uú]lio|humberto|nicolau|valerio|val[eé]rio|male|masculin/i;
+function maleVoice() {
+  const pt = (speechSynthesis.getVoices?.() || []).filter((v) => /^pt/i.test(v.lang));
+  return pt.find((v) => /pt[-_]BR/i.test(v.lang) && MALE_VOICES.test(`${v.name} ${v.voiceURI}`)) || pt.find((v) => MALE_VOICES.test(`${v.name} ${v.voiceURI}`)) || null;
+}
+
 function firmOptions(selected) {
   const firms = state.firms?.length ? state.firms : [{ id: 'jj', name: 'Towing J&J LLC' }, { id: 'vip', name: 'Towing VIP LLC' }];
   return firms.map((f) => `<option value="${f.id}"${f.id === (selected || 'jj') ? ' selected' : ''}>${esc(f.name)}</option>`).join('');
@@ -3493,6 +3500,7 @@ function voiceFeedback(text, ok) {
   return new Promise((resolve) => {
     const say = new SpeechSynthesisUtterance(text);
     say.lang = 'pt-BR';
+    say.voice = maleVoice();
     const timer = setTimeout(resolve, 2000 + text.length * 90);
     say.onend = say.onerror = () => {
       clearTimeout(timer);
@@ -3881,6 +3889,7 @@ function alarm(count) {
   if ('speechSynthesis' in window) {
     const say = new SpeechSynthesisUtterance(count > 1 ? `${count} serviços novos` : 'Serviço novo');
     say.lang = 'pt-BR';
+    say.voice = maleVoice();
     setTimeout(() => speechSynthesis.speak(say), 1600);
   }
   navigator.vibrate?.([300, 150, 300, 150, 300]);
