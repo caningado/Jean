@@ -260,11 +260,13 @@ export async function squarePaid(ctx, payment) {
   const row = addPayment(ctx, { serviceId: service.id, amountCents, method: 'cartao', payer: 'Square' });
   ctx.db.prepare('UPDATE square_links SET payment_id = ? WHERE order_id = ?').run(row.id, payment.order_id);
   const left = balance(ctx, service).open_cents;
-  const text = `💳 ${service.contact_name || 'Cliente'} pagou ${formatMoney(amountCents)} com cartão (Square) no serviço #${service.id}.${left ? `\nAinda falta ${formatMoney(left)}.` : '\nServiço quitado ✅'}`;
+  // O motorista vê o número do dia dele, nunca o número geral do serviço.
+  const text = (person) =>
+    `💳 ${service.contact_name || 'Cliente'} pagou ${formatMoney(amountCents)} com cartão (Square) no serviço #${ctx.data.services.ref(service, person)}.${left ? `\nAinda falta ${formatMoney(left)}.` : '\nServiço quitado ✅'}`;
   const people = ctx.db.prepare("SELECT * FROM users WHERE active = 1 AND (role = 'dono' OR id = ?)").all(service.driver_id || 0);
   for (const person of people) {
     try {
-      await ctx.send?.(person.phone, text);
+      await ctx.send?.(person.phone, text(person));
     } catch (err) {
       ctx.log(`Não consegui avisar ${person.name} do pagamento no Square`, err);
     }
@@ -380,7 +382,7 @@ const commands = [
         if (s.open_cents) parts.push(`falta ${formatMoney(s.open_cents)}`);
         if (s.to_receive_cents) parts.push(`${s.payer || 'seguradora'} ${formatMoney(s.to_receive_cents)}`);
         const age = s.days === 0 ? 'hoje' : s.days === 1 ? 'há 1 dia' : `há ${s.days} dias`;
-        return `${s.overdue ? '⚠️ ' : ''}#${s.id} ${s.contact_name || ''} – ${parts.join(', ')} (${age})`;
+        return `${s.overdue ? '⚠️ ' : ''}${user.role === 'dono' ? `#${s.id} ` : ''}${s.contact_name || ''} – ${parts.join(', ')} (${age})`;
       });
       const late = list.filter((s) => s.overdue).length;
       const head = late ? `*Pendentes* (⚠️ ${late} atrasado(s), mais de ${ctx.config.overdueDays} dias)` : '*Pendentes*';
