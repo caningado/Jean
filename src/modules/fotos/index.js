@@ -177,6 +177,8 @@ async function onMedia({ ctx, user, media, caption }) {
     // Sem serviço: pode ser só para ler o VIN ("lê esse VIN pra mim").
     const read = ctx.api.vin && (await ctx.api.vin.readLoose(user, media.buffer, media.mime));
     if (read) return read;
+    // Com pessoa de apoio: o robô passa a foto para ela (devolve null e o robô pede ajuda).
+    if (ctx.api.ajuda?.ativo?.()) return null;
     return ctx.api.vin
       ? 'Não achei um VIN nessa foto e não tem serviço aberto, então não guardei. Para ler um VIN, tire de perto, reto e sem reflexo. Para guardar fotos do carro, mande *novo* primeiro.'
       : 'Nenhum serviço em andamento, então não guardei a foto. Mande *novo* para começar um serviço.';
@@ -391,6 +393,8 @@ export default {
   onMedia,
   setup(ctx) {
     ctx.api.fotos = {
+      // "antes"/"depois" ligado: as próximas fotos são do carro, nem precisa olhar o que são.
+      mode: (userId) => currentMode(ctx, userId),
       docTypes: DOC_TYPES,
       saveDoc: (doc) => saveDoc(ctx, doc),
     };
