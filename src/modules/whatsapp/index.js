@@ -165,7 +165,7 @@ export async function processMessage(ctx, client, msg) {
 
   const user = ctx.bot.findUser(msg.from);
   if (!user) {
-    ctx.log(`WhatsApp: mensagem de ${formatPhone(msg.from)}, que não está em Mais › Equipe (o robô não responde).`);
+    ctx.log(`WhatsApp: mensagem de ${formatPhone(msg.from)}, que não está em Menu › Equipe (o robô não responde).`);
     return handleOutsider(ctx, client, msg);
   }
   ctx.log(`WhatsApp: mensagem de ${user.name} (${formatPhone(msg.from)}), tipo ${msg.type}.`);

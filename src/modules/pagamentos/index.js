@@ -373,10 +373,13 @@ const commands = [
   },
   {
     names: ['pendentes', 'receber'],
-    help: '*pendentes* – serviços com dinheiro para receber',
-    run({ ctx, user }) {
-      const list = pendingList(ctx, user.role === 'dono' ? null : user.id);
-      if (!list.length) return 'Nada pendente. 👍';
+    help: '*pendentes* – serviços com dinheiro para receber (*pendentes Ana* procura pelo nome, carro ou placa)',
+    run({ ctx, user, args }) {
+      const all = pendingList(ctx, user.role === 'dono' ? null : user.id);
+      if (!all.length) return 'Nada pendente. 👍';
+      const words = simplify(args.join(' ')).split(' ').filter(Boolean);
+      const list = words.length ? all.filter((s) => words.every((w) => (simplify([s.contact_name, s.vehicle, s.plate, s.payer].filter(Boolean).join(' ')).includes(w) || (/^\d{3,}$/.test(w) && String(s.contact_phone || '').endsWith(w))))) : all;
+      if (!list.length) return `Ninguém com "${args.join(' ')}" devendo. 👍`;
       const lines = list.slice(0, 20).map((s) => {
         const parts = [];
         if (s.open_cents) parts.push(`falta ${formatMoney(s.open_cents)}`);
@@ -386,7 +389,9 @@ const commands = [
       });
       const late = list.filter((s) => s.overdue).length;
       const head = late ? `*Pendentes* (⚠️ ${late} atrasado(s), mais de ${ctx.config.overdueDays} dias)` : '*Pendentes*';
-      return [head, ...lines, '', `Para cobrar: *abrir ${list[0].id}* e depois *cobrar*.`].join('\n');
+      const owed = list.reduce((sum, s) => sum + s.open_cents, 0);
+      const total = words.length && owed ? [`*Total que deve: ${formatMoney(owed)}*`] : [];
+      return [head, ...lines, ...total, '', `Para cobrar: *abrir ${list[0].id}* e depois *cobrar*.`].join('\n');
     },
   },
   {
@@ -519,6 +524,21 @@ function routes(api, ctx) {
     if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode apagar pagamentos.');
     ctx.db.prepare('DELETE FROM payments WHERE id = ?').run(Number(req.params.id));
     res.json({ ok: true });
+  });
+
+  // Baixa em vários serviços de uma vez: paga o que falta em cada um, com a mesma forma.
+  api.post('/payments/lote', (req, res) => {
+    const { service_ids: ids, method } = req.body || {};
+    if (!METHODS[method] || method === 'seguradora') throw new HttpError(400, 'Forma de pagamento inválida.');
+    if (!Array.isArray(ids) || !ids.length || ids.length > 200) throw new HttpError(400, 'Escolha os serviços.');
+    const done = [];
+    for (const id of new Set(ids.map(Number))) {
+      const service = ctx.data.services.get(id);
+      if (!canSee(req.user, service) || service.status === 'cancelado') continue;
+      const open = balance(ctx, service).open_cents;
+      if (open > 0) done.push(addPayment(ctx, { serviceId: service.id, amountCents: open, method, userId: req.user.id }));
+    }
+    res.status(201).json({ count: done.length, total_cents: done.reduce((sum, p) => sum + p.amount_cents, 0) });
   });
 
   api.get('/payments/recebidos', (req, res) => {
