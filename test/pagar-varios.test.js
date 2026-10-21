@@ -53,4 +53,10 @@ test('Pendências: procurar quem deve, pagar vários de uma vez e pagamento parc
   assert.equal(pend.find((s) => s.id === x.id), undefined);
   assert.equal(pend.find((s) => s.id === y.id).open_cents, 15000);
   assert.equal(pend.find((s) => s.id === z.id).open_cents, 15000);
+
+  // PDF da lista, com a busca.
+  const pdf = await call('GET', '/payments/pending.pdf?q=dino');
+  assert.equal(pdf.status, 200);
+  assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+  assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0, 4).toString(), '%PDF');
 });

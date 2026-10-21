@@ -1620,7 +1620,7 @@ screens.pendentes = async () => {
   const age = (d) => (d === 0 ? 'hoje' : d === 1 ? 'há 1 dia' : `há ${d} dias`);
   const words = (s) => plain([state.me.role === 'dono' ? s.id : '', s.contact_name, s.contact_phone, s.vehicle, s.plate, s.payer, s.driver_name].filter(Boolean).join(' '));
   view.innerHTML = `${late ? `<div class="card alerts"><strong>⚠️ ${late === 1 ? '1 atrasado' : `${late} atrasados`}</strong><div class="sub">Abra o serviço e toque em <strong>Cobrar cliente</strong> para mandar a mensagem com o Zelle. Pagou só uma parte? Abra o serviço e mude o valor.</div></div>` : ''}
-    ${list.length ? '<div class="card"><input type="search" id="busca" placeholder="🔎 Nome, celular, carro ou placa"><div class="sub" id="soma"></div></div>' : ''}
+    ${list.length ? '<div class="card"><input type="search" id="busca" placeholder="🔎 Nome, celular, carro ou placa"><div class="sub" id="soma"></div><div class="actions"><button type="button" class="secondary" id="pdf">📄 PDF da lista</button></div></div>' : ''}
     <div class="card"><ul class="list">${
     list.length
       ? list.map((s) => `<li data-w="${esc(words(s))}" class="${s.overdue ? 'late' : ''}"><div class="row"><label class="pick">${s.open_cents ? `<input type="checkbox" value="${s.id}" data-open="${s.open_cents}">` : ''}</label><a href="#/servico/${s.id}" style="flex:1"><div><strong>${s.overdue ? '⚠️ ' : ''}${numTag(s)}${esc(s.contact_name || s.vehicle || 'Serviço')}</strong><div class="sub">${s.vehicle && s.contact_name ? `${esc(s.vehicle)} · ` : ''}${when(s.completed_at || s.created_at)} · ${age(s.days)}</div></div>
@@ -1657,6 +1657,12 @@ screens.pendentes = async () => {
       refresh();
     };
   boxes().forEach((b) => (b.onchange = refresh));
+  const pdf = view.querySelector('#pdf');
+  if (pdf)
+    pdf.onclick = () => {
+      const q = (busca?.value || '').trim();
+      openDoc({ url: `/api/payments/pending.pdf${q ? `?q=${encodeURIComponent(q)}` : ''}`, name: `Pendências${q ? ' ' + q : ''}.pdf`, mime: 'application/pdf' });
+    };
   if (form) {
     form.querySelector('#todos').onclick = () => {
       items.forEach((li) => !li.hidden && li.querySelector('input') && (li.querySelector('input').checked = true));
