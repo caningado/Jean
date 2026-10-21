@@ -64,7 +64,7 @@ export function renderPendingList({ company, logo, list, today, search, showIds 
   }
   list.forEach((s, i) => {
     const who = [s.contact_name || '–', s.contact_phone ? formatPhone(s.contact_phone) : ''].filter(Boolean);
-    const car = [s.vehicle || '–', s.plate ? `Placa ${s.plate}` : ''].filter(Boolean);
+    const car = [s.vehicle || '–', s.vin ? `VIN ${s.vin}` : ''].filter(Boolean);
     const extra = s.to_receive_cents ? `${s.payer || 'Seguradora'}: ${usd(s.to_receive_cents)}` : '';
     const lines = Math.max(who.length, car.length + (extra ? 1 : 0), showIds ? 2 : 1);
     // Pagamentos parciais já feitos, com a data (pedido do Caningado 21/10).

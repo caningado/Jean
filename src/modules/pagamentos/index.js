@@ -298,7 +298,7 @@ function searchPending(list, text) {
   const words = simplify(text || '').split(' ').filter(Boolean);
   if (!words.length) return list;
   return list.filter((s) =>
-    words.every((w) => simplify([s.contact_name, s.vehicle, s.plate, s.payer].filter(Boolean).join(' ')).includes(w) || (/^\d{3,}$/.test(w) && String(s.contact_phone || '').includes(w)))
+    words.every((w) => simplify([s.contact_name, s.vehicle, s.plate, s.vin, s.payer].filter(Boolean).join(' ')).includes(w) || (/^\d{3,}$/.test(w) && String(s.contact_phone || '').includes(w)))
   );
 }
 
@@ -589,7 +589,8 @@ function routes(api, ctx) {
           .map((p) => ({ day: day(p.received_at), method: METHODS[p.method] || p.method, payer: p.payer, amount_cents: p.amount_cents })),
       }));
     const pdf = await renderPendingList({
-      company: ctx.api.invoice?.getCompany() || { name: ctx.config.companyName },
+      // Sem o nome do contato no cabeçalho (pedido do Caningado 21/10): só empresa, telefone e e-mail.
+      company: { ...(ctx.api.invoice?.getCompany() || { name: ctx.config.companyName }), contact: null },
       logo: ctx.api.invoice ? ctx.api.invoice.logo() : null,
       list,
       today: day(),

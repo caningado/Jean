@@ -1618,7 +1618,7 @@ screens.pendentes = async () => {
   const list = await api('/payments/pending');
   const late = list.filter((s) => s.overdue).length;
   const age = (d) => (d === 0 ? 'hoje' : d === 1 ? 'há 1 dia' : `há ${d} dias`);
-  const words = (s) => plain([state.me.role === 'dono' ? s.id : '', s.contact_name, s.contact_phone, s.vehicle, s.plate, s.payer, s.driver_name].filter(Boolean).join(' '));
+  const words = (s) => plain([state.me.role === 'dono' ? s.id : '', s.contact_name, s.contact_phone, s.vehicle, s.plate, s.vin, s.payer, s.driver_name].filter(Boolean).join(' '));
   view.innerHTML = `${late ? `<div class="card alerts"><strong>⚠️ ${late === 1 ? '1 atrasado' : `${late} atrasados`}</strong><div class="sub">Abra o serviço e toque em <strong>Cobrar cliente</strong> para mandar a mensagem com o Zelle. Pagou só uma parte? Abra o serviço e mude o valor.</div></div>` : ''}
     ${list.length ? '<div class="card"><input type="search" id="busca" placeholder="🔎 Nome, celular, carro ou placa"><div class="sub" id="soma"></div><div class="actions"><button type="button" class="secondary" id="pdf">📄 PDF da lista</button></div></div>' : ''}
     <div class="card"><ul class="list">${
