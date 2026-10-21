@@ -21,7 +21,15 @@ export function renderPendingList({ company, logo, list, today, search, showIds 
   doc.rect(L, y, W, 2).fill(RED);
   y += 14;
   doc.font('Helvetica-Bold').fontSize(24).fillColor(DARK).text('PENDÊNCIAS', L, y);
-  doc.font('Helvetica').fontSize(10).fillColor(GRAY).text(search ? `Busca: "${search}"` : 'Todos os serviços com valor a receber', L, doc.y + 2);
+  // Um cliente só (ex.: busca pelo final do celular): o nome e o celular vão no título.
+  const one = list.length && list.every((s) => s.contact_id && s.contact_id === list[0].contact_id) ? list[0] : null;
+  if (one) {
+    doc.font('Helvetica-Bold').fontSize(12).fillColor(DARK).text(one.contact_name || '', L, doc.y + 2);
+    if (one.contact_phone) doc.font('Helvetica').fontSize(10).fillColor(GRAY).text(formatPhone(one.contact_phone), L, doc.y + 1);
+  } else {
+    doc.font('Helvetica').fontSize(10).fillColor(GRAY).text(search ? `Busca: "${search}"` : 'Todos os serviços com valor a receber', L, doc.y + 2);
+  }
+  const titleBottom = doc.y;
   let my = y + 2;
   for (const [k, v] of [
     ['Data', shortDate(today)],
@@ -33,7 +41,7 @@ export function renderPendingList({ company, logo, list, today, search, showIds 
     doc.font('Helvetica-Bold').fontSize(9.5).fillColor(DARK).text(v, R - 130, my, { width: 130, align: 'right' });
     my += 15;
   }
-  y = Math.max(doc.y, my) + 16;
+  y = Math.max(titleBottom, my) + 16;
 
   const cols = [
     { title: 'DATA', x: L + 8, w: 46 },
