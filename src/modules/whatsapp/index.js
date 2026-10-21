@@ -272,7 +272,19 @@ function publicRoutes(app, ctx) {
     for (const msg of extractMessages(payload)) {
       processMessage(ctx, client, msg).catch((err) => ctx.log('Erro ao processar mensagem do WhatsApp', err));
     }
+    // A Meta aceita a mensagem e só depois avisa se não conseguiu entregar (ex.: fora da janela de 24 h).
+    for (const st of failedStatuses(payload)) {
+      const why = (st.errors || []).map((e) => `${e.code} ${e.title || ''} ${e.error_data?.details || ''}`.trim()).join('; ') || 'sem detalhe';
+      ctx.log(`WhatsApp: a Meta NÃO entregou a mensagem para ${formatPhone(st.recipient_id || '')}: ${why}`);
+      ctx.whatsappFailures.set(normalizePhone(st.recipient_id || ''), { at: Date.now(), why, code: st.errors?.[0]?.code });
+    }
   });
+}
+
+export function failedStatuses(payload) {
+  const out = [];
+  for (const entry of payload?.entry || []) for (const ch of entry.changes || []) for (const st of ch.value?.statuses || []) if (st.status === 'failed') out.push(st);
+  return out;
 }
 
 export default {
@@ -284,6 +296,7 @@ export default {
   setup(ctx) {
     const client = createWhatsAppClient(ctx.config, fetch, { isTeam: (phone) => Boolean(ctx.bot.findUser(phone)) });
     ctx.api.whatsapp = { client };
+    ctx.whatsappFailures = new Map(); // último erro de entrega da Meta por telefone
     if (client.configured) {
       ctx.send = (to, text) => client.sendText(to, text);
     } else {

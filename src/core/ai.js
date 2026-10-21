@@ -19,6 +19,7 @@ const SCHEMA = {
     valor: { type: 'NUMBER' },
     resposta: { type: 'STRING' },
     transcricao: { type: 'STRING' },
+    duvida: { type: 'BOOLEAN' },
   },
 };
 
@@ -46,6 +47,7 @@ Traduza o pedido para UM comando, escrito em "comando" do jeito que se digitaria
 - Pergunta ("você consegue...?", "como faço...?", "qual o VIN?", "qual o endereço?"): deixe "comando" vazio e RESPONDA a pergunta em "resposta", de forma natural e útil, como um colega (português, no máximo 3 frases). Use o que o robô sabe fazer e a situação abaixo. Se a resposta não estiver na situação, diga onde achar (comando ou painel); nunca invente dados.
 - Só se não der mesmo para saber o que ele quer, deixe "comando" vazio e pergunte em "resposta" o que ele quis dizer, citando o que você entendeu.
 - "resposta" nunca fica vazia quando "comando" estiver vazio.
+- "duvida" = true quando você não entendeu o que ele quer, não sabe responder, ou ele pediu algo que o robô não consegue fazer (aí uma pessoa da equipe vai ajudar). Cumprimento, pergunta respondida ou comando entendido: false.
 Nunca invente valores, nomes ou números que não foram ditos. Em "transcricao", escreva o que a pessoa falou ou escreveu.
 ${situacao ? `Situação agora:\n${situacao}\n` : ''}${text ? `Mensagem: """${text.slice(0, 1500)}"""` : 'A mensagem é o áudio anexado.'}`;
 }
@@ -71,6 +73,7 @@ export function createAi(ctx) {
       },
       resposta: str('resposta', 600),
       transcricao: str('transcricao', 500),
+      duvida: a.duvida === true,
     };
   }
 
