@@ -108,7 +108,7 @@ export function createBot(ctx) {
     const command = findCommand(word);
     if (!command) return null;
     const original = String(text).trim().split(/\s+/).slice(1).join(' ');
-    return (command.blockable && servicesBlocked(ctx, user)) || (await command.run({ ctx, user, args: rest, rawArgs: original, text }));
+    return (command.blockable && servicesBlocked(ctx, user)) || (await command.run({ ctx, user, args: rest, rawArgs: original, text, heard: heardOf.get(user) }));
   }
 
   // Serviço novo ditado: começa o cadastro e já responde as perguntas com o que foi dito.
@@ -193,6 +193,15 @@ export function createBot(ctx) {
     const lines = [];
     const service = ctx.data.services.active(user);
     lines.push(service ? `Serviço aberto dele:\n${ctx.data.services.describe(service, user)}` : 'Ele não tem serviço aberto agora.');
+    // ADM: nomes das empresas, para a inteligência acertar de quem ele fala ("super speed" → SUPER SPEED CAR).
+    if (user.role === 'dono') {
+      try {
+        const firms = ctx.db.prepare('SELECT name, nickname FROM companies ORDER BY name COLLATE NOCASE LIMIT 80').all();
+        if (firms.length) lines.push(`Empresas cadastradas: ${firms.map((c) => (c.nickname ? `${c.name} (${c.nickname})` : c.name)).join(', ')}.`);
+      } catch {
+        // sem o módulo de empresas
+      }
+    }
     const vin = ctx.api.vin?.pending(user.id);
     if (vin) lines.push(`Último VIN que ele mandou em foto (ainda sem serviço): ${vin.vin}${vin.vehicle ? ` (${vin.vehicle})` : ''}.`);
     return lines.join('\n');
@@ -200,6 +209,10 @@ export function createBot(ctx) {
 
   // Foto que chegou nesta mensagem (por pessoa/mensagem), para ir junto num pedido de ajuda.
   const photoOf = new WeakMap();
+  // O que a pessoa escreveu ou falou nesta mensagem, para um comando pedir ajuda com as palavras dela.
+  const heardOf = new WeakMap();
+  // Foto de endereço esperando o "está certo?" (só na memória; se o servidor reiniciar, vai sem a foto).
+  const lastPhoto = new Map();
 
   // O Jay não conseguiu: passa para a pessoa de apoio (módulo ajuda) resolver. Quem estava falando
   // não precisa ajudar nem explicar de novo: só recebe a solução depois (pedido do Caningado 21/10).
@@ -226,6 +239,7 @@ export function createBot(ctx) {
       );
     }
     const said = audio && heard.transcricao ? `🎤 Ouvi: "${heard.transcricao}"` : null;
+    if (heard.transcricao || text) heardOf.set(user, heard.transcricao || text);
     // Falou o próprio comando ("ajuda", "novo serviço") e o Gemini não preencheu: usa o que ele ouviu.
     if (!heard.comando && audio) {
       const spoken = simplify(heard.transcricao).replace(/[.!?,;:]+/g, ' ').trim();
@@ -327,7 +341,11 @@ export function createBot(ctx) {
     if (media && !text.trim() && ai.enabled() && /^image\//.test(media.mime || 'image/') && !ctx.api.fotos?.mode?.(user.id)) {
       try {
         const read = await readPhotoText(ctx, media.buffer, media.mime);
-        if (read.tipo === 'endereco' && read.texto) {
+        if (read.tipo === 'endereco' && read.texto && !conversation) {
+          // Fora de um cadastro: mostra o que leu e pergunta se está certo (a Viviane só entra se estiver errado).
+          lastPhoto.set(user.id, media);
+          return finish([...prefix, ...[].concat(await startFlow(user, 'foto_endereco', { texto: read.texto }))]);
+        } else if (read.tipo === 'endereco' && read.texto) {
           text = read.texto;
           media = null;
           prefix = [...prefix, `📝 Li na foto:\n${read.texto}`];
@@ -452,5 +470,50 @@ export function createBot(ctx) {
     return reply;
   }
 
-  return { handle, startFlow, findUser, clearConversation, getConversation, serviceFromText };
+  // Endereço lido numa foto: confere com quem mandou. Certo → serviço novo (pergunta se é para pegar
+  // ou levar quando a foto só tem um endereço). Errado → pede ajuda à Viviane, com a foto.
+  const SIM_FOTO = ['sim', 's', 'ok', 'certo', 'isso', 'correto', 'esta certo', 'ta certo', 'yes'];
+  const NAO_FOTO = ['nao', 'n', 'errado', 'esta errado', 'ta errado', 'no'];
+  ctx.flows.foto_endereco = {
+    steps: [
+      {
+        key: 'ok',
+        ask: (data) => `📝 Li na foto:\n${data.texto}\n\nEstá certo? Mande *sim*, ou *não* se eu li errado.`,
+        parse(text) {
+          const t = simplify(text).replace(/[!.]+$/, '');
+          if (SIM_FOTO.includes(t)) return true;
+          if (NAO_FOTO.includes(t) || t.startsWith('nao ')) return false;
+          throw new FlowError('Mande *sim* se estiver certo, ou *não* se eu li errado.');
+        },
+      },
+      {
+        key: 'para',
+        skip: (data) => !data.ok || looksLikeService(guessService(data.texto)),
+        ask: () => 'Esse endereço é para *pegar* o carro ou para *levar*?',
+        parse(text) {
+          const t = simplify(text);
+          if (/^(1|pegar|pega|retirada|retirar|buscar|pickup|origem)\b/.test(t)) return 'retirada';
+          if (/^(2|levar|leva|deixar|entregar|destino|drop)\b/.test(t)) return 'destino';
+          throw new FlowError('Mande *pegar* ou *levar*.');
+        },
+      },
+    ],
+    async finish({ user, data }) {
+      if (!data.ok && lastPhoto.has(user.id)) photoOf.set(user, lastPhoto.get(user.id));
+      lastPhoto.delete(user.id);
+      if (!data.ok) return withHelp(user, `(mandou uma foto) O Jay leu: "${data.texto}" e ${user.name} disse que está errado`, 'o Jay leu a foto errado', 'Ok. Pode escrever o endereço certo?');
+      const guess = guessService(data.texto);
+      return startNewService(user, looksLikeService(guess) ? guess : { [data.para]: data.texto });
+    },
+  };
+
+  // Roda um comando em nome de outra pessoa (ex.: a Viviane respondeu "extrato super speed" para o Caningado).
+  // Devolve as respostas, ou null se o texto não começa com um comando.
+  async function runAs(user, text) {
+    const reply = await runCommand(user, text);
+    return reply == null ? null : [].concat(reply).filter(Boolean);
+  }
+  const isCommand = (text) => Boolean(findCommand(simplify(text).split(/\s+/)[0]));
+
+  return { handle, startFlow, findUser, clearConversation, getConversation, serviceFromText, runAs, isCommand };
 }

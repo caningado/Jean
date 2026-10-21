@@ -174,7 +174,11 @@ function findCompanies(ctx, text) {
   const all = ctx.db.prepare('SELECT * FROM companies ORDER BY name COLLATE NOCASE').all();
   const exact = all.filter((c) => simplify(c.name) === q || (c.nickname && simplify(c.nickname) === q));
   if (exact.length) return exact;
-  return all.filter((c) => simplify(c.name).includes(q));
+  const contains = all.filter((c) => simplify(c.name).includes(q));
+  if (contains.length) return contains;
+  // "super speed" acha "SUPER SPEED CAR"; "speed car" também: todas as palavras no nome.
+  const words = q.split(/\s+/).filter((w) => w.length > 1);
+  return words.length ? all.filter((c) => words.every((w) => simplify(`${c.name} ${c.nickname || ''}`).split(/\s+/).includes(w))) : [];
 }
 
 const flag = (v) => v === true || v === 1 || v === '1' || v === 'on' || v === 'true';
@@ -226,10 +230,15 @@ const money = (c) => '$' + ((c || 0) / 100).toLocaleString('en-US', { minimumFra
 const commands = [
   {
     names: ['extrato', 'statement'],
-    help: '*extrato usave* – (ADM) quanto a empresa deve, separado por solicitante, com o PDF para mandar',
-    run({ ctx, user, rawArgs }) {
+    help: '*extrato* + nome da empresa – (ADM) quanto a empresa deve, separado por solicitante, com o PDF para mandar',
+    async run({ ctx, user, rawArgs, heard }) {
       if (user.role !== 'dono') return 'Só o ADM vê o extrato das empresas.';
       const found = findCompanies(ctx, rawArgs);
+      // Não sabe de qual empresa: pergunta para a pessoa de apoio, não devolve a lista para quem perguntou.
+      if (found.length !== 1 && ctx.api.ajuda?.ativo?.()) {
+        const note = await ctx.api.ajuda.pedir(user, heard || `extrato ${rawArgs}`.trim(), `o Jay não soube de qual empresa é o extrato${rawArgs ? ` ("${rawArgs}")` : ''}`);
+        if (note) return note;
+      }
       if (found.length !== 1) {
         const names = ctx.db.prepare('SELECT name FROM companies ORDER BY name COLLATE NOCASE').all().map((c) => c.name);
         if (!names.length) return 'Nenhuma empresa cadastrada. Cadastre em *Contatos › 🏢 Empresas* no painel.';

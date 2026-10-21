@@ -40,6 +40,7 @@ ${list}
 
 Traduza o pedido para UM comando, escrito em "comando" do jeito que se digitaria (ex.: "gasto 80 diesel", "pago 150 zelle", "odometro 123400", "entregue", "abrir 12", "resumo mes").
 - Se só falou o nome de um comando ("ajuda", "novo serviço", "fila", "caixa"), escreva esse comando em "comando" ("ajuda", "novo"...).
+- Os nomes nos exemplos dos comandos (ex.: *extrato adriano*) são só exemplos: no comando use o nome que a pessoa falou (ex.: "quanto a super speed está devendo?" → "extrato super speed"). Se houver lista de empresas ou clientes na situação abaixo, use o nome de lá que bate com o que ela disse. Se não der para saber de quem ela fala, deixe "comando" vazio e marque "duvida".
 - "peguei o carro", "carro no guincho": não muda nada no robô; responda em "resposta" que anotou e lembre de mandar as fotos (*antes*).
 - Serviço novo ditado ("serviço pro João, pegar na Alafaya, levar pra Ribas, Civic, 150"): comando "novo" e preencha só o que foi dito em cliente, telefone (só números), retirada, destino, veiculo (com a placa, se disse), milhas, valor.
 - Pedido de serviço encaminhado/colado (várias linhas com "Pickup", "Entrega", "Drop off", endereços, carro, valor como "$180", "Contato do cliente: Nome telefone"), mesmo em inglês ou sem dizer "novo": é serviço novo. Comando "novo"; "Contato do cliente" vira cliente e telefone; Pickup/retirada vira retirada; Entrega/drop off/destino vira destino.
