@@ -65,7 +65,15 @@ function describe(ctx, req) {
 }
 
 // Pede ajuda. Devolve o aviso para quem estava falando com o Jay (ou null se não tem apoio configurado).
+// Enquanto o Jay roda a resposta da pessoa de apoio em nome de quem pediu, um novo "não sei"
+// não vira outro pedido: é anotado aqui e a pergunta volta para ela.
+let capturing = null;
+
 export async function askHelp(ctx, user, text, reason, photo = null) {
+  if (capturing) {
+    capturing.push(reason || 'não deu certo');
+    return null;
+  }
   const h = helper(ctx);
   // A própria pessoa de apoio travou com o Jay: não tem para quem passar (o ADM não ajuda, só recebe a solução).
   if (!h || h.phone === user.phone) return null;
@@ -116,7 +124,7 @@ async function converse(ctx, h, req, title) {
 
 // Fecha o pedido e manda a solução para quem perguntou. Devolve o aviso para quem resolveu.
 // made: respostas do serviço que o Jay já abriu para quem pediu (vão no lugar do texto da solução).
-async function resolve(ctx, req, by, solution, { made: service = null } = {}) {
+async function resolve(ctx, req, by, solution, { made: service = null, servico = false } = {}) {
   ctx.db.prepare('UPDATE help_requests SET resolved_at = ?, resolved_by = ?, solution = ? WHERE id = ?').run(nowIso(), by.id, solution, req.id);
   const asker = ctx.db.prepare('SELECT * FROM users WHERE id = ?').get(req.user_id);
   let made = false;
@@ -129,7 +137,8 @@ async function resolve(ctx, req, by, solution, { made: service = null } = {}) {
   }
   if (made) {
     const left = openRequests(ctx).length;
-    return `✅ Pedido #${req.id} resolvido. Abri o serviço novo para ${firstName(asker.name)} e já avisei no WhatsApp.${left ? `\nAinda ${left === 1 ? 'falta 1 pedido' : `faltam ${left} pedidos`}: mande *ajudas* para ver.` : ''}`;
+    const did = servico ? `Abri o serviço novo para ${firstName(asker.name)} e já avisei no WhatsApp.` : `Fiz para ${firstName(asker.name)} e já mandei o resultado no WhatsApp.`;
+    return `✅ Pedido #${req.id} resolvido. ${did}${left ? `\nAinda ${left === 1 ? 'falta 1 pedido' : `faltam ${left} pedidos`}: mande *ajudas* para ver.` : ''}`;
   }
   const left = openRequests(ctx).length;
   return `✅ Pedido #${req.id} resolvido. Passei a solução para ${firstName(asker?.name) || 'quem pediu'}. Obrigado!${left ? `\nAinda ${left === 1 ? 'falta 1 pedido' : `faltam ${left} pedidos`}: mande *ajudas* para ver.` : ''}`;
@@ -147,10 +156,11 @@ const flows = {
           const req = ctx.db.prepare('SELECT * FROM help_requests WHERE id = ?').get(data.reqId);
           return req ? pedidoTexto(ctx, req, data.title || `🆘 Pedido de ajuda #${req.id}`, true) : 'Esse pedido não existe mais. Mande *cancelar*.';
         },
-        parse(text, { data }) {
+        parse(text, { ctx, data }) {
           const answer = String(text).replace(/^\s*resolvid[oa]\s*#?\d*\s*/i, '').replace(/^[-–:,.\s]+/, '').trim();
           if (!answer) throw new FlowError('Me diga a solução em poucas palavras, para eu passar adiante.');
           data.servico = looksLikeService(guessService(answer));
+          data.comando = !data.servico && Boolean(ctx.bot?.isCommand?.(answer));
           return answer;
         },
       },
@@ -160,13 +170,18 @@ const flows = {
           const req = ctx.db.prepare('SELECT user_id FROM help_requests WHERE id = ?').get(data.reqId);
           const asker = req && ctx.db.prepare('SELECT name FROM users WHERE id = ?').get(req.user_id);
           const who = firstName(asker?.name) || 'quem pediu';
-          const what = data.servico ? `Vou abrir um *serviço novo* para ${who} com isto` : `Vou mandar para ${who}`;
+          const what = data.servico
+            ? `Vou abrir um *serviço novo* para ${who} com isto`
+            : data.comando
+              ? `Vou fazer este comando para ${who} e mandar o resultado para ele`
+              : `Vou mandar para ${who}`;
           return `Entendi. ${what}:\n"${data.answer}"\n\nEstá certo? Mande *sim*, ou escreva a resposta de novo.`;
         },
-        parse(text, { data }) {
+        parse(text, { ctx, data }) {
           if (SIM.includes(simplify(text).replace(/[!.]+$/, ''))) return true;
           data.answer = String(text).trim();
           data.servico = looksLikeService(guessService(data.answer));
+          data.comando = !data.servico && Boolean(ctx.bot?.isCommand?.(data.answer));
           return false;
         },
         again: (data) => !data.ok,
@@ -192,7 +207,26 @@ const flows = {
         }
         data.made = made;
       }
-      const done = await resolve(ctx, req, user, data.answer, { made: data.made });
+      // Resposta é um comando ("extrato super speed"): o Jay faz em nome de quem pediu e manda o resultado.
+      if (data.comando) {
+        const asker = ctx.db.prepare('SELECT * FROM users WHERE id = ?').get(req.user_id);
+        capturing = [];
+        const stuck = capturing;
+        let result;
+        try {
+          result = await ctx.bot.runAs(asker, data.answer);
+        } finally {
+          capturing = null;
+        }
+        if (stuck.length || !result?.length) {
+          return [
+            `Não deu certo fazer "${data.answer}" para ${firstName(asker.name)}${stuck.length ? ` (${stuck[0]})` : ''}.`,
+            ...[].concat(await ctx.bot.startFlow(user, 'ajuda_resposta', { reqId: req.id, title: `🆘 Pedido #${req.id}: me diga de novo, com o nome certo.` })),
+          ];
+        }
+        data.made = result;
+      }
+      const done = await resolve(ctx, req, user, data.answer, { made: data.made, servico: data.servico });
       // Tem outro pedido esperando: já puxa o próximo.
       const next = openRequests(ctx).find((r) => (r.helper_phone || '') === user.phone || !r.helper_phone);
       if (!next) return done;

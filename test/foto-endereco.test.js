@@ -29,16 +29,38 @@ function setup() {
   return { ctx, sent, images };
 }
 
-test('foto com endereço: o Jay lê, escreve o texto e segue como se tivessem digitado', async (t) => {
+test('foto com endereço: o Jay mostra o que leu e pergunta se está certo; sim → serviço novo', async (t) => {
+  const { ctx, sent } = setup();
+  fakeGemini(t, [{ tipo: 'endereco', texto: 'WDC Painting & Body Inc, 11435 Rocket Blvd, Suite 102, Orlando, FL 32824' }]);
+  let replies = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media: photo });
+  assert.match(replies.join('\n'), /📝 Li na foto:\nWDC Painting & Body Inc, 11435 Rocket Blvd/);
+  assert.match(replies.join('\n'), /Está certo\?/);
+  assert.equal(sent.length, 0); // nada para a Viviane
+  replies = await ctx.bot.handle({ phone: DRIVER_PHONE, text: 'sim' });
+  assert.match(replies.join('\n'), /pegar\* o carro ou para \*levar/);
+  replies = await ctx.bot.handle({ phone: DRIVER_PHONE, text: 'levar' });
+  const conv = ctx.bot.getConversation(ctx.bot.findUser(DRIVER_PHONE).id);
+  assert.equal(conv?.flow, 'novo');
+  assert.match(conv.data._prefill?.dropoff || conv.data.dropoff || JSON.stringify(conv.data), /11435 Rocket Blvd/);
+  assert.equal(sent.length, 0);
+});
+
+test('foto com endereço lido errado: só aí vai para a Viviane, com a foto', async (t) => {
+  const { ctx, sent, images } = setup();
+  fakeGemini(t, [{ tipo: 'endereco', texto: '11435 Rocket Blvd, Orlando FL' }]);
+  await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media: photo });
+  const replies = await ctx.bot.handle({ phone: DRIVER_PHONE, text: 'não' });
+  assert.match(replies.join('\n'), /Passei para Viviane resolver/);
+  assert.match(sent[0].text, /o Jay leu a foto errado/);
+  assert.equal(images.length, 1);
+});
+
+test('foto com pegar e deixar: sim → abre o serviço direto', async (t) => {
   const { ctx } = setup();
-  fakeGemini(t, [
-    { tipo: 'endereco', texto: 'Pegar: 1200 N Alafaya Trail, Orlando FL\nDeixar: 500 E Colonial Dr, Orlando FL' },
-    { comando: 'novo', retirada: '1200 N Alafaya Trail, Orlando FL', destino: '500 E Colonial Dr, Orlando FL' },
-  ]);
-  const replies = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media: photo });
-  const all = replies.join('\n');
-  assert.match(all, /📝 Li na foto:\nPegar: 1200 N Alafaya Trail, Orlando FL/);
-  assert.match(all, /Pegar: 1200 N Alafaya Trail/);
+  fakeGemini(t, [{ tipo: 'endereco', texto: 'Pegar: 1200 N Alafaya Trail, Orlando FL\nDeixar: 500 E Colonial Dr, Orlando FL' }]);
+  await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media: photo });
+  const replies = await ctx.bot.handle({ phone: DRIVER_PHONE, text: 'sim' });
+  assert.match(replies.join('\n'), /Pegar: 1200 N Alafaya Trail/);
   assert.equal(ctx.bot.getConversation(ctx.bot.findUser(DRIVER_PHONE).id)?.flow, 'novo');
 });
 
