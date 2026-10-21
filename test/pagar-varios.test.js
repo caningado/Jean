@@ -35,10 +35,22 @@ test('Pendências: procurar quem deve, pagar vários de uma vez e pagamento parc
 
   // Vários de uma vez: paga o que falta em cada um.
   const r = await json('POST', '/payments/lote', { service_ids: [a.id, b.id], method: 'zelle' });
-  assert.deepEqual(r, { count: 2, total_cents: 45000 });
+  assert.deepEqual(r, { count: 2, total_cents: 45000, partial: [], still_open_cents: 0 });
   pend = await json('GET', '/payments/pending');
   assert.deepEqual(pend.map((s) => s.id), [c.id]);
   // De novo não paga duas vezes.
   assert.equal((await json('POST', '/payments/lote', { service_ids: [a.id], method: 'zelle' })).count, 0);
   assert.equal((await call('POST', '/payments/lote', { service_ids: [c.id], method: 'seguradora' })).status, 400);
+
+  // Um pagamento só para vários serviços: deve 500 em 3, pagou 200.
+  const x = await json('POST', '/services', { contact_name: 'Dino', pickup: '12 Main St, Orlando FL', price: '150' });
+  const y = await json('POST', '/services', { contact_name: 'Dino', pickup: '20 Oak St, Orlando FL', price: '200' });
+  const z = await json('POST', '/services', { contact_name: 'Dino', pickup: '30 Pine St, Orlando FL', price: '150' });
+  assert.equal((await call('POST', '/payments/lote', { service_ids: [x.id, y.id, z.id], method: 'zelle', amount: '600' })).status, 400);
+  const p = await json('POST', '/payments/lote', { service_ids: [z.id, y.id, x.id], method: 'zelle', amount: '200' });
+  assert.deepEqual(p, { count: 2, total_cents: 20000, partial: [y.id], still_open_cents: 30000 });
+  pend = await json('GET', '/payments/pending');
+  assert.equal(pend.find((s) => s.id === x.id), undefined);
+  assert.equal(pend.find((s) => s.id === y.id).open_cents, 15000);
+  assert.equal(pend.find((s) => s.id === z.id).open_cents, 15000);
 });
