@@ -83,7 +83,7 @@ export function loadConfig(overrides = {}) {
     // Nome do robô (escolhido pelo Caningado em 20/10).
     roboNome: (env.ROBO_NOME || 'Jay').trim(),
     geminiTtsModel: env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
-    geminiTtsVoice: env.GEMINI_TTS_VOICE || 'Kore',
+    geminiTtsVoice: env.GEMINI_TTS_VOICE || 'Puck', // voz masculina (Caningado pediu 21/10; antes Kore, feminina)
     // Leitura grátis das letras do VIN na foto (Tesseract). VIN_OCR=off desliga.
     vinOcr: env.VIN_OCR !== 'off',
     // Conferir endereços no mapa (Census + OpenStreetMap, grátis). GEOCODER=off desliga.
