@@ -1620,7 +1620,7 @@ screens.pendentes = async () => {
   const age = (d) => (d === 0 ? 'hoje' : d === 1 ? 'há 1 dia' : `há ${d} dias`);
   const words = (s) => plain([state.me.role === 'dono' ? s.id : '', s.contact_name, s.contact_phone, s.vehicle, s.plate, s.payer, s.driver_name].filter(Boolean).join(' '));
   view.innerHTML = `${late ? `<div class="card alerts"><strong>⚠️ ${late === 1 ? '1 atrasado' : `${late} atrasados`}</strong><div class="sub">Abra o serviço e toque em <strong>Cobrar cliente</strong> para mandar a mensagem com o Zelle. Pagou só uma parte? Abra o serviço e mude o valor.</div></div>` : ''}
-    ${list.length ? '<div class="card"><input type="search" id="busca" placeholder="🔎 Nome, final do celular, carro ou placa"><div class="sub" id="soma"></div></div>' : ''}
+    ${list.length ? '<div class="card"><input type="search" id="busca" placeholder="🔎 Nome, celular, carro ou placa"><div class="sub" id="soma"></div></div>' : ''}
     <div class="card"><ul class="list">${
     list.length
       ? list.map((s) => `<li data-w="${esc(words(s))}" class="${s.overdue ? 'late' : ''}"><div class="row"><label class="pick">${s.open_cents ? `<input type="checkbox" value="${s.id}" data-open="${s.open_cents}">` : ''}</label><a href="#/servico/${s.id}" style="flex:1"><div><strong>${s.overdue ? '⚠️ ' : ''}${numTag(s)}${esc(s.contact_name || s.vehicle || 'Serviço')}</strong><div class="sub">${s.vehicle && s.contact_name ? `${esc(s.vehicle)} · ` : ''}${when(s.completed_at || s.created_at)} · ${age(s.days)}</div></div>
@@ -1628,7 +1628,9 @@ screens.pendentes = async () => {
       : '<li class="empty">Nada pendente 👍</li>'
   }</ul></div>
     ${list.some((s) => s.open_cents) ? `<form class="card" id="lote"><h2>Dar baixa nos marcados</h2><div class="sub" id="loteInfo"></div>
-      <label>Forma</label><select name="method">${Object.entries(METHODS).filter(([k]) => k !== 'seguradora').map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
+      <div class="row2"><div><label>Valor pago</label><input name="amount" inputmode="decimal" placeholder="tudo"></div>
+      <div><label>Forma</label><select name="method">${Object.entries(METHODS).filter(([k]) => k !== 'seguradora').map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div></div>
+      <div class="sub">Pagou só uma parte? Escreva quanto pagou: quita os serviços mais antigos primeiro e o que sobrar fica faltando no último.</div>
       <div class="actions"><button>✅ Marcar como pagos</button><button type="button" class="secondary" id="todos">Marcar todos da lista</button></div></form>` : ''}`;
   const items = [...view.querySelectorAll('li[data-w]')];
   const boxes = () => [...view.querySelectorAll('input[type=checkbox]')];
@@ -1645,7 +1647,7 @@ screens.pendentes = async () => {
     form.querySelector('button:not([type])').disabled = !marked.length;
     form.querySelector('#loteInfo').textContent = marked.length
       ? `${marked.length} serviço(s) · ${money(marked.reduce((sum, b) => sum + Number(b.dataset.open), 0))} (o valor que falta em cada um)`
-      : 'Marque os serviços na lista acima. Pagou só uma parte? Abra o serviço e mude o valor.';
+      : 'Marque os serviços na lista acima.';
   };
   const busca = view.querySelector('#busca');
   if (busca)
@@ -1664,11 +1666,12 @@ screens.pendentes = async () => {
       e.preventDefault();
       const ids = picked().map((b) => Number(b.value));
       if (!ids.length) return;
-      const { method } = formData(form);
-      if (!confirm(`Marcar ${ids.length} serviço(s) como pagos por ${METHODS[method]}?`)) return;
+      const { method, amount } = formData(form);
+      const ask = amount ? `Registrar $${amount} por ${METHODS[method]} nesses ${ids.length} serviço(s)?` : `Marcar ${ids.length} serviço(s) como pagos por ${METHODS[method]}?`;
+      if (!confirm(ask)) return;
       try {
-        const r = await api('/payments/lote', { method: 'POST', body: { service_ids: ids, method } });
-        toast(`✅ ${r.count} serviço(s) pagos: ${money(r.total_cents)}`);
+        const r = await api('/payments/lote', { method: 'POST', body: { service_ids: ids, method, amount } });
+        toast(`✅ ${money(r.total_cents)} registrado em ${r.count} serviço(s)${r.still_open_cents ? `. Ainda falta ${money(r.still_open_cents)}` : ''}`);
         screens.pendentes();
       } catch (err) {
         toast(err.message);

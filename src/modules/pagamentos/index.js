@@ -526,19 +526,37 @@ function routes(api, ctx) {
     res.json({ ok: true });
   });
 
-  // Baixa em vários serviços de uma vez: paga o que falta em cada um, com a mesma forma.
+  // Baixa em vários serviços de uma vez, com a mesma forma. Sem valor, paga o que falta em cada um.
+  // Com valor (ex.: cliente pagou $200 para 3 serviços), quita os mais antigos primeiro e o resto fica parcial.
   api.post('/payments/lote', (req, res) => {
-    const { service_ids: ids, method } = req.body || {};
+    const { service_ids: ids, method, amount } = req.body || {};
     if (!METHODS[method] || method === 'seguradora') throw new HttpError(400, 'Forma de pagamento inválida.');
     if (!Array.isArray(ids) || !ids.length || ids.length > 200) throw new HttpError(400, 'Escolha os serviços.');
-    const done = [];
-    for (const id of new Set(ids.map(Number))) {
-      const service = ctx.data.services.get(id);
-      if (!canSee(req.user, service) || service.status === 'cancelado') continue;
-      const open = balance(ctx, service).open_cents;
-      if (open > 0) done.push(addPayment(ctx, { serviceId: service.id, amountCents: open, method, userId: req.user.id }));
+    const services = [...new Set(ids.map(Number))]
+      .map((id) => ctx.data.services.get(id))
+      .filter((s) => canSee(req.user, s) && s.status !== 'cancelado')
+      .sort((a, b) => a.id - b.id)
+      .map((s) => ({ service: s, open: balance(ctx, s).open_cents }))
+      .filter((x) => x.open > 0);
+    const owed = services.reduce((sum, x) => sum + x.open, 0);
+    let left = owed;
+    if (amount != null && amount !== '') {
+      left = checkMoney(parseMoney(amount), { max: 100000, what: 'O valor pago' });
+      if (left > owed) throw new HttpError(400, `O valor é maior do que falta nesses serviços (${formatMoney(owed)}).`);
     }
-    res.status(201).json({ count: done.length, total_cents: done.reduce((sum, p) => sum + p.amount_cents, 0) });
+    const done = [];
+    for (const { service, open } of services) {
+      if (left <= 0) break;
+      const pay = Math.min(open, left);
+      left -= pay;
+      done.push({ ...addPayment(ctx, { serviceId: service.id, amountCents: pay, method, userId: req.user.id }), quitado: pay === open });
+    }
+    res.status(201).json({
+      count: done.length,
+      total_cents: done.reduce((sum, p) => sum + p.amount_cents, 0),
+      partial: done.filter((p) => !p.quitado).map((p) => p.service_id),
+      still_open_cents: owed - done.reduce((sum, p) => sum + p.amount_cents, 0),
+    });
   });
 
   api.get('/payments/recebidos', (req, res) => {
