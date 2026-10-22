@@ -1,6 +1,7 @@
 // Módulo de pagamentos: Zelle, dinheiro, cartão, cheque e seguradora/motor club.
 // Guarda quem recebeu (para saber quanto dinheiro está com cada motorista) e o que falta receber.
-import { parseMoney, formatMoney, simplify, nowIso, HttpError, startOfDayIso } from '../../lib/util.js';
+import { parseMoney, formatMoney, simplify, nowIso, HttpError, startOfDayIso, dayFormatter } from '../../lib/util.js';
+import { renderPendingList } from './lista-pdf.js';
 import { checkMoney, ValidationError } from '../../lib/validate.js';
 import express from 'express';
 import { createSquare, validSquareSignature } from '../../lib/square.js';
@@ -283,13 +284,33 @@ function pendingList(ctx, userId) {
   const services = ctx.data.services
     .list({ driverId: userId, limit: 1000 })
     .filter((s) => s.status !== 'cancelado' && s.price_cents);
+  // Serviço de oficina/dealer: junta o nome da empresa do solicitante.
+  const companies = new Map();
+  const companyOf = (contactId) => {
+    if (!contactId || !ctx.api.empresas) return null;
+    if (!companies.has(contactId)) companies.set(contactId, ctx.api.empresas.forContact(contactId));
+    return companies.get(contactId);
+  };
   return services
     .map((s) => {
       const days = daysSince(s.completed_at || s.created_at);
-      return { ...s, ...balance(ctx, s), days, overdue: days >= ctx.config.overdueDays };
+      const company = companyOf(s.contact_id);
+      return { ...s, ...balance(ctx, s), days, overdue: days >= ctx.config.overdueDays, company_id: company?.id || null, company_name: company?.name || null };
     })
     .filter((s) => s.open_cents > 0 || s.to_receive_cents > 0)
     .sort((a, b) => b.days - a.days || a.id - b.id);
+}
+
+// Busca nas pendências: nome, carro, placa, seguradora ou final do celular (ex.: "2697").
+function searchPending(list, text) {
+  const words = simplify(text || '').split(' ').filter(Boolean);
+  if (!words.length) return list;
+  const found = list.filter((s) =>
+    words.every((w) => simplify([s.company_name, s.contact_name, s.vehicle, s.plate, s.vin, s.payer].filter(Boolean).join(' ')).includes(w) || (/^\d{3,}$/.test(w) && String(s.contact_phone || '').includes(w)))
+  );
+  // Cliente de empresa: a conta é da empresa, então vem tudo o que a empresa deve (pedido do Caningado 22/10).
+  const firms = new Set(found.map((s) => s.company_id).filter(Boolean));
+  return firms.size ? list.filter((s) => found.includes(s) || firms.has(s.company_id)) : found;
 }
 
 // Alerta de cobrança atrasada (aviso da manhã e topo do painel).
@@ -378,14 +399,14 @@ const commands = [
       const all = pendingList(ctx, user.role === 'dono' ? null : user.id);
       if (!all.length) return 'Nada pendente. 👍';
       const words = simplify(args.join(' ')).split(' ').filter(Boolean);
-      const list = words.length ? all.filter((s) => words.every((w) => (simplify([s.contact_name, s.vehicle, s.plate, s.payer].filter(Boolean).join(' ')).includes(w) || (/^\d{3,}$/.test(w) && String(s.contact_phone || '').endsWith(w))))) : all;
+      const list = searchPending(all, args.join(' '));
       if (!list.length) return `Ninguém com "${args.join(' ')}" devendo. 👍`;
       const lines = list.slice(0, 20).map((s) => {
         const parts = [];
         if (s.open_cents) parts.push(`falta ${formatMoney(s.open_cents)}`);
         if (s.to_receive_cents) parts.push(`${s.payer || 'seguradora'} ${formatMoney(s.to_receive_cents)}`);
         const age = s.days === 0 ? 'hoje' : s.days === 1 ? 'há 1 dia' : `há ${s.days} dias`;
-        return `${s.overdue ? '⚠️ ' : ''}${user.role === 'dono' ? `#${s.id} ` : ''}${s.contact_name || ''} – ${parts.join(', ')} (${age})`;
+        return `${s.overdue ? '⚠️ ' : ''}${user.role === 'dono' ? `#${s.id} ` : ''}${s.company_name ? `🏢 ${s.company_name}${s.contact_name && s.contact_name !== s.company_name ? ` (${s.contact_name})` : ''}` : s.contact_name || ''} – ${parts.join(', ')} (${age})`;
       });
       const late = list.filter((s) => s.overdue).length;
       const head = late ? `*Pendentes* (⚠️ ${late} atrasado(s), mais de ${ctx.config.overdueDays} dias)` : '*Pendentes*';
@@ -562,6 +583,35 @@ function routes(api, ctx) {
   api.get('/payments/recebidos', (req, res) => {
     if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM vê essa lista.');
     res.json(receivedEarlier(ctx, req.query.dia));
+  });
+
+  // Lista de pendências em PDF (com a mesma busca da tela).
+  api.get('/payments/pending.pdf', async (req, res) => {
+    const owner = req.user.role === 'dono';
+    const search = String(req.query.q || '').trim();
+    const day = dayFormatter(ctx.config.timeZone);
+    const list = searchPending(pendingList(ctx, owner ? null : req.user.id), search)
+      .sort((a, b) => b.days - a.days || a.id - b.id)
+      .map((s) => ({
+        ...s,
+        day: day(s.completed_at || s.created_at),
+        paid_list: listPayments(ctx, s.id)
+          .filter((p) => p.status === 'recebido')
+          .map((p) => ({ day: day(p.received_at), method: METHODS[p.method] || p.method, payer: p.payer, amount_cents: p.amount_cents })),
+      }));
+    const pdf = await renderPendingList({
+      // Sem o nome do contato no cabeçalho (pedido do Caningado 21/10): só empresa, telefone e e-mail.
+      company: { ...(ctx.api.invoice?.getCompany() || { name: ctx.config.companyName }), contact: null },
+      logo: ctx.api.invoice ? ctx.api.invoice.logo() : null,
+      list,
+      today: day(),
+      search,
+      showIds: owner,
+    });
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="Pendencias${search ? ' ' + search.replace(/[^\w -]/g, '') : ''}.pdf"`);
+    res.set('Cache-Control', 'no-store');
+    res.send(pdf);
   });
 
   api.get('/payments/pending', (req, res) => {
