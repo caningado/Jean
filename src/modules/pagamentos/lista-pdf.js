@@ -22,8 +22,11 @@ export function renderPendingList({ company, logo, list, today, search, showIds 
   y += 14;
   doc.font('Helvetica-Bold').fontSize(24).fillColor(DARK).text('PENDÊNCIAS', L, y);
   // Um cliente só (ex.: busca pelo final do celular): o nome e o celular vão no título.
-  const one = list.length && list.every((s) => s.contact_id && s.contact_id === list[0].contact_id) ? list[0] : null;
-  if (one) {
+  const firm = list.length && list.every((s) => s.company_id && s.company_id === list[0].company_id) ? list[0].company_name : null;
+  const one = !firm && list.length && list.every((s) => s.contact_id && s.contact_id === list[0].contact_id) ? list[0] : null;
+  if (firm) {
+    doc.font('Helvetica-Bold').fontSize(12).fillColor(DARK).text(firm, L, doc.y + 2);
+  } else if (one) {
     doc.font('Helvetica-Bold').fontSize(12).fillColor(DARK).text(one.contact_name || '', L, doc.y + 2);
     if (one.contact_phone) doc.font('Helvetica').fontSize(10).fillColor(GRAY).text(formatPhone(one.contact_phone), L, doc.y + 1);
   } else {
@@ -71,7 +74,10 @@ export function renderPendingList({ company, logo, list, today, search, showIds 
     y += 36;
   }
   list.forEach((s, i) => {
-    const who = [s.contact_name || '–', s.contact_phone ? formatPhone(s.contact_phone) : ''].filter(Boolean);
+    // Empresa: nome da empresa e, embaixo, quem pediu.
+    const who = s.company_name
+      ? [s.company_name, s.contact_name && s.contact_name !== s.company_name ? `Pedido por ${s.contact_name}` : ''].filter(Boolean)
+      : [s.contact_name || '–', s.contact_phone ? formatPhone(s.contact_phone) : ''].filter(Boolean);
     const car = [s.vehicle || '–', s.vin ? `VIN ${s.vin}` : ''].filter(Boolean);
     const extra = s.to_receive_cents ? `${s.payer || 'Seguradora'}: ${usd(s.to_receive_cents)}` : '';
     const lines = Math.max(who.length, car.length + (extra ? 1 : 0), showIds ? 2 : 1);

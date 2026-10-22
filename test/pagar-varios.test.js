@@ -59,4 +59,14 @@ test('Pendências: procurar quem deve, pagar vários de uma vez e pagamento parc
   assert.equal(pdf.status, 200);
   assert.equal(pdf.headers.get('content-type'), 'application/pdf');
   assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0, 4).toString(), '%PDF');
+
+  // Cliente de empresa: procurar quem pediu traz tudo o que a empresa deve.
+  const m1 = await json('POST', '/services', { contact_name: 'Mike', pickup: '40 Elm St, Orlando FL', price: '100' });
+  const m2 = await json('POST', '/services', { contact_name: 'Carlos', pickup: '50 Elm St, Orlando FL', price: '70' });
+  ctx.db.prepare("INSERT INTO companies (name, token, created_at) VALUES ('USAVE Motors', 'tk', '2026-01-01')").run();
+  ctx.db.prepare("UPDATE contacts SET company_id = (SELECT id FROM companies) WHERE name IN ('Mike', 'Carlos')").run();
+  const [emp] = await chat(ctx, OWNER_PHONE, 'pendentes carlos');
+  assert.match(emp, new RegExp(`#${m1.id} 🏢 USAVE Motors \\(Mike\\)`));
+  assert.match(emp, new RegExp(`#${m2.id} 🏢 USAVE Motors \\(Carlos\\)`));
+  assert.match(emp, /Total que deve: \$170\.00/);
 });

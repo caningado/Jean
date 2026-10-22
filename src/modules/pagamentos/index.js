@@ -284,10 +284,18 @@ function pendingList(ctx, userId) {
   const services = ctx.data.services
     .list({ driverId: userId, limit: 1000 })
     .filter((s) => s.status !== 'cancelado' && s.price_cents);
+  // Serviço de oficina/dealer: junta o nome da empresa do solicitante.
+  const companies = new Map();
+  const companyOf = (contactId) => {
+    if (!contactId || !ctx.api.empresas) return null;
+    if (!companies.has(contactId)) companies.set(contactId, ctx.api.empresas.forContact(contactId));
+    return companies.get(contactId);
+  };
   return services
     .map((s) => {
       const days = daysSince(s.completed_at || s.created_at);
-      return { ...s, ...balance(ctx, s), days, overdue: days >= ctx.config.overdueDays };
+      const company = companyOf(s.contact_id);
+      return { ...s, ...balance(ctx, s), days, overdue: days >= ctx.config.overdueDays, company_id: company?.id || null, company_name: company?.name || null };
     })
     .filter((s) => s.open_cents > 0 || s.to_receive_cents > 0)
     .sort((a, b) => b.days - a.days || a.id - b.id);
@@ -297,9 +305,12 @@ function pendingList(ctx, userId) {
 function searchPending(list, text) {
   const words = simplify(text || '').split(' ').filter(Boolean);
   if (!words.length) return list;
-  return list.filter((s) =>
-    words.every((w) => simplify([s.contact_name, s.vehicle, s.plate, s.vin, s.payer].filter(Boolean).join(' ')).includes(w) || (/^\d{3,}$/.test(w) && String(s.contact_phone || '').includes(w)))
+  const found = list.filter((s) =>
+    words.every((w) => simplify([s.company_name, s.contact_name, s.vehicle, s.plate, s.vin, s.payer].filter(Boolean).join(' ')).includes(w) || (/^\d{3,}$/.test(w) && String(s.contact_phone || '').includes(w)))
   );
+  // Cliente de empresa: a conta é da empresa, então vem tudo o que a empresa deve (pedido do Caningado 22/10).
+  const firms = new Set(found.map((s) => s.company_id).filter(Boolean));
+  return firms.size ? list.filter((s) => found.includes(s) || firms.has(s.company_id)) : found;
 }
 
 // Alerta de cobrança atrasada (aviso da manhã e topo do painel).
@@ -395,7 +406,7 @@ const commands = [
         if (s.open_cents) parts.push(`falta ${formatMoney(s.open_cents)}`);
         if (s.to_receive_cents) parts.push(`${s.payer || 'seguradora'} ${formatMoney(s.to_receive_cents)}`);
         const age = s.days === 0 ? 'hoje' : s.days === 1 ? 'há 1 dia' : `há ${s.days} dias`;
-        return `${s.overdue ? '⚠️ ' : ''}${user.role === 'dono' ? `#${s.id} ` : ''}${s.contact_name || ''} – ${parts.join(', ')} (${age})`;
+        return `${s.overdue ? '⚠️ ' : ''}${user.role === 'dono' ? `#${s.id} ` : ''}${s.company_name ? `🏢 ${s.company_name}${s.contact_name && s.contact_name !== s.company_name ? ` (${s.contact_name})` : ''}` : s.contact_name || ''} – ${parts.join(', ')} (${age})`;
       });
       const late = list.filter((s) => s.overdue).length;
       const head = late ? `*Pendentes* (⚠️ ${late} atrasado(s), mais de ${ctx.config.overdueDays} dias)` : '*Pendentes*';
