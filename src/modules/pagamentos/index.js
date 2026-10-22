@@ -606,7 +606,8 @@ function routes(api, ctx) {
       list,
       today: day(),
       search,
-      showIds: owner,
+      // Sem o nº do serviço no PDF (pedido do Caningado 22/10): ele vai para fora.
+      showIds: false,
     });
     res.set('Content-Type', 'application/pdf');
     res.set('Content-Disposition', `inline; filename="Pendencias${search ? ' ' + search.replace(/[^\w -]/g, '') : ''}.pdf"`);

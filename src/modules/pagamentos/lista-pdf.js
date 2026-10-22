@@ -74,33 +74,41 @@ export function renderPendingList({ company, logo, list, today, search, showIds 
     y += 36;
   }
   list.forEach((s, i) => {
-    // Empresa: nome da empresa e, embaixo, quem pediu.
-    const who = s.company_name
-      ? [s.company_name, s.contact_name && s.contact_name !== s.company_name ? `Pedido por ${s.contact_name}` : ''].filter(Boolean)
-      : [s.contact_name || '–', s.contact_phone ? formatPhone(s.contact_phone) : ''].filter(Boolean);
-    const car = [s.vehicle || '–', s.vin ? `VIN ${s.vin}` : ''].filter(Boolean);
-    const extra = s.to_receive_cents ? `${s.payer || 'Seguradora'}: ${usd(s.to_receive_cents)}` : '';
-    const lines = Math.max(who.length, car.length + (extra ? 1 : 0), showIds ? 2 : 1);
+    // Empresa: nome da empresa e, embaixo, quem pediu. Se a lista é toda de uma empresa,
+    // o nome dela fica só no título e a linha mostra quem pediu (pedido do Caningado 22/10).
+    const requester = s.contact_name && s.contact_name !== s.company_name ? s.contact_name : '';
+    const who = firm
+      ? [requester ? `Pedido por ${requester}` : '–', s.contact_phone ? formatPhone(s.contact_phone) : ''].filter(Boolean)
+      : s.company_name
+        ? [s.company_name, requester ? `Pedido por ${requester}` : ''].filter(Boolean)
+        : [s.contact_name || '–', s.contact_phone ? formatPhone(s.contact_phone) : ''].filter(Boolean);
+    const extra = [s.vin ? `VIN ${s.vin}` : '', s.to_receive_cents ? `${s.payer || 'Seguradora'}: ${usd(s.to_receive_cents)}` : ''].filter(Boolean);
+    // Nome do carro comprido quebra a linha: o VIN vai embaixo dele, sem encavalar.
+    const carText = s.vehicle || '–';
+    const carH = doc.font('Helvetica').fontSize(9).heightOfString(carText, { width: cols[2].w });
+    const carBlock = carH + extra.length * 11;
+    const leftBlock = Math.max(who.length, showIds ? 2 : 1) * 11;
+    const block = Math.max(carBlock, leftBlock);
     // Pagamentos parciais já feitos, com a data (pedido do Caningado 21/10).
     const paid = s.paid_list || [];
-    const h = 14 + lines * 11 + (paid.length ? 4 + paid.length * 11 : 0);
+    const h = 14 + block + (paid.length ? 4 + paid.length * 11 : 0);
     need(h);
     if (i % 2 === 1) doc.rect(L, y, W, h).fill(SOFT);
     const ty = y + 7;
     doc.font('Helvetica').fontSize(9).fillColor(DARK).text(shortDate(s.day), cols[0].x, ty, { width: cols[0].w, lineBreak: false });
     if (showIds) doc.fontSize(8).fillColor(GRAY).text(`#${s.id}`, cols[0].x, ty + 11, { width: cols[0].w, lineBreak: false });
-    doc.font('Helvetica-Bold').fontSize(9).fillColor(DARK).text(who[0], cols[1].x, ty, { width: cols[1].w, lineBreak: false, ellipsis: true });
+    doc.font(firm ? 'Helvetica' : 'Helvetica-Bold').fontSize(9).fillColor(DARK).text(who[0], cols[1].x, ty, { width: cols[1].w, lineBreak: false, ellipsis: true });
     if (who[1]) doc.font('Helvetica').fontSize(8).fillColor(GRAY).text(who[1], cols[1].x, ty + 11, { width: cols[1].w, lineBreak: false });
-    doc.font('Helvetica').fontSize(9).fillColor(DARK).text(car[0], cols[2].x, ty, { width: cols[2].w, lineBreak: false, ellipsis: true });
-    let cy = ty + 11;
-    for (const line of [car[1], extra].filter(Boolean)) {
-      doc.fontSize(8).fillColor(GRAY).text(line, cols[2].x, cy, { width: cols[2].w, lineBreak: false, ellipsis: true });
+    doc.font('Helvetica').fontSize(9).fillColor(DARK).text(carText, cols[2].x, ty, { width: cols[2].w });
+    let cy = ty + carH;
+    for (const line of extra) {
+      doc.font('Helvetica').fontSize(8).fillColor(GRAY).text(line, cols[2].x, cy, { width: cols[2].w, lineBreak: false, ellipsis: true });
       cy += 11;
     }
     doc.font('Helvetica').fontSize(9).fillColor(DARK).text(amount(s.price_cents), cols[3].x, ty, { width: cols[3].w, align: 'right', lineBreak: false });
     doc.fillColor(GRAY).text(s.received_cents ? amount(s.received_cents) : '–', cols[4].x, ty, { width: cols[4].w, align: 'right', lineBreak: false });
     doc.font('Helvetica-Bold').fillColor(s.open_cents ? DARK : GRAY).text(s.open_cents ? amount(s.open_cents) : '–', cols[5].x, ty, { width: cols[5].w, align: 'right', lineBreak: false });
-    let py = ty + lines * 11 + 4;
+    let py = ty + block + 4;
     for (const p of paid) {
       doc.font('Helvetica').fontSize(8).fillColor('#15803D').text(`Pago em ${shortDate(p.day)} · ${p.method}${p.payer ? ` (${p.payer})` : ''}`, cols[1].x, py, { width: cols[3].x - cols[1].x, lineBreak: false, ellipsis: true });
       doc.text(amount(p.amount_cents), cols[4].x, py, { width: cols[4].w, align: 'right', lineBreak: false });
