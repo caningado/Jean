@@ -33,6 +33,13 @@ async function shareText(message, phone) {
     toast('Mensagem copiada');
   }
 }
+// Agendamento: "sex. 24/10 09:00"; e o valor do campo datetime-local na hora do celular.
+const schedWhen = (iso) => new Date(iso).toLocaleString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '');
+const localInput = (iso) => {
+  const d = new Date(iso);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+};
 const when = (iso) => (iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
 // Endereço, link de mapa ou coordenadas -> link que abre no mapa do celular.
@@ -561,7 +568,8 @@ screens.servicos = async (params) => {
           (s) => `<li${payClass(s)}><a href="#/servico/${s.id}">
             <div><strong>${numTag(s)}${esc(s.contact_name || 'Sem cliente')}</strong>
               <div class="sub">${esc([s.vehicle, s.plate].filter(Boolean).join(' · ') || (s.pickup || '').replace(/https?:\/\/\S+/g, 'local no mapa'))}</div>
-              <div class="sub">${when(s.created_at)}${state.me.role === 'dono' && s.driver_name ? ' · ' + esc(s.driver_name) : ''}</div></div>
+              <div class="sub">${when(s.created_at)}${state.me.role === 'dono' && s.driver_name ? ' · ' + esc(s.driver_name) : ''}</div>
+              ${s.scheduled_at && ['pendente', 'aberto'].includes(s.status) ? `<div class="sched">📅 ${schedWhen(s.scheduled_at)}</div>` : ''}</div>
             <div class="right">${s.price_cents != null ? priceText(s.price_cents) : ''}<br>${badge(s)}</div>
           </a></li>`
         )
@@ -605,6 +613,7 @@ screens.novo = async () => {
       </div>
       ${priced ? `<p class="sub">Tabela: ${money(pricing.baseCents)} + ${money(pricing.perMileCents)} por milha.</p>` : ''}
       ${drivers.length ? `<label>Motorista</label><select name="driver_id"><option value="fila" selected>⏳ Ninguém ainda (Pendente)</option>${drivers.filter((d) => d.active && drives(d)).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select><p class="sub">O serviço entra como Pendente. Escolha o motorista agora ou depois, na tela do serviço.</p>` : ''}
+      ${has('agenda') ? '<label>📅 Agendar para (só se precisar)</label><input type="datetime-local" name="scheduled_at">' : ''}
       <label>Observações</label><textarea name="notes" rows="2"></textarea>
       <button class="block">Criar serviço</button>
     </form>`;
@@ -802,10 +811,11 @@ screens.novo = async () => {
     const label = btn?.textContent;
     if (btn) (btn.disabled = true), (btn.textContent = 'Salvando…');
     try {
-      const { vin, ...body } = formData(form);
+      const { vin, scheduled_at, ...body } = formData(form);
       if (body.driver_id && body.driver_id !== 'fila') body.driver_id = Number(body.driver_id);
       const service = await sendCheckingAddress((b) => api('/services', { method: 'POST', body: b }), body);
       novo.mine.add(service.id);
+      if (scheduled_at) await api(`/services/${service.id}/agenda`, { method: 'PUT', body: { scheduled_at } }).catch((err) => toast(err.message));
       // VIN digitado ou escaneado já entra no serviço; se o dígito verificador não bater, pergunta.
       if (vin?.trim()) {
         await api(`/services/${service.id}/vin`, { method: 'POST', body: { vin } }).catch(async (err) => {
@@ -854,6 +864,7 @@ screens.servico = async (params, id) => {
       <p class="big">${s.price_cents != null ? priceText(s.price_cents) : 'Sem valor'}</p>
       <p class="sub">${when(s.created_at)}${s.driver_name ? ' · ' + esc(s.driver_name) + (owner && s.driver_seq ? ` (nº ${s.driver_seq} do dia ${s.driver_ref_day.slice(8)}/${s.driver_ref_day.slice(5, 7)})` : '') : ''}</p>
       ${s.notes ? `<p>${esc(s.notes)}</p>` : ''}
+      ${s.scheduled_at ? `<p class="sched">📅 Agendado: ${schedWhen(s.scheduled_at)}</p>` : ''}
       ${s.status === 'aberto' && STAGES[s.stage] ? `<p class="stage">${STAGES[s.stage]}</p>` : ''}
       <div class="actions">
         ${s.status === 'pendente' ? (queued(s) && (owner || s.driver_id === state.me.id) ? '<button id="start">▶ Começar</button>' : '') : s.status === 'aberto' ? '<button id="done">✅ Entregue</button>' : '<button class="secondary" id="reopen">Reabrir</button>'}
@@ -863,6 +874,14 @@ screens.servico = async (params, id) => {
       ${s.status === 'aberto' && owner ? '<div class="actions"><button class="secondary" id="queue">⏳ Voltar para a fila</button></div>' : ''}
       ${(['aberto', 'pendente'].includes(s.status) && (owner || s.driver_id === state.me.id)) ? '<div class="actions"><button class="danger" id="cancel">✖ Cancelar serviço</button></div>' : ''}
     </div>
+
+    ${has('agenda') && ['pendente', 'aberto'].includes(s.status) && (owner || s.driver_id === state.me.id) ? `
+    <form class="card" id="agendaForm">
+      <h2>📅 Agendar</h2>
+      <p class="sub">Só se precisar marcar dia e hora. O Jay avisa 1 hora antes.</p>
+      <input type="datetime-local" name="scheduled_at" value="${s.scheduled_at ? localInput(s.scheduled_at) : ''}">
+      <div class="actions"><button>Salvar</button>${s.scheduled_at ? '<button type="button" class="secondary" id="agendaClear">Tirar agendamento</button>' : ''}</div>
+    </form>` : ''}
 
     ${voice ? `
     <div class="card voice-card">
@@ -1026,6 +1045,26 @@ screens.servico = async (params, id) => {
   state.voiceService = s.id;
   if (voice) wireMic(view.querySelector('#mic'), view.querySelector('#voiceStatus'), assistantVoice);
 
+  const agendaForm = view.querySelector('#agendaForm');
+  if (agendaForm) {
+    const saveAgenda = async (value) => {
+      try {
+        await api(`/services/${id}/agenda`, { method: 'PUT', body: { scheduled_at: value } });
+        toast(value ? '📅 Agendado' : 'Agendamento tirado');
+        screens.servico(params, id);
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+    agendaForm.onsubmit = (e) => {
+      e.preventDefault();
+      const value = agendaForm.scheduled_at.value;
+      if (!value) return toast('Escolha o dia e a hora.');
+      saveAgenda(value);
+    };
+    const clear = view.querySelector('#agendaClear');
+    if (clear) clear.onclick = () => saveAgenda('');
+  }
   const vinForm = view.querySelector('#vinForm');
   if (vinForm) {
     const saveVin = async (vin, force = false) => {
@@ -1613,6 +1652,18 @@ screens.recebidos = async (params) => {
   view.querySelector('#dia').onchange = (e) => e.target.value && (location.hash = `#/recebidos?dia=${e.target.value}`);
 };
 
+// Serviços agendados (dia e hora marcados), do mais próximo ao mais longe.
+screens.agenda = async () => {
+  setScreen('Agenda', { tab: 'mais', back: '#/mais' });
+  const list = await api('/agenda');
+  view.innerHTML = `<div class="card"><ul class="list">${
+    list.length
+      ? list.map((s) => `<li><a href="#/servico/${s.id}"><div><strong>📅 ${schedWhen(s.scheduled_at)}</strong><div class="sub">${esc(s.contact_name || s.vehicle || 'Serviço')}${s.vehicle && s.contact_name ? ` · ${esc(s.vehicle)}` : ''}</div></div>
+          <div class="right sub">${s.driver_name ? esc(s.driver_name) : 'sem motorista'}</div></a></li>`).join('')
+      : '<li class="empty">Nenhum serviço agendado. Para agendar, abra o serviço e use 📅 Agendar.</li>'
+  }</ul></div>`;
+};
+
 screens.pendentes = async () => {
   setScreen(state.me.role === 'dono' ? 'Pendências' : 'Minhas pendências', { tab: 'resumo', back: '#/resumo' });
   const list = await api('/payments/pending');
@@ -1776,6 +1827,7 @@ screens.mais = async () => {
     <div class="card"><p><strong>${esc(state.me.name)}</strong><br><span class="sub">${phoneFmt(state.me.phone)} · ${state.me.role === 'dono' ? 'ADM' : 'Motorista'}</span></p></div>
     <div class="card"><ul class="list">
       ${has('pagamentos') && state.me.role !== 'dono' ? '<li><a href="#/pendentes"><span>⏳ Minhas pendências</span><span>›</span></a></li>' : ''}
+      ${has('agenda') ? '<li><a href="#/agenda"><span>📅 Agenda (serviços agendados)</span><span>›</span></a></li>' : ''}
       ${has('despesas') ? '<li><a href="#/despesas"><span>🧾 Despesas</span><span>›</span></a></li>' : ''}
       ${has('manutencao') ? '<li><a href="#/caminhoes"><span>🔧 Caminhões e manutenção</span><span>›</span></a></li>' : ''}
       ${has('comissao') ? `<li><a href="${state.me.role === 'dono' ? '#/comissao' : `#/motorista/${state.me.id}`}"><span>💰 ${state.me.role === 'dono' ? 'Pagamento dos motoristas' : 'Meus ganhos'}</span><span>›</span></a></li>` : ''}
