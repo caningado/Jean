@@ -25,11 +25,15 @@ test('agenda: agendar pelo WhatsApp e pelo painel, lista e lembrete 1 hora antes
   const s = ctx.data.services.create({ pickup: '12 Main St', vehicle: 'Honda Civic', driver_id: driver.id });
   ctx.data.services.setActive(driver.id, s.id);
 
+  const [bad] = await chat(ctx, DRIVER_PHONE, 'agendar xyz');
+  assert.match(bad, /Não entendi/);
   const [ok] = await chat(ctx, DRIVER_PHONE, 'agendar amanhã 9h');
   assert.match(ok, /agendado para/);
   assert.ok(ctx.data.services.get(s.id).scheduled_at);
-  const [bad] = await chat(ctx, DRIVER_PHONE, 'agendar xyz');
-  assert.match(bad, /Não entendi/);
+  // Estava em andamento e foi agendado para depois: volta para a fila do motorista até começar.
+  assert.equal(ctx.data.services.get(s.id).status, 'pendente');
+  assert.equal(ctx.data.services.get(s.id).driver_id, driver.id);
+  assert.equal(ctx.data.services.active(driver), null);
   const [list] = await chat(ctx, OWNER_PHONE, 'agenda');
   assert.match(list, /Honda Civic|Serviço/);
 
@@ -53,6 +57,13 @@ test('agenda: agendar pelo WhatsApp e pelo painel, lista e lembrete 1 hora antes
   assert.match(sent[0].text, /Serviço agendado/);
   await agenda.minuteTick({ ctx });
   assert.equal(sent.length, 1); // só uma vez
+
+  // Começou o serviço agendado: a data dele passa a ser o dia em que pegou o carro.
+  ctx.db.prepare("UPDATE services SET created_at = '2026-01-02T15:00:00.000Z' WHERE id = ?").run(s.id);
+  await chat(ctx, DRIVER_PHONE, `abrir ${ctx.data.services.ref(ctx.data.services.get(s.id), driver)}`);
+  const started = ctx.data.services.get(s.id);
+  assert.equal(started.status, 'aberto');
+  assert.ok(Date.now() - Date.parse(started.created_at) < 60000);
 
   const [off] = await chat(ctx, DRIVER_PHONE, 'agendar cancelar');
   assert.match(off, /tirado/);

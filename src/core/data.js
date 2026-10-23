@@ -174,17 +174,24 @@ export function createCoreData(db, timeZone = 'America/New_York') {
     update(id, fields, by = null) {
       const allowed = ['driver_id', 'contact_id', 'pickup', 'dropoff', 'vehicle', 'plate', 'vin', 'vin_info', 'miles', 'price_cents', 'notes', 'status'];
       const keys = Object.keys(fields).filter((k) => allowed.includes(k));
-      const before = keys.includes('driver_id') ? services.get(id) : null;
+      const before = keys.includes('driver_id') || fields.status ? services.get(id) : null;
       if (keys.length) {
         db.prepare(`UPDATE services SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(
           ...keys.map((k) => fields[k] ?? null),
           id
         );
       }
-      const newDriver = before && (Number(fields.driver_id) || null) !== before.driver_id;
+      const newDriver = keys.includes('driver_id') && before && (Number(fields.driver_id) || null) !== before.driver_id;
       if (newDriver) {
         if (fields.driver_id) giveRef(id, Number(fields.driver_id));
         else db.prepare('UPDATE services SET driver_ref = NULL, driver_ref_day = NULL WHERE id = ?').run(id);
+      }
+      // Serviço agendado: a data dele é o dia em que o motorista começou (pegou o carro),
+      // não o dia em que foi agendado (pedido do Caningado 23/10).
+      if (fields.status === 'aberto' && before?.status === 'pendente' && before.scheduled_at && !before.completed_at) {
+        db.prepare('UPDATE services SET created_at = ? WHERE id = ?').run(nowIso(), id);
+        const driver = Number(fields.driver_id ?? before.driver_id) || null;
+        if (driver && before.driver_ref_day !== today()) giveRef(id, driver);
       }
       if (fields.status === 'concluido') {
         db.prepare('UPDATE services SET completed_at = COALESCE(completed_at, ?) WHERE id = ?').run(nowIso(), id);
