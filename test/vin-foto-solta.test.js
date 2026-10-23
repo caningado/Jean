@@ -38,7 +38,7 @@ test('foto de VIN sem serviço aberto: lê, mostra o carro e põe no próximo se
   assert.match(prompts.at(-1), /Último VIN que ele mandou em foto[^\n]*3C6URVJG2JE139479 \(2018 RAM 2500\)/);
   assert.match(prompts.at(-1), /Lê o VIN de uma foto/);
 
-  const replies = await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'pular', 'sim');
+  const replies = await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'sim');
   assert.match(replies.at(-1), /VIN: 3C6URVJG2JE139479/);
   const service = ctx.db.prepare('SELECT vin, vehicle FROM services').get();
   assert.equal(service.vin, '3C6URVJG2JE139479');

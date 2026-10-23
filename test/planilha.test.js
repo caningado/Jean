@@ -53,9 +53,9 @@ test('mês da planilha no fuso da empresa', () => {
 
 test('painel: baixar a planilha e link automático para o Google Planilhas', async (t) => {
   const ctx = makeContext();
-  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', '12 Main St, Framingham', 'Joe Shop, Worcester', 'Honda Civic ABC1234', '10', 'ok', 'sim');
-  await chat(ctx, DRIVER_PHONE, 'pago 100 zelle', 'gasto 80 diesel');
-  await chat(ctx, OWNER_PHONE, 'novo', '5085550199', 'Ana Lima', 'Rua Alfa 10', 'pular', 'pular', 'pular', '200', 'sim');
+  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', '12 Main St, Framingham', 'Joe Shop, Worcester', 'Honda Civic ABC1234', 'ok', 'sim');
+  await chat(ctx, DRIVER_PHONE, 'pago 60 zelle', 'gasto 80 diesel');
+  await chat(ctx, OWNER_PHONE, 'novo', '5085550199', 'Ana Lima', 'Rua Alfa 10', 'pular', 'pular', '200', 'sim');
 
   const server = createApp(ctx).listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -125,7 +125,7 @@ test('painel: baixar a planilha e link automático para o Google Planilhas', asy
   const csv = await res.text();
   assert.match(csv, /^Nº,Data,Situação,Motorista,Cliente/);
   assert.match(csv, /John Smith,"?\+1 \(508\) 555-0123"?,"12 Main St, Framingham"/);
-  assert.match(csv, /,10,115\.00,2,100\.00,0\.00,15\.00,/); // milhas, valor, fotos, recebido, seguradora, falta
+  assert.match(csv, /,,75\.00,2,60\.00,0\.00,15\.00,/); // milhas, valor, fotos, recebido, seguradora, falta
   assert.match(await (await fetch(link.sheets[2].url.replace(/^https?:\/\/[^/]+/, base))).text(), /80\.00,Combustível/);
 
   // Link errado ou depois de trocar: não funciona.

@@ -65,8 +65,7 @@ test('Robô com Gemini: serviço novo ditado já responde as perguntas e pergunt
   // Telefone novo: o nome entrou sozinho; parou no destino (não foi dito)
   assert.match(r, /Para onde vai \*levar\*/);
   [r] = await chat(ctx, DRIVER_PHONE, 'pular');
-  assert.match(r, /milhas/);
-  await chat(ctx, DRIVER_PHONE, 'pular');
+  assert.match(r, /\*valor\*/); // o Jay não pergunta milhas
   [r] = await chat(ctx, DRIVER_PHONE, '150');
   assert.match(r, /Confere\?[\s\S]*Ana Lima[\s\S]*Honda Civic · ABC1234[\s\S]*\$150\.00/);
   [r] = await chat(ctx, DRIVER_PHONE, 'sim');
@@ -111,20 +110,20 @@ test('Robô com Gemini: no meio do cadastro, fala tudo fora de ordem e ele só p
   const ctx = makeContext({ GEMINI_API_KEY: 'k' });
   const g = fakeGemini(t);
   await chat(ctx, DRIVER_PHONE, 'novo');
-  g.answers.push({ texto: 'Ana Lima', cliente: 'Ana Lima', retirada: '1200 Alafaya Trail, Oviedo', destino: 'Ribas Auto, Orlando', veiculo: 'Honda Civic', valor: 150 });
+  g.answers.push({ texto: 'Ana Lima', cliente: 'Ana Lima', retirada: '1200 Alafaya Trail, Oviedo', destino: 'Ribas Auto, Orlando', veiculo: 'Honda Civic' });
   let r = await ctx.bot.handle({ phone: DRIVER_PHONE, audio: { buffer: Buffer.from('ogg'), mime: 'audio/ogg' } });
   assert.equal(r[0], '🎤 Ouvi: "Ana Lima"');
   assert.match(g.calls[0][1].text, /cadastrando um serviço/);
   assert.match(r.at(-1), /celular|telefone/i); // cliente novo: pede o telefone dela
   [r] = await chat(ctx, DRIVER_PHONE, '4075550123');
-  assert.match(r, /milhas/); // retirada, destino e carro já foram respondidos sozinhos
+  assert.match(r, /\*valor\*/); // retirada, destino e carro já foram respondidos sozinhos
   const data = ctx.bot.getConversation(ctx.bot.findUser(DRIVER_PHONE).id).data;
   assert.equal(data.pickup, '1200 Alafaya Trail, Oviedo');
   assert.equal(data.vehicle, 'Honda Civic');
 
   // Escrito também: frase comprida no meio do cadastro
-  g.answers.push({ texto: 'pular', valor: 200 });
-  [r] = await chat(ctx, DRIVER_PHONE, 'nao sei as milhas mas cobra 200 dolares');
+  g.answers.push({ texto: '200', valor: 200 });
+  [r] = await chat(ctx, DRIVER_PHONE, 'cobra 200 dolares desse cliente');
   assert.match(r, /Confere\?/);
   assert.match(r, /\$200\.00/);
 });

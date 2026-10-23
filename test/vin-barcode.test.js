@@ -39,7 +39,7 @@ test('lê o código de barras de uma etiqueta Toyota de verdade (foto do Caninga
 
 test('foto do VIN pelo WhatsApp é lida sem chave do Claude', async () => {
   const ctx = makeContext();
-  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'pular', 'sim');
+  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'sim');
   const media = { buffer: await barcodePng(VIN, 'Code39'), mime: 'image/png' };
   const [reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: 'vin', media });
   assert.match(reply, new RegExp(`Li o VIN: \\*${VIN}\\*`));
@@ -88,7 +88,7 @@ test('painel: "Ler da foto" lê o código de barras e o leitor do iPhone é serv
 
 test('foto sem legenda com código de barras de VIN: entende que é o VIN, sem perguntar o tipo', async () => {
   const ctx = makeContext();
-  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'pular', 'sim');
+  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'sim');
   const media = { buffer: await barcodePng(VIN, 'Code39'), mime: 'image/png' };
   const [reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media });
   assert.match(reply, new RegExp(`Li o VIN: \\*${VIN}\\*`));
