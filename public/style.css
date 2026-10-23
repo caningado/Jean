@@ -509,3 +509,6 @@ button.chat-mic svg { width: 22px; height: 22px; }
 .list li[hidden] { display: none; }
 .list label.pick { display: flex; align-items: center; padding-right: 8px; }
 .list label.pick input { width: 22px; height: 22px; margin: 0; }
+
+/* Agenda */
+.sched { color: var(--brand); font-weight: 600; font-size: 0.9em; }
