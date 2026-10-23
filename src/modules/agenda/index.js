@@ -81,7 +81,15 @@ export function formatWhen(iso, timeZone) {
 
 function setSchedule(ctx, serviceId, iso) {
   ctx.db.prepare('UPDATE services SET scheduled_at = ?, scheduled_reminded_at = NULL WHERE id = ?').run(iso, serviceId);
-  return ctx.data.services.get(serviceId);
+  const service = ctx.data.services.get(serviceId);
+  // Agendado para depois e já estava em andamento: volta para a fila (do mesmo motorista) até começar,
+  // e a data do serviço passa a ser o dia em que ele começar.
+  if (iso && Date.parse(iso) > Date.now() && service.status === 'aberto') {
+    ctx.data.services.update(serviceId, { status: 'pendente', driver_id: service.driver_id });
+    ctx.db.prepare('UPDATE users SET active_service_id = NULL WHERE active_service_id = ?').run(serviceId);
+    return ctx.data.services.get(serviceId);
+  }
+  return service;
 }
 
 function upcoming(ctx, user) {
@@ -117,8 +125,9 @@ const commands = [
       }
       const iso = parseWhen(text, tz);
       if (!iso) return 'Não entendi o dia/hora. Ex: *agendar amanhã 9h*, *agendar 24/10 14:30*, *agendar sexta 8am*.';
-      setSchedule(ctx, service.id, iso);
-      return `📅 Serviço agendado para *${formatWhen(iso, tz)}*. Aviso 1 hora antes.`;
+      const after = setSchedule(ctx, service.id, iso);
+      const fila = after.status === 'pendente' && service.status === 'aberto' ? ' Ele fica na fila até você começar; a data do serviço será o dia em que começar.' : '';
+      return `📅 Serviço agendado para *${formatWhen(iso, tz)}*. Aviso 1 hora antes.${fila}`;
     },
   },
 ];
