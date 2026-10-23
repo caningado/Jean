@@ -30,7 +30,8 @@ export function loadConfig(overrides = {}) {
     companyName: env.COMPANY_NAME || 'Towing J&J',
     modules: (env.MODULES ? env.MODULES.split(',').map((m) => m.trim()).filter(Boolean) : ALL_MODULES),
     pricing: {
-      baseCents: Math.round(Number(env.PRICE_BASE || 0) * 100),
+      // Valor médio do serviço ($100, Caningado 23/10): é a sugestão quando não há milhas.
+      baseCents: Math.round(Number(env.PRICE_BASE ?? 100) * 100),
       perMileCents: Math.round(Number(env.PRICE_PER_MILE || 0) * 100),
     },
     zelle: {
