@@ -19,16 +19,15 @@ test('motorista registra um serviço completo pelo robô', async () => {
     '12 Main St, Framingham',
     'pular',
     'Honda Civic ABC1234',
-    '10',
     'ok',
     'sim'
   );
   assert.match(replies[0], /telefone/);
   assert.match(replies[1], /Qual o \*nome\* dele/);
-  assert.match(replies[7], /Confere\?/);
-  assert.match(replies[7], /Maria Souza \+1 \(508\) 555-0123 \(novo\)/);
-  assert.match(replies[8], /Serviço #1 criado/);
-  assert.match(replies[8], /\$115\.00/); // 75 + 10 milhas x 4
+  assert.match(replies[6], /Confere\?/);
+  assert.match(replies[6], /Maria Souza \+1 \(508\) 555-0123 \(novo\)/);
+  assert.match(replies[7], /Serviço #1 criado/);
+  assert.match(replies[7], /\$75\.00/); // valor base da tabela (o Jay não pergunta milhas)
 
   const service = ctx.data.services.get(1);
   assert.equal(service.contact_phone, '15085550123');
@@ -36,10 +35,10 @@ test('motorista registra um serviço completo pelo robô', async () => {
   assert.equal(service.dropoff, null);
   assert.equal(service.vehicle, 'Honda Civic');
   assert.equal(service.plate, 'ABC1234');
-  assert.equal(service.price_cents, 11500);
+  assert.equal(service.price_cents, 7500);
 
-  const [paid] = await chat(ctx, DRIVER_PHONE, 'pago 100 zelle');
-  assert.match(paid, /\$100\.00 recebido por Zelle/);
+  const [paid] = await chat(ctx, DRIVER_PHONE, 'pago 60 zelle');
+  assert.match(paid, /\$60\.00 recebido por Zelle/);
   assert.match(paid, /falta \$15\.00/);
 
   const [charge] = await chat(ctx, DRIVER_PHONE, 'cobrar');
@@ -59,9 +58,9 @@ test('motorista registra um serviço completo pelo robô', async () => {
 test('cliente pelo nome, erro de valor e cancelar', async () => {
   const ctx = makeContext({ PRICE_BASE: '0', PRICE_PER_MILE: '0' });
   ctx.data.contacts.create({ name: 'Maria Souza', phone: '5085550144' });
-  const replies = await chat(ctx, DRIVER_PHONE, 'novo', 'maria', 'Rua Alfa 10', 'Rua Beta 20', 'pular', 'pular', 'abc');
+  const replies = await chat(ctx, DRIVER_PHONE, 'novo', 'maria', 'Rua Alfa 10', 'Rua Beta 20', 'pular', 'abc');
   assert.match(replies[1], /retirada|pegar/);
-  assert.match(replies[6], /Mande só o valor/);
+  assert.match(replies[5], /Mande só o valor/);
   const [cancel] = await chat(ctx, DRIVER_PHONE, 'cancelar');
   assert.match(cancel, /cancelado/);
   assert.equal(ctx.data.services.list().length, 0);
@@ -70,7 +69,7 @@ test('cliente pelo nome, erro de valor e cancelar', async () => {
 
 test('seguradora fica a receber e despesas entram no resumo', async () => {
   const ctx = makeContext();
-  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'I-95 exit 12', 'Joe Shop', 'pular', 'pular', '200', 'sim');
+  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'I-95 exit 12', 'Joe Shop', 'pular', '200', 'sim');
   const [aaa] = await chat(ctx, DRIVER_PHONE, 'pago 200 aaa');
   assert.match(aaa, /a receber de AAA/);
   await chat(ctx, DRIVER_PHONE, 'gasto 80 diesel', 'gasto $12.50 pedágio');
@@ -88,7 +87,7 @@ test('seguradora fica a receber e despesas entram no resumo', async () => {
 
 test('fotos sem legenda perguntam o tipo e as seguintes seguem o mesmo tipo', async () => {
   const ctx = makeContext();
-  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'pular', 'sim');
+  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'sim');
   const media = { buffer: Buffer.from([0xff, 0xd8, 0xff]), mime: 'image/jpeg' };
 
   const [first] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media });
@@ -115,7 +114,7 @@ test('fotos sem legenda perguntam o tipo e as seguintes seguem o mesmo tipo', as
 
 test('fotos da volta no carro: ordem, legenda com o lado e detalhe', async () => {
   const ctx = makeContext();
-  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'pular', 'sim');
+  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'sim');
   const media = { buffer: Buffer.from([0xff, 0xd8, 0xff]), mime: 'image/jpeg' };
   const [start] = await chat(ctx, DRIVER_PHONE, 'antes');
   assert.match(start, /1\. frente\n2\. lateral esquerda \(motorista\)\n3\. traseira\n4\. lateral direita/);
@@ -157,9 +156,6 @@ test('o robô recusa respostas sem sentido e repete a pergunta', async () => {
     'pular',
     'x',
     'Ford F150',
-    '-5',
-    '20000 milhas',
-    '15',
     '99999',
     'cento e oitenta',
     '180',
@@ -175,20 +171,18 @@ test('o robô recusa respostas sem sentido e repete a pergunta', async () => {
   assert.match(r[7], /no meio do cadastro/);
   assert.match(r[9], /O destino parece incompleto/);
   assert.match(r[11], /marca e o modelo/);
-  assert.match(r[13], /Milhas inválidas/);
-  assert.match(r[14], /Milhas inválidas/);
-  assert.match(r[16], /alto demais/);
-  assert.match(r[17], /Mande só o valor em dólar/);
-  assert.match(r[18], /Confere\?/);
-  assert.match(r[19], /Mande \*sim\* para salvar/);
-  assert.match(r[20], /Serviço #1 criado/);
+  assert.match(r[13], /alto demais/);
+  assert.match(r[14], /Mande só o valor em dólar/);
+  assert.match(r[15], /Confere\?/);
+  assert.match(r[16], /Mande \*sim\* para salvar/);
+  assert.match(r[17], /Serviço #1 criado/);
 
   const s = ctx.data.services.get(1);
   assert.equal(s.contact_name, 'Carlos Lima');
   assert.equal(s.contact_phone, '15085550199');
   assert.equal(s.dropoff, null);
   assert.equal(s.vehicle, 'Ford F150');
-  assert.equal(s.miles, 15);
+  assert.equal(s.miles, null);
   assert.equal(s.price_cents, 18000);
 
   const [tooMuch] = await chat(ctx, DRIVER_PHONE, 'pago 900000 zelle');
@@ -201,7 +195,7 @@ test('duas Marias: o robô pergunta qual é', async () => {
   const ctx = makeContext({ PRICE_BASE: '0', PRICE_PER_MILE: '0' });
   ctx.data.contacts.create({ name: 'Maria Souza', phone: '5085550144' });
   ctx.data.contacts.create({ name: 'Maria Lima', phone: '5085550155' });
-  const r = await chat(ctx, DRIVER_PHONE, 'novo', 'maria', '7', '2', '12 Main St', 'pular', 'pular', 'pular', 'pular', 'sim');
+  const r = await chat(ctx, DRIVER_PHONE, 'novo', 'maria', '7', '2', '12 Main St', 'pular', 'pular', 'pular', 'sim');
   assert.match(r[1], /mais de um cliente/);
   assert.match(r[1], /\*1\* Maria Lima/);
   assert.match(r[1], /\*2\* Maria Souza/);
@@ -210,7 +204,7 @@ test('duas Marias: o robô pergunta qual é', async () => {
   assert.equal(ctx.data.services.get(1).contact_name, 'Maria Souza');
 
   // 0 = cliente novo com o mesmo nome
-  const n = await chat(ctx, DRIVER_PHONE, 'novo', 'Maria', '0', '5085550166', '1 Oak St', 'pular', 'pular', 'pular', 'pular', 'sim');
+  const n = await chat(ctx, DRIVER_PHONE, 'novo', 'Maria', '0', '5085550166', '1 Oak St', 'pular', 'pular', 'pular', 'sim');
   assert.match(n[2], /Cliente novo: \*Maria\*/);
   assert.equal(ctx.data.services.get(2).contact_phone, '15085550166');
   assert.equal(ctx.data.contacts.search('maria').length, 3);

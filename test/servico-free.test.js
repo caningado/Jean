@@ -15,7 +15,7 @@ test('valor do serviço aceita free, grátis e 0; outros valores continuam confe
 
 test('robô: serviço free pelo WhatsApp', async () => {
   const ctx = makeContext({ PRICE_BASE: '', PRICE_PER_MILE: '' });
-  const replies = await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'free', 'sim');
+  const replies = await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'free', 'sim');
   assert.match(replies.at(-2), /Valor: Free \(\$0\)/);
   assert.match(replies.at(-1), /criado/);
   assert.equal(ctx.db.prepare('SELECT price_cents FROM services').get().price_cents, 0);

@@ -59,7 +59,7 @@ test('gate pass em PDF pelo WhatsApp: lê, abre o serviço e o PDF fica anexado'
 test('PDF do mesmo carro com o serviço aberto: fica anexado nele', async (t) => {
   const ctx = makeContext({ GEMINI_API_KEY: 'k' });
   fakeGemini(t, CARMAX);
-  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'pular', 'sim');
+  await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'sim');
   const [reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, doc: { buffer: PDF, mime: 'application/pdf', name: 'gate.pdf' } });
   assert.match(reply, /Documento guardado no serviço #1\. VIN 1C6RR6TT7LS111070 salvo/);
   assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM service_docs WHERE service_id = 1').get().n, 1);

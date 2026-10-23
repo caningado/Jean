@@ -496,6 +496,8 @@ const flows = {
       {
         key: 'miles',
         optional: true,
+        // O Jay não pergunta as milhas (pedido do Caningado 23/10); se vierem no pedido, ficam.
+        skip: () => true,
         ask: () => 'Quantas *milhas*? (ou *pular*)',
         parse: (text) => checkMiles(text.replace(/mi(les|lhas)?/i, '')),
       },
@@ -527,6 +529,7 @@ const flows = {
     async finish({ ctx, user, data }) {
       // O contato novo só é criado aqui, depois da confirmação.
       const client = data.client;
+      const owner = user.role === 'dono';
       const contactId = client.id
         ? client.id
         : ctx.data.contacts.findOrCreate({ phone: client.phone || null, name: client.name, source: 'whatsapp' }).id;
@@ -539,7 +542,9 @@ const flows = {
         plate,
         miles: data.miles,
         price_cents: data.price_cents,
-        driver_id: user.id,
+        // ADM pedindo serviço novo: entra na lista sem motorista (pedido do Caningado 23/10).
+        driver_id: owner ? null : user.id,
+        status: owner ? 'pendente' : 'aberto',
       }, user.id);
       ctx.data.services.setActive(user.id, service.id);
       // VIN lido de uma foto antes de abrir o serviço.
@@ -552,6 +557,7 @@ const flows = {
         fs.rmSync(data._doc.file, { force: true });
       }
       const hints = ctx.serviceHints.length ? '\n\n' + ctx.serviceHints.join('\n') : '';
+      if (owner) return `✅ Serviço #${ctx.data.services.ref(service, user)} criado, na lista *sem motorista*.\n\n${ctx.data.services.describe(service, user)}\n\nPara passar a um motorista, abra o serviço no painel e escolha o motorista.`;
       return `✅ Serviço #${ctx.data.services.ref(service, user)} criado.\n\n${ctx.data.services.describe(service, user)}${hints}\nQuando entregar, mande *entregue*.`;
     },
   },

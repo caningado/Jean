@@ -193,7 +193,7 @@ test('só na Flórida: Census filtra o estado e tenta de novo com FL; mapa abert
 
 test('robô: endereço sem cidade achado no mapa pede confirmação, e dá para digitar outro', async () => {
   const ctx = fakeGeo(makeContext({ PRICE_BASE: '0', PRICE_PER_MILE: '0' }));
-  const r = await chat(ctx, DRIVER_PHONE, 'novo', 'John Smith', 'pular', '3241 Bella vista Dr', '12 main st framingham', 'pular', 'pular', 'pular', 'pular', 'sim');
+  const r = await chat(ctx, DRIVER_PHONE, 'novo', 'John Smith', 'pular', '3241 Bella vista Dr', '12 main st framingham', 'pular', 'pular', 'pular', 'sim');
   assert.match(r[3], /Achei no mapa: \*3241 Bella Vista Dr, Kissimmee, FL 34746\*\nÉ esse\? Mande \*1\*/);
   assert.match(r[4], /Achei no mapa: \*12 Main St, Framingham, MA 01701\*/); // digitou outro, com cidade: aceita
   assert.equal(ctx.data.services.get(1).pickup, '12 Main St, Framingham, MA 01701');

@@ -84,5 +84,6 @@ test('mensagens encaminhadas juntas (endereços, carro, valor e cartão de conta
   const all = client.sent.map((m) => m.body).join('\n');
   assert.doesNotMatch(all, /Não entendi/);
   assert.match(all, /Novo serviço\. Entendi:\nCliente: Moita[\s\S]*Carro: Kia Optima\nValor: \$180/);
-  assert.match(all, /Quantas \*milhas\*/); // só pergunta o que falta
+  assert.doesNotMatch(all, /milhas/); // o Jay não pergunta milhas
+  assert.match(all, /Confere\?/);
 });
