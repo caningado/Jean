@@ -473,9 +473,11 @@ screens.servicos = async (params) => {
   // Fila: serviços pendentes, que ainda não têm motorista trabalhando.
   // Só o dono vê a fila: é ele quem escolhe o motorista.
   const fila = state.me.role === 'dono' ? await api('/services?status=pendente').catch(() => []) : [];
+  // Motorista: aba Pendentes com os serviços agendados para ele (ainda não começados).
+  const agendados = state.me.role !== 'dono' && has('agenda') ? (await api('/services?status=pendente').catch(() => [])).filter((s) => s.scheduled_at) : [];
   view.innerHTML = `
     <div class="segmented">
-      ${state.me.role === 'dono' ? `<button data-s="pendente">Pendentes${fila.length ? ` <span class="badge pendente">${fila.length}</span>` : ''}</button>` : ''}<button data-s="aberto">Andamento</button><button data-s="concluido">Entregues</button>${state.me.role === 'dono' ? '<button data-s="">Todos</button>' : ''}
+      ${state.me.role === 'dono' ? `<button data-s="pendente">Pendentes${fila.length ? ` <span class="badge pendente">${fila.length}</span>` : ''}</button>` : has('agenda') ? `<button data-s="pendente">Pendentes${agendados.length ? ` <span class="badge pendente">${agendados.length}</span>` : ''}</button>` : ''}<button data-s="aberto">Andamento</button><button data-s="concluido">Entregues</button>${state.me.role === 'dono' ? '<button data-s="">Todos</button>' : ''}
     </div>
     ${periodo ? `<div class="segmented periodo">${[['dia', 'Hoje'], ['semana', 'Semana'], ['mes', 'Mês']].map(([p, l]) => `<button data-p="${p}" class="${p === periodo ? 'active' : ''}">${l}</button>`).join('')}</div>` : ''}
     ${drivers.length > 1 ? `<select id="driver" aria-label="Motorista"><option value="">Todos os motoristas</option>${drivers.map((d) => `<option value="${d.id}" ${String(d.id) === driver ? 'selected' : ''}>${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select>` : ''}
@@ -496,12 +498,14 @@ screens.servicos = async (params) => {
     view.innerHTML = `<div class="card"><h2>🚫 Lista suspensa</h2><p>${esc(err.message)}</p><a class="btn block" href="#/caminhoes">📏 Mandar a milhagem</a></div>`;
     return;
   }
+  // Pendentes do motorista: só os agendados (os da fila dele já aparecem no Andamento), do mais cedo para o mais tarde.
+  if (state.me.role !== 'dono' && status === 'pendente') list = list.filter((s) => s.scheduled_at).sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));
   // Motorista: os dele em ordem do número do dia (dia mais recente primeiro, depois 1, 2, 3...).
-  if (state.me.role !== 'dono') {
+  else if (state.me.role !== 'dono') {
     const day = (s) => (s.driver_seq ? s.driver_ref_day : '') || '';
     list.sort((a, b) => day(b).localeCompare(day(a)) || (a.driver_seq || 1e9) - (b.driver_seq || 1e9) || b.id - a.id);
   }
-  const empty = status === 'pendente' ? 'Nenhum serviço na fila. 👍' : (status === 'concluido'
+  const empty = status === 'pendente' ? (state.me.role === 'dono' ? 'Nenhum serviço na fila. 👍' : 'Nenhum serviço agendado para você.') : (status === 'concluido'
         ? { dia: 'Nenhum serviço entregue hoje.', semana: 'Nenhum serviço entregue nesta semana.', mes: 'Nenhum serviço entregue neste mês.' }
         : { dia: 'Nenhum serviço hoje.', semana: 'Nenhum serviço nesta semana.', mes: 'Nenhum serviço neste mês.' })[periodo] || 'Nenhum serviço aqui.';
   if (status === 'aberto' && fila.length) {

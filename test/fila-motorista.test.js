@@ -33,6 +33,8 @@ test('fila do motorista: ele escolhe qual começa, no máximo 2 em andamento', a
   assert.equal((await call('PUT', `/services/${ids[1]}/agenda`, { scheduled_at: amanha })).status, 200);
   assert.deepEqual((await call('GET', '/services?status=aberto', null, drv)).body.map((s) => s.id).sort(), [ids[0], ids[2]].sort());
   assert.deepEqual((await call('GET', '/services?status=pendente')).body.map((s) => s.id), [ids[1]]);
+  // O motorista recebe o agendado (com scheduled_at) para a aba Pendentes dele.
+  assert.ok((await call('GET', '/services?status=pendente', null, drv)).body.find((s) => s.id === ids[1]).scheduled_at);
   await call('PUT', `/services/${ids[1]}/agenda`, { scheduled_at: '' });
   // Começa dois (painel e WhatsApp); o terceiro é recusado.
   assert.equal((await call('PATCH', `/services/${ids[2]}`, { status: 'aberto' }, drv)).status, 200);
