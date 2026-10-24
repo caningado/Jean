@@ -28,6 +28,12 @@ test('fila do motorista: ele escolhe qual começa, no máximo 2 em andamento', a
   // Na lista "Andamento" eles aparecem (Aguardando); o "Pendentes" do dono é só o que está sem motorista.
   assert.deepEqual((await call('GET', '/services?status=aberto', null, drv)).body.map((s) => s.id).sort(), [...ids].sort());
   assert.equal((await call('GET', '/services?status=pendente')).body.length, 0);
+  // Agendado: sai do "Andamento" e fica em "Pendentes" até o motorista começar.
+  const amanha = new Date(Date.now() + 86400000).toISOString().slice(0, 16);
+  assert.equal((await call('PUT', `/services/${ids[1]}/agenda`, { scheduled_at: amanha })).status, 200);
+  assert.deepEqual((await call('GET', '/services?status=aberto', null, drv)).body.map((s) => s.id).sort(), [ids[0], ids[2]].sort());
+  assert.deepEqual((await call('GET', '/services?status=pendente')).body.map((s) => s.id), [ids[1]]);
+  await call('PUT', `/services/${ids[1]}/agenda`, { scheduled_at: '' });
   // Começa dois (painel e WhatsApp); o terceiro é recusado.
   assert.equal((await call('PATCH', `/services/${ids[2]}`, { status: 'aberto' }, drv)).status, 200);
   assert.match((await chat(ctx, DRIVER_PHONE, `abrir ${ids[0]}`))[0], /agora estou no serviço/);

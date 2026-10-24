@@ -108,6 +108,9 @@ export function createCoreData(db, timeZone = 'America/New_York') {
     }
   }
 
+  // A coluna scheduled_at só existe com o módulo agenda ligado.
+  const hasScheduled = () => !!db.prepare("SELECT 1 FROM pragma_table_info('services') WHERE name = 'scheduled_at'").get();
+
   const services = {
     onEvent(fn) {
       listeners.push(fn);
@@ -118,13 +121,15 @@ export function createCoreData(db, timeZone = 'America/New_York') {
     list({ status, driverId, contactId, since, doneSince, hideCancelled = false, withQueue = false, noDriver = false, limit = 100 } = {}) {
       const where = [];
       const params = [];
+      // Agendado que ainda não começou fica em Pendentes, mesmo já tendo motorista (pedido do Caningado 24/10).
+      const sched = hasScheduled();
       // withQueue: "em andamento" + os que estão na fila de um motorista (aguardando ele começar).
-      if (status === 'aberto' && withQueue) where.push("(s.status = 'aberto' OR (s.status = 'pendente' AND s.driver_id IS NOT NULL))");
+      if (status === 'aberto' && withQueue) where.push(`(s.status = 'aberto' OR (s.status = 'pendente' AND s.driver_id IS NOT NULL${sched ? ' AND s.scheduled_at IS NULL' : ''}))`);
       else if (status) {
         where.push('s.status = ?');
         params.push(status);
       }
-      if (noDriver) where.push('s.driver_id IS NULL');
+      if (noDriver) where.push(sched ? '(s.driver_id IS NULL OR s.scheduled_at IS NOT NULL)' : 's.driver_id IS NULL');
       if (hideCancelled) where.push("s.status <> 'cancelado'");
       if (driverId) {
         where.push('s.driver_id = ?');
