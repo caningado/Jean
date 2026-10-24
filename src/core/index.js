@@ -1135,7 +1135,9 @@ function routes(api, ctx) {
            AND ((s.created_at >= ? AND s.created_at < ?) OR (s.completed_at >= ? AND s.completed_at < ?))
          ORDER BY s.created_at, s.id`
       )
-      .all(start, end, start, end);
+      .all(start, end, start, end)
+      // Agendado que ainda não começou não entra: só conta no dia em que o motorista pegar o carro.
+      .filter((s) => !s.scheduled_at || s.status === 'concluido' || (s.status !== 'pendente' && s.scheduled_at < end));
     const pag = ctx.api.pagamentos;
     const methodsOf = db.prepare('SELECT DISTINCT method, payer FROM payments WHERE service_id = ?');
     const services = rows.map((s) => {

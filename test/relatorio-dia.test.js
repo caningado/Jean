@@ -23,6 +23,10 @@ test('Relatório do dia: serviços do dia, sem cancelados, com pago e a receber'
   await json('PATCH', `/services/${cancelado.id}`, { status: 'cancelado', motivo: 'desistiu' });
   ctx.db.prepare('UPDATE services SET created_at = ? WHERE id = ?').run(new Date(Date.now() - 3 * 86400000).toISOString(), ontem.id);
 
+  // Agendado que ainda não começou não entra no relatório do dia.
+  const agendado = await json('POST', '/services', { contact_name: 'Eva', pickup: '12 Main St, Orlando FL', price: '120' });
+  await json('PUT', `/services/${agendado.id}/agenda`, { scheduled_at: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 16) });
+
   const r = await json('GET', '/relatorio/dia');
   const jj = r.reports.find((x) => x.firm === 'jj');
   assert.deepEqual(r.reports.map((x) => x.firm), ['jj', 'vip']);
