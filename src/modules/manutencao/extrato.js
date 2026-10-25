@@ -1,6 +1,7 @@
 // Extrato mensal do caminhão em PDF (para o dono, em português): despesas, milhas e manutenção.
 import { startDoc, drawLetterhead, drawFooter, sectionLabel, usd, amount, RED, DARK, GRAY, LINE, SOFT } from '../invoice/pdf.js';
 import { CATEGORIES } from '../despesas/index.js';
+import { withTires } from './pneus.js';
 
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 const mesNome = (mes) => `${MESES[Number(mes.slice(5, 7)) - 1]} de ${mes.slice(0, 4)}`;
@@ -117,7 +118,7 @@ export function renderTruckMonth({ company, logo, data }) {
     for (const m of data.maintenance) {
       need(18);
       doc.font('Helvetica').fontSize(9.5).fillColor(DARK)
-        .text(`${dia(m.done_at)}  ·  ${m.item_name}${m.miles != null ? `  ·  ${milhas(m.miles)}` : ''}${m.user_name ? `  ·  ${m.user_name}` : ''}`, L, y, { width: W, lineBreak: false });
+        .text(`${dia(m.done_at)}  ·  ${withTires(m)}${m.miles != null ? `  ·  ${milhas(m.miles)}` : ''}${m.user_name ? `  ·  ${m.user_name}` : ''}`, L, y, { width: W, lineBreak: false });
       y += 16;
     }
   }

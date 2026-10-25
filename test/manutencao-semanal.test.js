@@ -179,3 +179,17 @@ test('relatório da semana passada (sábado a sexta) chega para o dono no sábad
   assert.equal((await fetch(`${base}${link}`)).status, 200);
   assert.equal((await fetch(`${base}/frota/errado/2026-10-05.pdf`)).status, 404);
 });
+
+test('troca de pneu: guarda quais pneus (desenho do guincho) e põe na despesa', async (t) => {
+  const { ctx, call, driver } = await start(t);
+  const { body: truck } = await call('POST', '/trucks', { name: 'F-550', odometer: 100000, driver_id: driver.id });
+  const bad = await call('POST', `/trucks/${truck.id}/services`, { name: 'Troca de pneu', tires: ['xx'] });
+  assert.equal(bad.status, 400);
+  const r = await call('POST', `/trucks/${truck.id}/services`, { name: 'Troca de pneu', tires: ['tdf', 'de', 'tdf'], cost: '320' });
+  assert.equal(r.status, 201);
+  assert.equal(r.body.log.tires, 'de,tdf');
+  const exp = ctx.db.prepare('SELECT description FROM expenses').get();
+  assert.equal(exp.description, 'Troca de pneu: Dianteiro esquerdo, Traseiro direito de fora');
+  const log = await call('GET', `/trucks/${truck.id}/log`);
+  assert.equal(log.body[0].tires, 'de,tdf');
+});

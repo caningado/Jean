@@ -2160,6 +2160,39 @@ screens.caminhoes = async () => {
   });
 };
 
+// Desenho do guincho visto de cima (frente para cima), com os 6 pneus (rodado duplo atrás).
+// Tocar num pneu marca/desmarca; no histórico mostra pequeno, só para ver.
+const TIRES = {
+  de: 'Dianteiro esquerdo',
+  dd: 'Dianteiro direito',
+  tef: 'Traseiro esquerdo de fora',
+  tei: 'Traseiro esquerdo de dentro',
+  tdi: 'Traseiro direito de dentro',
+  tdf: 'Traseiro direito de fora',
+};
+const TIRE_BOX = { de: [22, 62], dd: [160, 62], tef: [8, 262], tei: [36, 262], tdi: [146, 262], tdf: [174, 262] };
+function truckTires(selected = [], small = false) {
+  const on = new Set(selected);
+  const tire = (k) => {
+    const [x, y] = TIRE_BOX[k];
+    return `<g class="tire${on.has(k) ? ' on' : ''}" data-tire="${k}"${small ? '' : ` role="button" aria-label="${TIRES[k]}"`}>
+      <rect x="${x - 4}" y="${y - 6}" width="34" height="68" fill="transparent"/>
+      <rect class="tread" x="${x}" y="${y}" width="26" height="56" rx="7"/>
+      ${small ? '' : `<path d="M${x + 5} ${y + 12}h16M${x + 5} ${y + 22}h16M${x + 5} ${y + 32}h16M${x + 5} ${y + 42}h16" class="grooves"/>`}
+    </g>`;
+  };
+  return `<svg class="truck-tires${small ? ' small' : ''}" viewBox="0 0 208 360" xmlns="http://www.w3.org/2000/svg">
+    ${small ? '' : '<text x="104" y="12" class="lbl">FRENTE</text><text x="18" y="214" class="lbl">ESQ.</text><text x="190" y="214" class="lbl">DIR.</text>'}
+    <rect class="body" x="52" y="22" width="104" height="44" rx="16"/>
+    <rect class="body" x="48" y="58" width="112" height="92" rx="12"/>
+    <rect class="glass" x="60" y="70" width="88" height="22" rx="5"/>
+    <rect class="body bed" x="40" y="156" width="128" height="190" rx="6"/>
+    <path class="bedline" d="M58 172v158M80 172v158M104 172v158M128 172v158M150 172v158"/>
+    <rect class="axle" x="48" y="86" width="112" height="4"/><rect class="axle" x="34" y="286" width="140" height="6"/>
+    ${Object.keys(TIRES).map(tire).join('')}
+  </svg>`;
+}
+
 // Registrar serviço do caminhão (óleo, freio...) com a próxima troca, e o histórico.
 screens.manutencao = async (params, id) => {
   setScreen('Registrar serviço', { tab: 'mais', back: '#/caminhoes' });
@@ -2173,8 +2206,9 @@ screens.manutencao = async (params, id) => {
   view.innerHTML = `<form class="card" id="f">
       <h2>🚛 ${esc(truck.name)}</h2><p class="sub">Agora: ${miles(truck.odometer)}</p>
       <label>O que foi feito</label>
-      <select name="item_id">${truck.items.map((i) => `<option value="${i.id}"${String(i.id) === pre ? ' selected' : ''}>${esc(i.name)}</option>`).join('')}<option value="">Outro…</option></select>
+      <select name="item_id">${truck.items.map((i) => `<option value="${i.id}"${String(i.id) === pre ? ' selected' : ''}>${esc(i.name)}</option>`).join('')}<option value="pneu"${pre === 'pneu' ? ' selected' : ''}>🛞 Troca de pneu</option><option value="">Outro…</option></select>
       <div class="outro" hidden><label>Qual serviço?</label><input name="name" placeholder="Bateria, correia, alinhamento…"></div>
+      <div class="pneus" hidden><label>Toque no pneu que foi trocado</label>${truckTires()}<p class="sub tires-picked">Nenhum pneu marcado.</p></div>
       <div class="row2"><div><label>Data</label><input type="date" name="date" value="${today}" max="${today}"></div>
         <div><label>Milhas no dia</label><input name="miles" inputmode="numeric" value="${truck.odometer}"></div></div>
       <div class="row2"><div><label>Valor ($)</label><input name="cost" inputmode="decimal" placeholder="opcional"></div>
@@ -2189,7 +2223,8 @@ screens.manutencao = async (params, id) => {
     <div class="card" id="historico"><h2>Histórico</h2>${log.length ? `<ul class="list">${log
       .map(
         (l) => `<li><div class="row"><div><strong>${esc(l.item_name)}</strong>
-          <div class="sub">${new Date(l.done_at).toLocaleDateString('pt-BR')} · ${miles(l.miles)}${l.shop ? ` · ${esc(l.shop)}` : ''}${l.user_name ? ` · ${esc(l.user_name)}` : ''}${l.notes ? ` · ${esc(l.notes)}` : ''}</div></div>
+          <div class="sub">${new Date(l.done_at).toLocaleDateString('pt-BR')} · ${miles(l.miles)}${l.shop ? ` · ${esc(l.shop)}` : ''}${l.user_name ? ` · ${esc(l.user_name)}` : ''}${l.notes ? ` · ${esc(l.notes)}` : ''}</div>
+          ${l.tires ? `<div class="tires-log">${truckTires(l.tires.split(','), true)}<span class="sub">${l.tires.split(',').map((t) => TIRES[t]).filter(Boolean).join('<br>')}</span></div>` : ''}</div>
           <div class="right">${l.cost_cents ? money(l.cost_cents) : ''}${owner ? `<button class="link small" data-del="${l.id}">Apagar</button>` : ''}</div></div></li>`
       )
       .join('')}</ul>` : '<p class="sub">Nenhum serviço registrado ainda.</p>'}</div>`;
@@ -2198,9 +2233,21 @@ screens.manutencao = async (params, id) => {
   // Preenche a próxima troca pelo intervalo do item, até a pessoa mexer no campo.
   const touched = new Set();
   ['next_miles', 'next_date'].forEach((n) => f[n].addEventListener('input', () => touched.add(n)));
+  const tires = new Set();
+  const pneus = f.querySelector('.pneus');
+  pneus.querySelectorAll('[data-tire]').forEach((g) => {
+    g.onclick = () => {
+      const k = g.dataset.tire;
+      tires.has(k) ? tires.delete(k) : tires.add(k);
+      g.classList.toggle('on', tires.has(k));
+      pneus.querySelector('.tires-picked').innerHTML = tires.size ? Object.keys(TIRES).filter((t) => tires.has(t)).map((t) => `✅ ${TIRES[t]}`).join('<br>') : 'Nenhum pneu marcado.';
+    };
+  });
   const fill = () => {
+    const isTire = f.item_id.value === 'pneu';
     const item = truck.items.find((i) => String(i.id) === f.item_id.value);
-    f.querySelector('.outro').hidden = Boolean(item);
+    f.querySelector('.outro').hidden = Boolean(item) || isTire;
+    pneus.hidden = !isTire;
     const m = Number(String(f.miles.value).replace(/[^\d]/g, '')) || truck.odometer;
     if (!touched.has('next_miles')) f.next_miles.value = item?.every_miles ? m + item.every_miles : '';
     if (!touched.has('next_date')) {
@@ -2216,7 +2263,12 @@ screens.manutencao = async (params, id) => {
   f.onsubmit = async (e) => {
     e.preventDefault();
     try {
-      const r = await api(`/trucks/${id}/services`, { method: 'POST', body: formData(f) });
+      const body = formData(f);
+      if (body.item_id === 'pneu') {
+        if (!tires.size) return toast('Toque no pneu que foi trocado.');
+        Object.assign(body, { item_id: '', name: 'Troca de pneu', tires: [...tires] });
+      }
+      const r = await api(`/trucks/${id}/services`, { method: 'POST', body });
       toast(`${r.log.item_name} registrado ✅`);
       location.hash = '#/caminhoes';
     } catch (err) {
