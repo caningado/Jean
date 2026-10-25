@@ -1991,7 +1991,7 @@ screens.caminhoes = async () => {
   const every = (i) => [i.every_miles ? `a cada ${miles(i.every_miles)}` : '', i.every_days ? `a cada ${i.every_days} dias` : ''].filter(Boolean).join(' ou ');
   const today = new Intl.DateTimeFormat('en-CA').format(new Date());
   view.innerHTML = `${owner && trucks.length ? `<div class="card" id="semana"><h2>📊 Relatório da semana</h2>
-      <p class="sub">Toda segunda de manhã o relatório da semana passada chega no seu WhatsApp. Para ver outra semana, escolha um dia dela.</p>
+      <p class="sub">Todo sábado de manhã o relatório da semana passada (sábado a sexta) chega no seu WhatsApp. Para ver outra semana, escolha um dia dela.</p>
       <div class="copyrow"><input type="date" class="dia" value="${today}" max="${today}"><a class="btn secondary" target="_blank" rel="noopener">📄 Ver relatório</a></div>
       <p class="sub week-sum"></p></div>` : ''}
     ${trucks

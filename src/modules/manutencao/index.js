@@ -82,9 +82,10 @@ const migrations = [
      PRIMARY KEY (driver_id, week)
    );`,
 ];
-// Cobrança: começa na sexta na hora do aviso da manhã, repete de hora em hora 3 vezes;
+// A semana vai de sábado a sexta (pedido do Caningado 25/10).
+// Cobrança: na sexta (último dia da semana) na hora do aviso da manhã, repete de hora em hora 3 vezes;
 // sem resposta, suspende a lista de serviços do motorista até ele mandar a milhagem.
-const CHASE_DAYS = [5, 6, 0];
+const CHASE_DAYS = [5];
 const CHASE_TIMES = 3;
 const HOUR = 3600000;
 
@@ -178,7 +179,7 @@ function setOdometer(ctx, truck, miles, userId = null) {
 const localDay = (ctx, d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: ctx.config.timeZone }).format(d);
 const addDays = (day, n) => new Date(Date.parse(`${day}T12:00:00Z`) + n * DAY).toISOString().slice(0, 10);
 const weekday = (day) => new Date(`${day}T12:00:00Z`).getUTCDay(); // 0 = domingo
-const mondayOf = (day) => addDays(day, -((weekday(day) + 6) % 7));
+const saturdayOf = (day) => addDays(day, -((weekday(day) + 1) % 7));
 const dayStart = (ctx, day) => {
   const [y, m, d] = day.split('-').map(Number);
   return zonedMidnight(y, m, d, ctx.config.timeZone);
@@ -520,7 +521,7 @@ function routes(api, ctx) {
     res.json({ ok: true });
   });
 
-  // Relatório da semana (segunda a domingo) de todos os caminhões.
+  // Relatório da semana (sábado a sexta) de todos os caminhões.
   api.get('/frota/semana', (req, res) => {
     if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM vê o relatório.');
     res.json(weekReport(ctx, String(req.query.dia || '')));
@@ -613,9 +614,9 @@ const getSetting = (ctx, key) => ctx.db.prepare('SELECT value FROM settings WHER
 const setSetting = (ctx, key, value) =>
   ctx.db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 
-// Semana (segunda a domingo) que contém o dia. Sem dia = esta semana.
+// Semana (sábado a sexta) que contém o dia. Sem dia = esta semana.
 export function weekReport(ctx, day = '') {
-  const start = mondayOf(isDay(day) ? day : localDay(ctx));
+  const start = saturdayOf(isDay(day) ? day : localDay(ctx));
   const end = addDays(start, 6);
   const from = dayStart(ctx, start);
   const to = dayStart(ctx, addDays(start, 7));
@@ -718,9 +719,9 @@ export function weekText(data, link = null) {
 }
 
 // Roda uma vez por dia junto com o aviso da manhã.
-// Segunda (ou o primeiro dia depois, se o servidor estava parado): relatório da semana passada para o dono.
+// Sábado (ou o primeiro dia depois, se o servidor estava parado): relatório da semana passada para o dono.
 async function daily({ ctx, day }) {
-  const monday = mondayOf(day);
+  const saturday = saturdayOf(day);
   const trucks = listTrucks(ctx);
   if (!trucks.length) return;
   const send = async (phone, text) => {
@@ -731,7 +732,7 @@ async function daily({ ctx, day }) {
     }
   };
 
-  const lastWeek = addDays(monday, -7);
+  const lastWeek = addDays(saturday, -7);
   if (getSetting(ctx, 'frota_relatorio') !== lastWeek) {
     setSetting(ctx, 'frota_relatorio', lastWeek);
     const text = weekText(weekReport(ctx, lastWeek), weekLink(ctx, lastWeek));
@@ -770,7 +771,7 @@ async function tick({ ctx, now = new Date() }) {
   const day = localDay(ctx, now);
   const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: ctx.config.timeZone, hour: '2-digit', hourCycle: 'h23' }).format(now));
   if (!CHASE_DAYS.includes(weekday(day)) || hour < hour0) return;
-  const week = mondayOf(day);
+  const week = saturdayOf(day);
   const drivers = ctx.db
     .prepare('SELECT DISTINCT u.* FROM users u JOIN trucks t ON t.driver_id = u.id AND t.active = 1 WHERE u.active = 1')
     .all();
