@@ -923,7 +923,10 @@ screens.servico = async (params, id) => {
     <div class="card">
       <h2>Fotos</h2>
       ${photoGroups(s.photos || [])}
+      ${s.photos?.length ? `<div class="share-bar" hidden><span id="shareCount">Toque nas fotos para marcar</span>
+        <div class="actions"><button type="button" class="secondary" id="shareAll">Marcar todas</button><button type="button" class="secondary" id="shareCancel">Cancelar</button><button type="button" id="shareSend" disabled>📤 Enviar</button></div></div>` : ''}
       <div class="actions">
+        ${s.photos?.length ? '<button class="secondary" id="sharePhotos">📤 Enviar fotos ao cliente</button>' : ''}
         <button class="secondary" data-photo="antes">📷 Fotos de antes</button>
         <button class="secondary" data-photo="depois">📷 Fotos de depois</button>
       </div>
@@ -1117,8 +1120,61 @@ screens.servico = async (params, id) => {
       if (saved) reload();
     };
   });
+  // Escolher fotos e mandar pelo WhatsApp/Mensagens do celular (compartilhar do sistema).
+  const picked = new Set();
+  const shareBar = view.querySelector('.share-bar');
+  const photoCard = shareBar?.closest('.card');
+  const markPicked = () => {
+    photoCard.querySelectorAll('.photo-open').forEach((b) => b.classList.toggle('picked', picked.has(b.dataset.view)));
+    view.querySelector('#shareCount').textContent = picked.size ? `${picked.size} foto${picked.size > 1 ? 's' : ''} marcada${picked.size > 1 ? 's' : ''}` : 'Toque nas fotos para marcar';
+    view.querySelector('#shareSend').disabled = !picked.size;
+  };
+  const selecting = (on) => {
+    picked.clear();
+    photoCard.classList.toggle('selecting', on);
+    shareBar.hidden = !on;
+    view.querySelector('#sharePhotos').style.display = on ? 'none' : '';
+    if (on) markPicked();
+    else photoCard.querySelectorAll('.photo-open.picked').forEach((b) => b.classList.remove('picked'));
+  };
+  on('#sharePhotos', () => selecting(true));
+  on('#shareCancel', () => selecting(false));
+  on('#shareAll', () => {
+    photoCard.querySelectorAll('.photo-open').forEach((b) => picked.add(b.dataset.view));
+    markPicked();
+  });
+  on('#shareSend', async () => {
+    const list = (s.photos || []).filter((p) => picked.has(String(p.id)));
+    toast('Preparando as fotos…');
+    try {
+      const files = await Promise.all(list.map(async (p, i) => {
+        const blob = await (await net(p.url)).blob();
+        return new File([blob], `${s.vehicle || 'foto'}-${i + 1}.jpg`.replace(/[^\w.-]+/g, '_'), { type: blob.type || 'image/jpeg' });
+      }));
+      if (navigator.canShare?.({ files })) {
+        await navigator.share({ files, title: s.vehicle || 'Fotos' });
+      } else {
+        // Computador sem compartilhar: baixa as fotos.
+        for (const f of files) {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(f);
+          a.download = f.name;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        }
+      }
+      selecting(false);
+    } catch (err) {
+      if (err.name !== 'AbortError') toast(err.message || 'Não consegui enviar as fotos.');
+    }
+  });
+
   view.querySelectorAll('[data-view]').forEach((btn) => {
     btn.onclick = async () => {
+      if (photoCard?.classList.contains('selecting') && photoCard.contains(btn)) {
+        picked.has(btn.dataset.view) ? picked.delete(btn.dataset.view) : picked.add(btn.dataset.view);
+        return markPicked();
+      }
       const photo = (s.photos || []).find((p) => String(p.id) === btn.dataset.view);
       const canDelete = owner || (s.status !== 'concluido' && s.status !== 'cancelado');
       if (photo && (await viewPhoto(photo, btn.dataset.label, canDelete))) reload();
