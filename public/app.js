@@ -2170,55 +2170,26 @@ const TIRES = {
   tdi: 'Traseiro direito de dentro',
   tdf: 'Traseiro direito de fora',
 };
-// Posição (x, y, largura) de cada pneu no desenho da Ram 5500 com plataforma.
-const TIRE_BOX = { de: [24, 50, 26], dd: [170, 50, 26], tef: [12, 292, 24], tei: [38, 292, 24], tdi: [158, 292, 24], tdf: [184, 292, 24] };
+const TIRE_BOX = { de: [22, 62], dd: [160, 62], tef: [8, 262], tei: [36, 262], tdi: [146, 262], tdf: [174, 262] };
 function truckTires(selected = [], small = false) {
   const on = new Set(selected);
   const tire = (k) => {
-    const [x, y, w] = TIRE_BOX[k];
-    const h = 54;
-    const lugs = [8, 18, 28, 38, 48].map((d) => `M${x + 3} ${y + d - 3}l${w / 2 - 3} 4l${w / 2 - 3} -4`).join('');
+    const [x, y] = TIRE_BOX[k];
     return `<g class="tire${on.has(k) ? ' on' : ''}" data-tire="${k}"${small ? '' : ` role="button" aria-label="${TIRES[k]}"`}>
-      <rect x="${x - 2}" y="${y - 6}" width="${w + 4}" height="${h + 12}" fill="transparent"/>
-      <rect class="tread" x="${x}" y="${y}" width="${w}" height="${h}" rx="7"/>
-      ${small ? '' : `<path class="grooves" d="${lugs}"/>`}
+      <rect x="${x - 4}" y="${y - 6}" width="34" height="68" fill="transparent"/>
+      <rect class="tread" x="${x}" y="${y}" width="26" height="56" rx="7"/>
+      ${small ? '' : `<path d="M${x + 5} ${y + 12}h16M${x + 5} ${y + 22}h16M${x + 5} ${y + 32}h16M${x + 5} ${y + 42}h16" class="grooves"/>`}
     </g>`;
   };
-  const lights = [92, 101, 110, 119, 128].map((x) => `<rect class="amber" x="${x - 3}" y="139" width="6" height="3" rx="1.5"/>`).join('');
-  return `<svg class="truck-tires${small ? ' small' : ''}" viewBox="0 0 220 430" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <linearGradient id="ramPaint" x1="0" x2="1"><stop offset="0" stop-color="#c9ced6"/><stop offset=".22" stop-color="#f4f6f8"/><stop offset=".5" stop-color="#ffffff"/><stop offset=".78" stop-color="#f4f6f8"/><stop offset="1" stop-color="#c9ced6"/></linearGradient>
-      <linearGradient id="ramGlass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3c4a5a"/><stop offset="1" stop-color="#1c232c"/></linearGradient>
-      <linearGradient id="ramBed" x1="0" x2="1"><stop offset="0" stop-color="#8d949d"/><stop offset=".5" stop-color="#b9bfc6"/><stop offset="1" stop-color="#8d949d"/></linearGradient>
-    </defs>
-    ${small ? '' : '<text x="110" y="10" class="lbl">FRENTE</text><text x="22" y="240" class="lbl">ESQ.</text><text x="198" y="240" class="lbl">DIR.</text>'}
-    <!-- chassi e eixos -->
-    <rect class="frame" x="84" y="40" width="10" height="370"/><rect class="frame" x="126" y="40" width="10" height="370"/>
-    <rect class="axle" x="40" y="74" width="140" height="6"/><rect class="axle" x="24" y="316" width="172" height="8"/>
-    <!-- para-lamas do rodado duplo -->
-    <path class="paint" d="M10 300q0-18 26-20h30v84H36q-26-2-26-20z"/><path class="paint" d="M210 300q0-18-26-20h-30v84h30q26-2 26-20z"/>
+  return `<svg class="truck-tires${small ? ' small' : ''}" viewBox="0 0 208 360" xmlns="http://www.w3.org/2000/svg">
+    ${small ? '' : '<text x="104" y="12" class="lbl">FRENTE</text><text x="18" y="214" class="lbl">ESQ.</text><text x="190" y="214" class="lbl">DIR.</text>'}
+    <rect class="body" x="52" y="22" width="104" height="44" rx="16"/>
+    <rect class="body" x="48" y="58" width="112" height="92" rx="12"/>
+    <rect class="glass" x="60" y="70" width="88" height="22" rx="5"/>
+    <rect class="body bed" x="40" y="156" width="128" height="190" rx="6"/>
+    <path class="bedline" d="M58 172v158M80 172v158M104 172v158M128 172v158M150 172v158"/>
+    <rect class="axle" x="48" y="86" width="112" height="4"/><rect class="axle" x="34" y="286" width="140" height="6"/>
     ${Object.keys(TIRES).map(tire).join('')}
-    <!-- para-choque e capô comprido -->
-    <rect class="chrome" x="58" y="16" width="104" height="10" rx="4"/>
-    <path class="paint" d="M64 26h92q6 0 7 8l3 78H54l3-78q1-8 7-8z"/>
-    <path class="crease" d="M88 30l-3 80M132 30l3 80"/>
-    <text x="110" y="44" class="ram">RAM</text>
-    <!-- retrovisores de reboque -->
-    <path class="arm" d="M54 122h-16M166 122h16"/>
-    <rect class="mirror" x="22" y="112" width="18" height="24" rx="3"/><rect class="mirror" x="180" y="112" width="18" height="24" rx="3"/>
-    <!-- para-brisa, teto com luzes e vidro traseiro -->
-    <path class="glass" d="M54 112h112l-8 26H62z"/>
-    <rect class="paint" x="58" y="136" width="104" height="54" rx="6"/>
-    ${lights}
-    <path class="glass" d="M64 190h92l-3 7H67z"/>
-    <!-- protetor da cabine com luz giratória -->
-    <rect class="rack" x="54" y="202" width="112" height="8" rx="2"/>
-    <rect class="beacon" x="90" y="203" width="40" height="6" rx="3"/>
-    <!-- plataforma (rollback) -->
-    <rect class="bed" x="64" y="214" width="92" height="196" rx="3"/>
-    <path class="bedline" d="M76 222v180M88 222v180M100 222v180M110 222v180M120 222v180M132 222v180M144 222v180"/>
-    <rect class="tail" x="64" y="404" width="10" height="5"/><rect class="tail" x="146" y="404" width="10" height="5"/>
-    <rect class="lift" x="80" y="412" width="60" height="8" rx="2"/>
   </svg>`;
 }
 
