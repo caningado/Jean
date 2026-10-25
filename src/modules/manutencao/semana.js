@@ -1,6 +1,7 @@
 // Relatório semanal da frota em PDF (para o dono, em português): milhas de cada caminhão,
 // serviços feitos na semana e as próximas trocas.
 import { startDoc, drawLetterhead, drawFooter, sectionLabel, usd, amount, RED, DARK, GRAY, LINE, SOFT } from '../invoice/pdf.js';
+import { withTires } from './pneus.js';
 
 const GREEN = '#15803D';
 const AMBER = '#B45309';
@@ -120,7 +121,7 @@ export function renderFleetWeek({ company, logo, data }) {
       ];
       header(cols);
       for (const l of t.services) {
-        row(cols, [dia(l.done_at), [l.item_name, DARK, true], milhas(l.miles), [l.shop, l.notes].filter(Boolean).join(' · ') || '–', l.cost_cents ? amount(l.cost_cents) : '–']);
+        row(cols, [dia(l.done_at), [withTires(l), DARK, true], milhas(l.miles), [l.shop, l.notes].filter(Boolean).join(' · ') || '–', l.cost_cents ? amount(l.cost_cents) : '–']);
       }
       y += 12;
     }

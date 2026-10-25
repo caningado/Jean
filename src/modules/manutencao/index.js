@@ -5,6 +5,7 @@ import { simplify, nowIso, HttpError, parseMoney } from '../../lib/util.js';
 import { monthRange, zonedMidnight } from '../planilha/index.js';
 import { renderTruckMonth } from './extrato.js';
 import { renderFleetWeek } from './semana.js';
+import { TIRES, tiresText, withTires } from './pneus.js';
 
 const DAY = 86400000;
 // "Perto" = faltam menos que isso.
@@ -81,7 +82,10 @@ const migrations = [
      blocked_at TEXT,
      PRIMARY KEY (driver_id, week)
    );`,
+  // Quais pneus foram trocados (posições do desenho do guincho, ex.: "de,tef").
+  `ALTER TABLE maintenance_log ADD COLUMN tires TEXT;`,
 ];
+
 // A semana vai de sábado a sexta (pedido do Caningado 25/10).
 // Cobrança: na sexta (último dia da semana) na hora do aviso da manhã, repete de hora em hora 3 vezes;
 // sem resposta, suspende a lista de serviços do motorista até ele mandar a milhagem.
@@ -188,7 +192,7 @@ const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) && !Number.isNa
 
 // Registra um serviço feito (óleo, freio...). Sem item = serviço avulso ("Outro").
 // next_miles/next_date: próxima troca; vazio = conta pelo intervalo do item.
-function markDone(ctx, { truck, item = null, name = null, miles = null, userId, notes = null, date = null, costCents = null, shop = null, nextMiles = null, nextDate = null }) {
+function markDone(ctx, { truck, item = null, name = null, miles = null, userId, notes = null, date = null, costCents = null, shop = null, nextMiles = null, nextDate = null, tires = null }) {
   const at = miles ?? truck.odometer;
   const doneAt = !date || date >= localDay(ctx) ? nowIso() : new Date(Date.parse(dayStart(ctx, date)) + 12 * 3600000).toISOString();
   if (at > truck.odometer) truck = setOdometer(ctx, truck, at, userId);
@@ -208,7 +212,7 @@ function markDone(ctx, { truck, item = null, name = null, miles = null, userId, 
 
   let expenseId = null;
   if (costCents && ctx.api.despesas) {
-    const label = item?.name || name;
+    const label = tires ? `${item?.name || name}: ${tiresText(tires)}` : item?.name || name;
     expenseId = ctx.api.despesas.add({ userId, amountCents: costCents, category: 'manutencao', description: shop ? `${label} (${shop})` : label, truckId: truck.id, at: doneAt }).id;
   }
   if (item) {
@@ -220,10 +224,10 @@ function markDone(ctx, { truck, item = null, name = null, miles = null, userId, 
   }
   const info = ctx.db
     .prepare(
-      `INSERT INTO maintenance_log (truck_id, item_id, item_name, miles, user_id, notes, done_at, cost_cents, shop, next_miles, next_date, expense_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO maintenance_log (truck_id, item_id, item_name, miles, user_id, notes, done_at, cost_cents, shop, next_miles, next_date, expense_id, tires)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(truck.id, item?.id ?? null, item?.name || name, at, userId, notes, doneAt, costCents || null, shop, keepMiles, keepDate, expenseId);
+    .run(truck.id, item?.id ?? null, item?.name || name, at, userId, notes, doneAt, costCents || null, shop, keepMiles, keepDate, expenseId, tires);
   const log = ctx.db.prepare('SELECT * FROM maintenance_log WHERE id = ?').get(Number(info.lastInsertRowid));
   return { log, item: item && ctx.db.prepare('SELECT * FROM maintenance_items WHERE id = ?').get(item.id) };
 }
@@ -492,6 +496,8 @@ function routes(api, ctx) {
     if (!opt(b.next_date) && !isDay(b.next_date)) throw new HttpError(400, 'Data da próxima troca inválida.');
     const nextMiles = opt(b.next_miles) ? null : int(b.next_miles, 'Próxima troca (milhas)');
     if (nextMiles != null && nextMiles <= (miles ?? truck.odometer)) throw new HttpError(400, 'A próxima troca tem que ser com mais milhas do que agora.');
+    const tireList = [...new Set((Array.isArray(b.tires) ? b.tires : String(b.tires || '').split(',')).map((t) => String(t).trim()).filter(Boolean))];
+    if (tireList.some((t) => !TIRES[t])) throw new HttpError(400, 'Pneu inválido.');
     let costCents = null;
     if (!opt(b.cost)) {
       costCents = parseMoney(String(b.cost));
@@ -509,6 +515,7 @@ function routes(api, ctx) {
       shop: String(b.shop || '').trim() || null,
       nextMiles,
       nextDate: opt(b.next_date) ? null : b.next_date,
+      tires: tireList.length ? Object.keys(TIRES).filter((t) => tireList.includes(t)).join(',') : null,
     });
     res.status(201).json(out);
   });
@@ -603,7 +610,7 @@ function exportSheets({ ctx, from, to }) {
         { header: 'Quem registrou', width: 16 },
         { header: 'Obs.', width: 30 },
       ],
-      rows: rows.map((r) => [r.done_at, r.truck_name, r.item_name, r.miles, r.shop || '', r.cost_cents != null ? r.cost_cents / 100 : '', r.user_name || '', r.notes || '']),
+      rows: rows.map((r) => [r.done_at, r.truck_name, withTires(r), r.miles, r.shop || '', r.cost_cents != null ? r.cost_cents / 100 : '', r.user_name || '', r.notes || '']),
     },
   ];
 }
@@ -708,7 +715,7 @@ export function weekText(data, link = null) {
         ? `🚛 *${t.name}*: ${fmtMiles(t.miles)} rodadas (agora ${fmtMiles(t.miles_end)}), informado por ${t.reported_by || 'alguém'}`
         : `🚛 *${t.name}*: ⚠️ milhagem *não informada* na semana${t.driver_name ? ` (${t.driver_name})` : ''}`
     );
-    for (const l of t.services) lines.push(`   🔧 ${l.item_name} em ${fmtMiles(l.miles)}${l.shop ? ` – ${l.shop}` : ''}${l.cost_cents ? ` – ${money(l.cost_cents)}` : ''}`);
+    for (const l of t.services) lines.push(`   🔧 ${withTires(l)} em ${fmtMiles(l.miles)}${l.shop ? ` – ${l.shop}` : ''}${l.cost_cents ? ` – ${money(l.cost_cents)}` : ''}`);
     for (const i of t.items.filter((x) => x.state !== 'ok')) lines.push(`   ${ICON[i.state]} ${i.name}: ${i.note}`);
     const next = t.items.find((x) => x.state === 'ok' && x.note);
     if (next && !t.items.some((x) => x.state !== 'ok')) lines.push(`   ✅ Tudo em dia. Próximo: ${next.name} (${next.note})`);

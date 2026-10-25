@@ -523,3 +523,17 @@ button.chat-mic svg { width: 22px; height: 22px; }
 .selecting .photo-open.picked img { outline: 4px solid #25d366; outline-offset: -4px; }
 .selecting .photo-open.picked::after { content: '✓'; background: #25d366; color: #fff; font-weight: 700; line-height: 20px; text-align: center; }
 .share-bar[hidden] { display: none; }
+.truck-tires { display: block; width: 100%; max-width: 230px; margin: 6px auto; }
+.truck-tires .body { fill: #d9dde3; stroke: #8a929c; stroke-width: 2; }
+.truck-tires .bed { fill: #c4c9d0; }
+.truck-tires .glass { fill: #5d6b7a; }
+.truck-tires .bedline { stroke: #a3aab3; stroke-width: 2; fill: none; }
+.truck-tires .axle { fill: #6b7380; }
+.truck-tires .tire { cursor: pointer; }
+.truck-tires .tread { fill: #2b2f36; stroke: #111; stroke-width: 2; }
+.truck-tires .grooves { stroke: #4d535c; stroke-width: 2; fill: none; }
+.truck-tires .tire.on .tread { fill: #25a55a; stroke: #157a3e; }
+.truck-tires .tire.on .grooves { stroke: #7be0a4; }
+.truck-tires .lbl { font: 700 11px system-ui, sans-serif; fill: var(--muted); text-anchor: middle; }
+.truck-tires.small { width: 44px; margin: 0; flex: none; }
+.tires-log { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
