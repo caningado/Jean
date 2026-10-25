@@ -943,7 +943,7 @@ function routes(api, ctx) {
     if (blocked) throw new HttpError(423, blocked.replace(/\*/g, ''));
     const status = req.query.status || null;
     const driverId = req.user.role === 'dono' ? Number(req.query.driver) || null : req.user.id;
-    // Entregues de hoje, da semana (desde segunda) ou do mês.
+    // Entregues de hoje, da semana (desde sábado) ou do mês.
     const tz = ctx.config.timeZone;
     const starts = { dia: startOfDayIso, semana: startOfWeekIso, mes: startOfMonthIso };
     // Entregues contam pelo dia da entrega; "Todos" pelo dia em que o serviço foi aberto.
