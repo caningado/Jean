@@ -7,6 +7,7 @@ import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { parseMoney, nowIso, HttpError } from '../../lib/util.js';
 import { renderInvoice } from './pdf.js';
+import { coordsOf, isMapReference } from '../../lib/validate.js';
 
 const BUNDLED_LOGO = path.join(path.dirname(fileURLToPath(import.meta.url)), 'logo.jpg');
 
@@ -184,13 +185,35 @@ function paidFor(ctx, invoice) {
   return ctx.api.pagamentos.balance(service).received_cents;
 }
 
-export async function invoicePdf(ctx, invoice) {
+// Local colado como link de mapa: na invoice sai a latitude e longitude, não o link (pedido do Caningado 25/10).
+// Link curto (maps.app.goo.gl) não tem as coordenadas: abre o link para achar o endereço completo.
+const SHORT_LINK = /^https?:\/\/(maps\.app\.goo\.gl|goo\.gl|g\.co|waze\.com\/ul)\b/i;
+export async function invoiceLocation(location, fetchImpl = fetch) {
+  if (!location || !isMapReference(location)) return location || '';
+  const direct = coordsOf(location);
+  if (direct) return direct;
+  const url = location.match(/https?:\/\/[^\s]+/i)?.[0];
+  if (url && SHORT_LINK.test(url)) {
+    try {
+      const res = await fetchImpl(url, { redirect: 'follow', signal: AbortSignal.timeout(5000) });
+      const found = coordsOf(res.url) || coordsOf((await res.text()).slice(0, 200000));
+      if (found) return found;
+    } catch {
+      /* sem internet ou link quebrado: fica o texto colado */
+    }
+  }
+  // Sem coordenadas: tira o link e deixa o que mais foi escrito; se só tinha o link, fica o link.
+  return location.replace(/https?:\/\/[^\s]+/gi, '').trim() || location;
+}
+
+export async function invoicePdf(ctx, invoice, fetchImpl = fetch) {
   const service = invoice.service_id ? ctx.data.services.get(invoice.service_id) : null;
+  const where = service ? await Promise.all([invoiceLocation(service.pickup, fetchImpl), invoiceLocation(service.dropoff, fetchImpl)]) : [];
   return renderInvoice({
     company: getCompany(ctx),
     logo: fs.readFileSync(logoFile(ctx)),
     invoice,
-    service: service && { ...service, vehicle: vehicleName(service) },
+    service: service && { ...service, vehicle: vehicleName(service), pickup: where[0], dropoff: where[1] },
     paid_cents: paidFor(ctx, invoice),
   });
 }
