@@ -46,16 +46,20 @@ export function rateFor(tiers, revenueCents) {
 const localDay = (ctx, iso) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: ctx.config.timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
 
-// Segunda-feira da semana do dia ("2026-10-07" -> "2026-10-05"), sem sair do mês.
+// A partir de 24/10/2026 a semana vai de sábado a sexta (pedido do Caningado 25/10); antes era de segunda a domingo,
+// e as semanas já pagas continuam como estavam.
+const SATURDAY_FROM = '2026-10-24';
+
+// Primeiro dia da semana do dia ("2026-10-28" -> "2026-10-24"), sem sair do mês.
 function weekStart(day) {
   const d = new Date(`${day}T12:00:00Z`);
-  const back = (d.getUTCDay() + 6) % 7;
+  const back = day >= SATURDAY_FROM ? (d.getUTCDay() + 1) % 7 : (d.getUTCDay() + 6) % 7;
   d.setUTCDate(d.getUTCDate() - back);
   const monday = d.toISOString().slice(0, 10);
   return monday.slice(0, 7) === day.slice(0, 7) ? monday : `${day.slice(0, 7)}-01`;
 }
 
-// Semanas do mês: [{ start, end }], segunda a domingo, cortadas no começo e no fim do mês.
+// Semanas do mês: [{ start, end }], sábado a sexta (antes de 24/10/2026, segunda a domingo), cortadas no começo e no fim do mês.
 function monthWeeks(mes) {
   const [y, m] = mes.split('-').map(Number);
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
