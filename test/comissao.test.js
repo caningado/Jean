@@ -83,3 +83,12 @@ test('robô: motorista vê a semana e o mês', async () => {
   const [own] = await chat(ctx, OWNER_PHONE, 'comissao jorge');
   assert.match(own, /Jorge/);
 });
+
+test('semana do pagamento: sábado a sexta a partir de 24/10/2026', () => {
+  const ctx = makeContext({ GEOCODER: 'off' });
+  const driver = ctx.db.prepare("SELECT * FROM users WHERE role = 'motorista'").get();
+  const weeks = (mes) => driverMonth(ctx, driver, mes, `${mes}-15`).weeks.map((w) => `${w.start}/${w.end}`);
+  // Outubro: até 23/10 continua como era (segunda a domingo), depois sábado a sexta.
+  assert.deepEqual(weeks('2026-10'), ['2026-10-01/2026-10-04', '2026-10-05/2026-10-11', '2026-10-12/2026-10-18', '2026-10-19/2026-10-23', '2026-10-24/2026-10-30', '2026-10-31/2026-10-31']);
+  assert.deepEqual(weeks('2026-11'), ['2026-11-01/2026-11-06', '2026-11-07/2026-11-13', '2026-11-14/2026-11-20', '2026-11-21/2026-11-27', '2026-11-28/2026-11-30']);
+});

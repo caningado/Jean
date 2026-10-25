@@ -18,7 +18,7 @@ function tiersText(tiers) {
     .join('  ·  ');
 }
 
-// week: segunda-feira da semana ("2026-10-05") para o PDF semanal; sem week = fechamento do mês.
+// week: primeiro dia da semana ("2026-10-24") para o PDF semanal; sem week = fechamento do mês.
 export function renderDriverStatement({ company, logo, data, week = null }) {
   const w = week ? data.weeks.find((x) => x.start === week) : null;
   const title = w ? 'PAGAMENTO\nDA SEMANA' : 'FECHAMENTO\nDO MÊS';

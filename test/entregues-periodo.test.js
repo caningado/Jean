@@ -31,10 +31,10 @@ test('Entregues: hoje, semana e mês pelo dia da entrega', async (t) => {
   ctx.db.prepare('UPDATE services SET created_at = ? WHERE id = ?').run(new Date(now - 40 * day).toISOString(), ids[1]);
   const all = async (p) => (await json('GET', `/services?status=&periodo=${p}`)).map((s) => s.id).sort();
   assert.deepEqual(await all('dia'), [ids[0], ids[2]].sort());
-  // segunda-feira desta semana, nunca depois de hoje
+  // sábado desta semana (a semana vai de sábado a sexta), nunca depois de hoje
   const tz = ctx.config.timeZone;
   assert.ok(startOfWeekIso(tz) <= startOfDayIso(tz));
-  assert.equal(new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(new Date(new Date(startOfWeekIso(tz)).getTime() + 3600000)), 'Mon');
+  assert.equal(new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(new Date(new Date(startOfWeekIso(tz)).getTime() + 3600000)), 'Sat');
 });
 
 test('lista de serviços diz se está pago', async (t) => {

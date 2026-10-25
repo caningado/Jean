@@ -152,7 +152,7 @@ test('cobrança da milhagem: 3 avisos de hora em hora, depois suspende a lista d
   assert.equal((await fetch(`${base}/api/services`, { headers: { Cookie: drv } })).status, 200);
 });
 
-test('relatório da semana passada chega para o dono na segunda, com link do PDF', async (t) => {
+test('relatório da semana passada (sábado a sexta) chega para o dono no sábado, com link do PDF', async (t) => {
   const { ctx, call, base, driver } = await start(t, { AVISO_HORA: '8' });
   await call('POST', '/trucks', { name: 'F-550', odometer: 100000, driver_id: driver.id });
   ctx.db.prepare("UPDATE odometer_readings SET at = '2026-09-01T12:00:00Z'").run();
@@ -169,11 +169,11 @@ test('relatório da semana passada chega para o dono na segunda, com link do PDF
   await runDaily(ctx, new Date('2026-10-09T13:00:00Z'));
   assert.equal(sent.filter((m) => /Relatório semanal/.test(m.text)).length, 0, 'só uma vez por semana');
 
-  // Segunda: relatório da semana 05/10 a 11/10, com o link do PDF.
-  await runDaily(ctx, new Date('2026-10-12T13:00:00Z'));
+  // Sábado: relatório da semana 03/10 a 09/10, com o link do PDF.
+  await runDaily(ctx, new Date('2026-10-10T13:00:00Z'));
   const report = sent.find((m) => m.phone === OWNER_PHONE && /Relatório semanal/.test(m.text));
   assert.ok(report);
-  assert.match(report.text, /05\/10 a 11\/10/);
+  assert.match(report.text, /03\/10 a 09\/10/);
   assert.match(report.text, /milhagem \*não informada\*/);
   const link = report.text.match(/https:\/\/guincho\.test(\S+)/)[1];
   assert.equal((await fetch(`${base}${link}`)).status, 200);
