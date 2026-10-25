@@ -121,3 +121,20 @@ export function mapLink(location) {
   if (coords) return `https://www.google.com/maps?q=${coords[1]},${coords[2]}`;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
 }
+
+// Coordenadas de um local (no texto ou dentro do link do mapa: Google, Waze, Apple) -> "28.538336, -81.379234".
+// No link do Google, o ponto marcado (!3d...!4d...) vale mais que o centro da tela (@...).
+export function coordsOf(location) {
+  let text = String(location || '');
+  try {
+    text = decodeURIComponent(text);
+  } catch {
+    /* link com % solto */
+  }
+  const m = text.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/) || text.match(/@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/) || text.match(COORDS);
+  if (!m) return null;
+  const [lat, lng] = [Number(m[1]), Number(m[2])];
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  const fmt = (n) => String(Math.round(n * 1e6) / 1e6);
+  return `${fmt(lat)}, ${fmt(lng)}`;
+}
