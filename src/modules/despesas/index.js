@@ -1,5 +1,8 @@
 // Módulo de despesas: combustível, pedágio, manutenção etc., por motorista.
 import { parseMoney, formatMoney, simplify, nowIso, HttpError } from '../../lib/util.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
 import express from 'express';
 import { checkMoney, ValidationError } from '../../lib/validate.js';
 import { readPhotoText } from '../../lib/foto-texto.js';
@@ -27,7 +30,109 @@ const migrations = [
   `ALTER TABLE expenses ADD COLUMN truck_id INTEGER;`,
   // Galões do abastecimento (diesel), para o relatório mostrar quanto abasteceu e o preço do galão.
   `ALTER TABLE expenses ADD COLUMN gallons REAL;`,
+  // Abastecer: milhas do painel e as fotos (painel obrigatória, bomba quando tiver).
+  `ALTER TABLE expenses ADD COLUMN odometer INTEGER;
+   ALTER TABLE expenses ADD COLUMN photo TEXT;
+   ALTER TABLE expenses ADD COLUMN pump_photo TEXT;`,
 ];
+
+// ---------- Abastecer (pedido do Caningado 25/10) ----------
+// Sempre diesel, no caminhão do motorista (só o ADM escolhe outro), com a foto do painel obrigatória.
+
+const PHOTO_DIR = 'despesas';
+const PHOTO_NAME = /^[\w-]+\.jpg$/;
+
+function savePhotoFile(ctx, buffer) {
+  const dir = path.join(ctx.config.uploadsDir, PHOTO_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+  const name = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.jpg`;
+  fs.writeFileSync(path.join(dir, name), buffer);
+  return name;
+}
+const photoPath = (ctx, name) => (name && PHOTO_NAME.test(name) ? path.join(ctx.config.uploadsDir, PHOTO_DIR, name) : null);
+// Diesel com foto do painel só vale quando a empresa tem caminhão cadastrado.
+const hasTrucks = (ctx) => Boolean(ctx.api.manutencao && ctx.db.prepare('SELECT 1 FROM trucks WHERE active = 1 LIMIT 1').get());
+const photoExists = (ctx, name) => Boolean(photoPath(ctx, name) && fs.existsSync(photoPath(ctx, name)));
+
+// Caminhão do abastecimento: o do motorista; o ADM pode escolher outro.
+function fuelTruck(ctx, user, truckId) {
+  const m = ctx.api.manutencao;
+  if (!m) return null;
+  const truck = user.role === 'dono' && truckId ? m.get(Number(truckId)) : m.truckFor(user.id);
+  if (!truck) throw new ValidationError(user.role === 'dono' ? 'Escolha o caminhão.' : 'Nenhum caminhão está no seu nome. Peça ao ADM para ligar o caminhão a você.');
+  return truck;
+}
+
+// Grava o diesel: confere as milhas lidas no painel, atualiza o caminhão e guarda as fotos.
+function refuel(ctx, user, { amountCents, gallons = null, odometer, truckId = null, photo, pumpPhoto = null }) {
+  checkMoney(amountCents, { max: 5000, what: 'O valor do diesel' });
+  if (!photoExists(ctx, photo)) throw new ValidationError('A foto do painel é obrigatória.');
+  const truck = fuelTruck(ctx, user, truckId);
+  const miles = Math.round(Number(String(odometer ?? '').replace(/[,\s]/g, '')));
+  if (!(miles > 0)) throw new ValidationError('Faltou a milhagem do painel.');
+  if (truck) {
+    if (miles < truck.odometer) throw new ValidationError(`${miles.toLocaleString('en-US')} mi é menos do que o último registrado (${truck.odometer.toLocaleString('en-US')} mi). Confira a foto do painel.`);
+    if (miles - truck.odometer > 20000) throw new ValidationError(`${(miles - truck.odometer).toLocaleString('en-US')} mi a mais desde a última vez? Confira a foto do painel.`);
+    ctx.api.manutencao.updateOdometer(user, truck, miles);
+  }
+  const expense = addExpense(ctx, { userId: user.id, amountCents, category: 'combustivel', description: 'Diesel', truckId: truck?.id ?? null, gallons });
+  ctx.db.prepare('UPDATE expenses SET odometer = ?, photo = ?, pump_photo = ? WHERE id = ?').run(miles, photo, photoExists(ctx, pumpPhoto) ? pumpPhoto : null, expense.id);
+  return { ...ctx.db.prepare('SELECT * FROM expenses WHERE id = ?').get(expense.id), truck_name: truck?.name || null };
+}
+
+const fuelLine = (d) => `⛽ Diesel *${formatMoney(d.amount_cents)}*${d.gallons ? ` · ${Number(d.gallons).toLocaleString('en-US', { maximumFractionDigits: 3 })} gal` : ''}`;
+
+const flows = {
+  abastecer: {
+    steps: [
+      {
+        key: 'painel',
+        ask: (d) => `${fuelLine(d)}\n📸 Agora mande a *foto do painel* do caminhão com a milhagem (obrigatória). Para desistir, mande *cancelar*.`,
+        parse() {
+          throw new ValidationError('A foto do painel é obrigatória. Mande a foto do painel (ou *cancelar*).');
+        },
+      },
+    ],
+    finish: () => null,
+  },
+};
+
+// Foto que chega no meio do "abastecer": tem que ser o painel; lê as milhas e grava o diesel.
+async function panelPhoto(ctx, user, media, data) {
+  let read;
+  try {
+    read = await readPhotoText(ctx, media.buffer, media.mime);
+  } catch (err) {
+    ctx.log('Despesas: não consegui ler a foto do painel', err.message);
+    return 'Não consegui ler a foto agora. Mande de novo a foto do painel (ou *cancelar*).';
+  }
+  if (read.tipo !== 'painel' || !read.milhas) return 'Não achei a milhagem nessa foto. Mande a *foto do painel* de frente, com o painel aceso (ou *cancelar*).';
+  try {
+    const e = refuel(ctx, user, { amountCents: data.amount_cents, gallons: data.gallons, odometer: read.milhas, truckId: data.truck_id, photo: savePhotoFile(ctx, media.buffer), pumpPhoto: data.pump_photo });
+    ctx.bot.clearConversation(user.id);
+    return `✅ Diesel registrado${e.truck_name ? ` no ${e.truck_name}` : ''}: ${formatMoney(e.amount_cents)}${e.gallons ? ` · ${gallonsText(e)}` : ''} · painel ${e.odometer.toLocaleString('en-US')} mi.`;
+  } catch (err) {
+    if (err instanceof ValidationError) return `⚠️ ${err.message}`;
+    throw err;
+  }
+}
+
+// Começa o abastecer no WhatsApp (foto da bomba ou "abasteci 101.40 16.4 gal").
+function startRefuel(ctx, user, { amountCents, gallons = null, truckId = null, pumpBuffer = null }) {
+  // Sem caminhão cadastrado não tem painel: grava direto.
+  if (!hasTrucks(ctx)) {
+    const e = addExpense(ctx, { userId: user.id, amountCents, category: 'combustivel', description: 'Diesel', truckId: null, gallons });
+    return `🧾 Diesel registrado: ${formatMoney(e.amount_cents)}${e.gallons ? ` · ${gallonsText(e)}` : ''}.`;
+  }
+  try {
+    fuelTruck(ctx, user, truckId);
+  } catch (err) {
+    if (err instanceof ValidationError) return `⚠️ ${err.message}`;
+    throw err;
+  }
+  const data = { amount_cents: amountCents, gallons, truck_id: truckId, pump_photo: pumpBuffer ? savePhotoFile(ctx, pumpBuffer) : null };
+  return ctx.bot.startFlow(user, 'abastecer', data);
+}
 
 // "16.464 gal", "16,4 galões" -> 16.464 (ou null).
 const GALLONS = /(\d+(?:[.,]\d+)?)\s*(?:gal|gals|galao|galoes|gallon|gallons)\b/;
@@ -91,16 +196,16 @@ const commands = [
       const words = String(text).trim().split(/\s+/).slice(1);
       const description = words.filter((w) => w !== amountArg && !/^\$?[\d.,]+(gal)?$/i.test(w) && !/^(gal|gals|galao|galoes|galões|galão|gallons?)$/i.test(w)).join(' ');
       const first = simplify(text).split(/\s+/)[0];
-      const category = first === 'abasteci' ? 'combustivel' : guessCategory(description);
-      // Despesa no meio de um serviço fica ligada a ele.
-      const service = ctx.data.services.active(user);
+      const category = gallons || first === 'abasteci' ? 'combustivel' : guessCategory(description);
       // "gasto 300 pneu F550": caminhão pelo nome; senão o do motorista.
       const named = ctx.api.manutencao?.findTruck(words);
-      const expense = addExpense(ctx, { userId: user.id, serviceId: service?.id ?? null, amountCents, category: gallons ? 'combustivel' : category, description, truckId: named?.id, gallons });
+      // Diesel: só entra com a foto do painel (o Jay pede a foto e grava quando ela chega).
+      if (category === 'combustivel' && hasTrucks(ctx)) return startRefuel(ctx, user, { amountCents, gallons, truckId: user.role === 'dono' ? named?.id : null });
+      // Despesa no meio de um serviço fica ligada a ele.
+      const service = ctx.data.services.active(user);
+      const expense = addExpense(ctx, { userId: user.id, serviceId: service?.id ?? null, amountCents, category, description, truckId: named?.id, gallons });
       const truck = expense.truck_id && ctx.api.manutencao?.get(expense.truck_id);
-      const done = `🧾 Despesa de ${formatMoney(amountCents)} (${CATEGORIES[expense.category]}${description ? ': ' + description : ''}${gallons ? `, ${gallonsText(expense)}` : ''}) registrada${truck ? ` no ${truck.name}` : ''}.`;
-      // Abasteceu: pede a foto do painel para conferir a milhagem (pedido do Caningado 25/10).
-      return expense.category === 'combustivel' && truck ? `${done}\n📸 Agora mande a *foto do painel* do caminhão para eu ler a milhagem (ou *odometro 123456*).` : done;
+      return `🧾 Despesa de ${formatMoney(amountCents)} (${CATEGORIES[expense.category]}${description ? ': ' + description : ''}${gallons ? `, ${gallonsText(expense)}` : ''}) registrada${truck ? ` no ${truck.name}` : ''}.`;
     },
   },
 ];
@@ -138,6 +243,7 @@ function routes(api, ctx) {
       throw new HttpError(400, err.message);
     }
     const cat = CATEGORIES[category] ? category : guessCategory(description);
+    if (cat === 'combustivel' && hasTrucks(ctx)) throw new HttpError(400, 'Diesel é pela tela ⛽ Abastecer (com a foto do painel).');
     // truck_id: "" = sem caminhão; não mandado = caminhão do motorista.
     const truckId = truck_id === undefined ? undefined : Number(truck_id) || null;
     // Milhas do caminhão junto (ex.: depois de abastecer). Confere antes de gravar a despesa.
@@ -159,12 +265,36 @@ function routes(api, ctx) {
       ctx.log('Despesas: não consegui ler a foto da bomba', err.message);
       throw new HttpError(502, 'Não consegui ler a foto agora. Tente de novo ou digite.');
     }
+    // A foto fica guardada (a do painel é a prova da milhagem); o abastecer manda o nome dela.
+    const photo = savePhotoFile(ctx, req.body);
     if (req.query.tipo === 'painel') {
-      if (!read.milhas) throw new HttpError(422, 'Não consegui ler a milhagem nessa foto. Tire de frente, com o painel aceso, ou digite.');
-      return res.json({ odometer: read.milhas });
+      if (!read.milhas) throw new HttpError(422, 'Não consegui ler a milhagem nessa foto. Tire de novo, de frente e com o painel aceso.');
+      return res.json({ odometer: read.milhas, photo });
     }
     if (!read.valor) throw new HttpError(422, 'Não consegui ler o valor nessa foto. Tire de frente, sem reflexo, ou digite.');
-    res.json({ amount: read.valor.toFixed(2), gallons: read.galoes || null });
+    res.json({ amount: read.valor.toFixed(2), gallons: read.galoes || null, photo });
+  });
+
+  // Abastecer pelo app: diesel, caminhão do motorista (o ADM escolhe), foto do painel obrigatória.
+  api.post('/abastecer', (req, res) => {
+    const b = req.body || {};
+    try {
+      const gallons = checkGallons(b.gallons);
+      const e = refuel(ctx, req.user, { amountCents: parseMoney(b.amount), gallons, odometer: b.odometer, truckId: b.truck_id, photo: b.photo, pumpPhoto: b.pump_photo });
+      res.status(201).json(e);
+    } catch (err) {
+      if (err instanceof ValidationError) throw new HttpError(400, err.message);
+      throw err;
+    }
+  });
+
+  // Foto guardada da despesa (painel ou bomba).
+  api.get('/expenses/:id/foto', (req, res) => {
+    const e = ctx.db.prepare('SELECT * FROM expenses WHERE id = ?').get(Number(req.params.id));
+    if (!e || (req.user.role !== 'dono' && e.user_id !== req.user.id)) throw new HttpError(404, 'Despesa não encontrada.');
+    const file = photoPath(ctx, req.query.tipo === 'bomba' ? e.pump_photo : e.photo);
+    if (!file || !fs.existsSync(file)) throw new HttpError(404, 'Sem foto.');
+    res.type('image/jpeg').sendFile(file);
   });
 
   api.delete('/expenses/:id', (req, res) => {
@@ -224,14 +354,17 @@ function exportSheets({ ctx, from, to, userId }) {
         { header: 'Caminhão', width: 14 },
         { header: 'Galões', width: 9, type: 'number' },
         { header: 'Preço/galão', width: 11, type: 'money' },
+        { header: 'Milhas (painel)', width: 13, type: 'number' },
       ],
-      rows: rows.map((e) => [e.created_at, e.amount_cents / 100, CATEGORIES[e.category] || e.category, e.description, e.user_name, e.service_id, e.truck_name || '', e.gallons || null, e.gallons ? Math.round(e.amount_cents / e.gallons) / 100 : null]),
+      rows: rows.map((e) => [e.created_at, e.amount_cents / 100, CATEGORIES[e.category] || e.category, e.description, e.user_name, e.service_id, e.truck_name || '', e.gallons || null, e.gallons ? Math.round(e.amount_cents / e.gallons) / 100 : null, e.odometer || null]),
     },
   ];
 }
 
 function setup(ctx) {
   ctx.api.despesas = {
+    startRefuel: (user, fields) => startRefuel(ctx, user, fields),
+    panelPhoto: (user, media, data) => panelPhoto(ctx, user, media, data),
     add: (fields) => addExpense(ctx, fields),
     remove: (id) => ctx.db.prepare('DELETE FROM expenses WHERE id = ?').run(Number(id)),
   };
@@ -244,6 +377,7 @@ export default {
   label: 'Despesas',
   migrations,
   commands,
+  flows,
   routes,
   summary,
   summaryLines,

@@ -85,13 +85,17 @@ test('Assistente de voz: entende o pedido em qualquer tela e diz ao app o que fa
   const truck = await json(adm, 'POST', '/trucks', { name: 'F-550', odometer: 120000, driver_id: jorge });
   r = await speak(drv, { intencao: 'despesa', valor: 80.5, categoria: 'combustivel', descricao: 'diesel', odometro: 123400.4 });
   assert.deepEqual(r.body.campos, { amount: 80.5, category: 'combustivel', description: 'diesel', odometer: 123400, truck_id: null });
-  // O app manda a despesa conferida: grava a despesa e as milhas
-  const e = await call(drv, 'POST', '/expenses', { amount: '80.50', category: 'combustivel', description: 'diesel', odometer: 123400 });
+  // Diesel com caminhão cadastrado só entra pela tela Abastecer (foto do painel obrigatória).
+  const fuel = await call(drv, 'POST', '/expenses', { amount: '80.50', category: 'combustivel', description: 'diesel', odometer: 123400 });
+  assert.equal(fuel.status, 400);
+  assert.match(fuel.body.error, /Abastecer/);
+  // Outra despesa com as milhas: grava a despesa e as milhas
+  const e = await call(drv, 'POST', '/expenses', { amount: '80.50', category: 'manutencao', description: 'filtro', odometer: 123400 });
   assert.equal(e.status, 201);
   assert.equal(e.body.truck_id, truck.id);
   assert.equal(ctx.api.manutencao.get(truck.id).odometer, 123400);
   // Milhas menores que as do painel: o motorista não pode, e a despesa não entra
-  const bad = await call(drv, 'POST', '/expenses', { amount: '20', category: 'combustivel', odometer: 1000 });
+  const bad = await call(drv, 'POST', '/expenses', { amount: '20', category: 'manutencao', odometer: 1000 });
   assert.equal(bad.status, 400);
   assert.equal((await json(drv, 'GET', '/expenses')).length, 1);
 

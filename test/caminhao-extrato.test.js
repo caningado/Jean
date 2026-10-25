@@ -20,8 +20,11 @@ test('despesas vão para o caminhão do motorista e o extrato do mês soma tudo'
   const f550 = await post('/trucks', { name: 'F-550', odometer: 100000, driver_id: driver.id });
   const ram = await post('/trucks', { name: 'Ram 5500', odometer: 50000 });
 
+  // Diesel pelo WhatsApp pede a foto do painel (obrigatória); aqui entra direto pela API interna.
   const [diesel] = await chat(ctx, DRIVER_PHONE, 'gasto 120 diesel');
-  assert.match(diesel, /registrada no F-550/);
+  assert.match(diesel, /foto do painel/);
+  await chat(ctx, DRIVER_PHONE, 'cancelar');
+  assert.equal(ctx.api.despesas.add({ userId: driver.id, amountCents: 12000, category: 'combustivel', description: 'diesel' }).truck_id, f550.id);
   const [pneu] = await chat(ctx, OWNER_PHONE, 'gasto 300 pneu ram');
   assert.match(pneu, /registrada no Ram 5500/);
   const [geral] = await chat(ctx, OWNER_PHONE, 'gasto 40 almoco');
