@@ -512,3 +512,7 @@ button.chat-mic svg { width: 22px; height: 22px; }
 
 /* Agenda */
 .sched { color: var(--brand); font-weight: 600; font-size: 0.9em; }
+/* Abastecer: botões grandes, fáceis de tocar com a mão suja de diesel. */
+.abastecer .big-btn{display:block;width:100%;padding:18px;margin:14px 0 8px;font-size:1.15rem;font-weight:700;border-radius:14px;border:2px dashed var(--brand);background:transparent;color:var(--brand)}
+.abastecer .big-btn.done{border-style:solid;background:var(--brand);color:#fff}
+.abastecer .big{font-size:1.2rem;font-weight:700;margin:4px 0 6px}

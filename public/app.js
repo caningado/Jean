@@ -457,6 +457,8 @@ screens.login = async () => {
 // Fundo verde claro = pago; vermelho claro = falta receber.
 // Serviço sem cobrança aparece como "Free".
 const priceText = (cents) => (cents === 0 ? 'Free' : money(cents));
+// Galões da despesa: "16.464 gal · $6.16/gal".
+const gallonsText = (e) => `${Number(e.gallons).toLocaleString('en-US', { maximumFractionDigits: 3 })} gal · ${money(Math.round(e.amount_cents / e.gallons))}/gal`;
 const payClass = (s) => (s.paid === true ? ' class="pago"' : s.paid === false ? ' class="nao-pago"' : '');
 
 screens.servicos = async (params) => {
@@ -1495,7 +1497,7 @@ screens.resumo = async (params) => {
     <div id="caixa"></div>
     ${state.me.role !== 'dono' && s.open_cents != null ? `<div class="card"><h2>Minhas pendências</h2><p>${s.open_cents || s.to_receive_cents ? `Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}` : 'Nada pendente 👍'}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
     ${state.me.role === 'dono' && (s.open_cents || s.to_receive_cents) ? `<div class="card"><h2>Pendências (todas)</h2><p>Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
-    ${s.expenses_by_category && Object.keys(s.expenses_by_category).length ? `<div class="card"><h2>Despesas</h2><ul class="list">${Object.entries(s.expenses_by_category).map(([k, v]) => `<li><div class="row"><span>${CATEGORIES[k] || k}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}
+    ${s.expenses_by_category && Object.keys(s.expenses_by_category).length ? `<div class="card"><h2>Despesas</h2><ul class="list">${Object.entries(s.expenses_by_category).map(([k, v]) => `<li><div class="row"><span>${CATEGORIES[k] || k}${k === 'combustivel' && s.fuel_gallons ? ` <span class="sub">${s.fuel_gallons.toLocaleString('en-US')} gal</span>` : ''}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}
     ${has('pagamentos') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/recebidos"><span>✅ Conferir caixa e banco (recebidos de serviços anteriores)</span><span>›</span></a>' : ''}
     ${state.me.role === 'dono' ? '<a class="card linkcard" href="#/relatorio"><span>🖨 Relatório do dia para imprimir</span><span>›</span></a>' : ''}
     ${has('planilha') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/planilha"><span>📊 Planilha do Excel</span><span>›</span></a>' : ''}`;
@@ -1832,6 +1834,7 @@ screens.mais = async () => {
     <div class="card"><ul class="list">
       ${has('pagamentos') && state.me.role !== 'dono' ? '<li><a href="#/pendentes"><span>⏳ Minhas pendências</span><span>›</span></a></li>' : ''}
       ${has('agenda') ? '<li><a href="#/agenda"><span>📅 Agenda (serviços agendados)</span><span>›</span></a></li>' : ''}
+      ${has('despesas') && has('manutencao') ? '<li><a href="#/abastecer"><span>⛽ Abastecer (diesel)</span><span>›</span></a></li>' : ''}
       ${has('despesas') ? '<li><a href="#/despesas"><span>🧾 Despesas</span><span>›</span></a></li>' : ''}
       ${has('manutencao') ? '<li><a href="#/caminhoes"><span>🔧 Caminhões e manutenção</span><span>›</span></a></li>' : ''}
       ${has('comissao') ? `<li><a href="${state.me.role === 'dono' ? '#/comissao' : `#/motorista/${state.me.id}`}"><span>💰 ${state.me.role === 'dono' ? 'Pagamento dos motoristas' : 'Meus ganhos'}</span><span>›</span></a></li>` : ''}
@@ -2661,21 +2664,24 @@ screens.despesas = async () => {
   const [list, trucks] = await Promise.all([api('/expenses'), has('manutencao') ? api('/trucks') : []]);
   const mine = trucks.filter((t) => t.driver_id === state.me.id);
   const defaultTruck = mine.length === 1 ? mine[0].id : trucks.length === 1 ? trucks[0].id : '';
+  // Com caminhão cadastrado, diesel é só pela tela Abastecer (foto do painel obrigatória).
+  const cats = Object.entries(CATEGORIES).filter(([k]) => !(trucks.length && k === 'combustivel'));
   view.innerHTML = `
+    ${trucks.length ? '<a class="card linkcard" href="#/abastecer"><span>⛽ <strong>Abastecer (diesel)</strong></span><span>›</span></a>' : ''}
     <form class="card" id="f">
-      <h2>Nova despesa</h2>
+      <h2>${trucks.length ? 'Outra despesa' : 'Nova despesa'}</h2>
       <div class="row2">
         <div><label>Valor</label><input name="amount" inputmode="decimal" required></div>
-        <div><label>Tipo</label><select name="category">${Object.entries(CATEGORIES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
+        <div><label>Tipo</label><select name="category">${cats.map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
       </div>
-      <label>Descrição</label><input name="description" placeholder="Diesel, pedágio I-90…">
+      <label>Descrição</label><input name="description" placeholder="${trucks.length ? 'Pedágio I-4, pneu…' : 'Diesel, pedágio I-90…'}">
       ${trucks.length ? `<label>Caminhão</label><select name="truck_id"><option value="">Nenhum (despesa geral)</option>${trucks.map((t) => `<option value="${t.id}"${t.id === defaultTruck ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>` : ''}
-      ${trucks.length ? '<label>Milhas do caminhão (painel) — opcional</label><input name="odometer" type="number" inputmode="numeric" placeholder="Ex.: depois de abastecer">' : ''}
+      ${trucks.length ? '<label>Milhas do caminhão (painel) — opcional</label><input name="odometer" type="number" inputmode="numeric">' : ''}
       <button class="block">Registrar</button>
     </form>
     <div class="card"><ul class="list">${
       list.length
-        ? list.map((e) => `<li><div class="row"><div>${CATEGORIES[e.category] || e.category}${e.description ? ' · ' + esc(e.description) : ''}<div class="sub">${when(e.created_at)}${state.me.role === 'dono' && e.user_name ? ' · ' + esc(e.user_name) : ''}${e.truck_name ? ' · 🚛 ' + esc(e.truck_name) : ''}</div></div>
+        ? list.map((e) => `<li><div class="row"><div>${CATEGORIES[e.category] || e.category}${e.description ? ' · ' + esc(e.description) : ''}${e.gallons ? `<div class="sub">⛽ ${gallonsText(e)}</div>` : ''}${e.odometer ? `<div class="sub">📏 ${e.odometer.toLocaleString('en-US')} mi${e.photo ? ` · <a href="/api/expenses/${e.id}/foto" target="_blank" rel="noopener">foto do painel</a>` : ''}${e.pump_photo ? ` · <a href="/api/expenses/${e.id}/foto?tipo=bomba" target="_blank" rel="noopener">bomba</a>` : ''}</div>` : ''}<div class="sub">${when(e.created_at)}${state.me.role === 'dono' && e.user_name ? ' · ' + esc(e.user_name) : ''}${e.truck_name ? ' · 🚛 ' + esc(e.truck_name) : ''}</div></div>
             <div class="right">${money(e.amount_cents)}<br><button class="danger" data-del="${e.id}">Apagar</button></div></div></li>`).join('')
         : '<li class="empty">Nenhuma despesa.</li>'
     }</ul></div>`;
@@ -2691,6 +2697,12 @@ screens.despesas = async () => {
   };
   const spoken = takePrefill('despesa');
   if (spoken) {
+    // Diesel falado com caminhão cadastrado: vai para o Abastecer com o valor.
+    if (trucks.length && spoken.campos.category === 'combustivel') {
+      state.voicePrefill = { kind: 'abastecer', data: spoken };
+      location.hash = '#/abastecer';
+      return;
+    }
     const form = view.querySelector('#f');
     const c = spoken.campos;
     fillForm(form, { amount: c.amount, category: c.category, description: c.description, odometer: c.odometer, truck_id: c.truck_id });
@@ -2705,6 +2717,77 @@ screens.despesas = async () => {
       screens.despesas();
     };
   });
+};
+
+// Abastecer (pedido do Caningado 25/10): a tela mais simples do app, usada todo dia.
+// Sempre diesel, no caminhão do motorista (só o ADM escolhe outro): 1) foto da bomba, 2) foto do painel (obrigatória), Registrar.
+screens.abastecer = async () => {
+  setScreen('Abastecer', { tab: 'mais', back: '#/despesas' });
+  const owner = state.me.role === 'dono';
+  const trucks = await api('/trucks');
+  const mine = trucks.filter((t) => t.driver_id === state.me.id);
+  const truck = mine[0] || (trucks.length === 1 ? trucks[0] : null);
+  const st = { pump: null, panel: null };
+  view.innerHTML = `
+    <form class="card abastecer" id="f">
+      ${owner
+        ? `<label>Caminhão</label><select name="truck_id">${trucks.map((t) => `<option value="${t.id}"${t.id === truck?.id ? ' selected' : ''}>${esc(t.name)}${t.driver_name ? ` · ${esc(t.driver_name)}` : ''}</option>`).join('')}</select>`
+        : truck ? `<p class="big">🚛 ${esc(truck.name)}</p>` : '<p class="empty">Nenhum caminhão no seu nome. Peça ao ADM.</p>'}
+      <button type="button" class="big-btn" id="bomba">⛽ 1. Foto da bomba</button>
+      <div class="row2"><div><label>Valor</label><input name="amount" inputmode="decimal" required></div><div><label>Galões</label><input name="gallons" inputmode="decimal"></div></div>
+      <button type="button" class="big-btn" id="painel">📏 2. Foto do painel</button>
+      <div id="painelOk" class="sub">A foto do painel é obrigatória.</div>
+      <label>Milhas</label><input name="odometer" type="number" inputmode="numeric" required>
+      <button class="block" id="salvar" disabled>Registrar diesel</button>
+    </form>`;
+  const form = view.querySelector('#f');
+  const ready = () => (form.querySelector('#salvar').disabled = !(st.panel && form.amount.value && form.odometer.value));
+  form.addEventListener('input', ready);
+  const shoot = async (tipo) => {
+    const file = await pickPhoto();
+    if (!file) return null;
+    toast(tipo ? 'Lendo o painel…' : 'Lendo a bomba…');
+    try {
+      return await api(`/expenses/ler-foto${tipo ? `?tipo=${tipo}` : ''}`, { method: 'POST', raw: await shrinkImage(file, 2000), type: 'image/jpeg' });
+    } catch (err) {
+      toast(err.message);
+      return null;
+    }
+  };
+  const readPanel = async () => {
+    const read = await shoot('painel');
+    if (!read) return;
+    st.panel = read.photo;
+    form.odometer.value = read.odometer;
+    form.querySelector('#painelOk').textContent = `✅ Foto do painel: ${read.odometer.toLocaleString('en-US')} mi`;
+    form.querySelector('#painel').classList.add('done');
+    ready();
+  };
+  form.querySelector('#bomba').onclick = async () => {
+    const read = await shoot('');
+    if (!read) return;
+    st.pump = read.photo;
+    fillForm(form, { amount: read.amount, gallons: read.gallons || '' });
+    form.querySelector('#bomba').classList.add('done');
+    ready();
+    // Logo depois da bomba, já pede o painel.
+    if (!st.panel && (await ask(`⛽ Li $${read.amount}${read.gallons ? ` e ${read.gallons} galões` : ''}.\nAgora a foto do painel do caminhão.`, { ok: '📏 Foto do painel', cancel: 'Depois' }))) await readPanel();
+  };
+  form.querySelector('#painel').onclick = readPanel;
+  const spoken = takePrefill('abastecer');
+  if (spoken?.campos?.amount) fillForm(form, { amount: spoken.campos.amount });
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (!st.panel) return toast('A foto do painel é obrigatória.');
+    try {
+      const body = { ...formData(form), photo: st.panel, pump_photo: st.pump };
+      const saved = await api('/abastecer', { method: 'POST', body });
+      toast(`✅ Diesel registrado${saved.truck_name ? ` no ${saved.truck_name}` : ''}`);
+      location.hash = '#/despesas';
+    } catch (err) {
+      toast(err.message);
+    }
+  };
 };
 
 // ADM que também faz serviço: a caixinha só aparece quando a função é ADM.
