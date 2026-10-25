@@ -523,17 +523,27 @@ button.chat-mic svg { width: 22px; height: 22px; }
 .selecting .photo-open.picked img { outline: 4px solid #25d366; outline-offset: -4px; }
 .selecting .photo-open.picked::after { content: '✓'; background: #25d366; color: #fff; font-weight: 700; line-height: 20px; text-align: center; }
 .share-bar[hidden] { display: none; }
-.truck-tires { display: block; width: 100%; max-width: 230px; margin: 6px auto; }
-.truck-tires .body { fill: #d9dde3; stroke: #8a929c; stroke-width: 2; }
-.truck-tires .bed { fill: #c4c9d0; }
-.truck-tires .glass { fill: #5d6b7a; }
-.truck-tires .bedline { stroke: #a3aab3; stroke-width: 2; fill: none; }
-.truck-tires .axle { fill: #6b7380; }
+.truck-tires { display: block; width: 100%; max-width: 250px; margin: 6px auto; }
+.truck-tires .paint { fill: url(#ramPaint); stroke: #7d858f; stroke-width: 1.5; }
+.truck-tires .crease { stroke: #c3c8cf; stroke-width: 1.5; fill: none; }
+.truck-tires .ram { font: 800 9px system-ui, sans-serif; fill: #59616b; text-anchor: middle; letter-spacing: 1px; }
+.truck-tires .chrome { fill: #9aa2ab; stroke: #5d646d; stroke-width: 1.5; }
+.truck-tires .glass { fill: url(#ramGlass); }
+.truck-tires .mirror { fill: #23282f; stroke: #111; }
+.truck-tires .arm { stroke: #23282f; stroke-width: 4; }
+.truck-tires .amber { fill: #ffb020; }
+.truck-tires .rack { fill: #2d3238; }
+.truck-tires .beacon { fill: #ffb020; stroke: #b36b00; }
+.truck-tires .frame, .truck-tires .axle { fill: #3a4048; }
+.truck-tires .bed { fill: url(#ramBed); stroke: #6b737c; stroke-width: 1.5; }
+.truck-tires .bedline { stroke: #7f878f; stroke-width: 1.2; fill: none; }
+.truck-tires .tail { fill: #e0262e; }
+.truck-tires .lift { fill: #f2c200; stroke: #8a6d00; }
 .truck-tires .tire { cursor: pointer; }
-.truck-tires .tread { fill: #2b2f36; stroke: #111; stroke-width: 2; }
-.truck-tires .grooves { stroke: #4d535c; stroke-width: 2; fill: none; }
-.truck-tires .tire.on .tread { fill: #25a55a; stroke: #157a3e; }
-.truck-tires .tire.on .grooves { stroke: #7be0a4; }
+.truck-tires .tread { fill: #1f2328; stroke: #0b0c0e; stroke-width: 1.5; }
+.truck-tires .grooves { stroke: #4a5059; stroke-width: 2; fill: none; }
+.truck-tires .tire.on .tread { fill: #22a858; stroke: #12753a; }
+.truck-tires .tire.on .grooves { stroke: #8be6af; }
 .truck-tires .lbl { font: 700 11px system-ui, sans-serif; fill: var(--muted); text-anchor: middle; }
-.truck-tires.small { width: 44px; margin: 0; flex: none; }
+.truck-tires.small { width: 54px; margin: 0; flex: none; }
 .tires-log { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
