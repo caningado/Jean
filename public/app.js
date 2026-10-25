@@ -457,6 +457,8 @@ screens.login = async () => {
 // Fundo verde claro = pago; vermelho claro = falta receber.
 // Serviço sem cobrança aparece como "Free".
 const priceText = (cents) => (cents === 0 ? 'Free' : money(cents));
+// Galões da despesa: "16.464 gal · $6.16/gal".
+const gallonsText = (e) => `${Number(e.gallons).toLocaleString('en-US', { maximumFractionDigits: 3 })} gal · ${money(Math.round(e.amount_cents / e.gallons))}/gal`;
 const payClass = (s) => (s.paid === true ? ' class="pago"' : s.paid === false ? ' class="nao-pago"' : '');
 
 screens.servicos = async (params) => {
@@ -1495,7 +1497,7 @@ screens.resumo = async (params) => {
     <div id="caixa"></div>
     ${state.me.role !== 'dono' && s.open_cents != null ? `<div class="card"><h2>Minhas pendências</h2><p>${s.open_cents || s.to_receive_cents ? `Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}` : 'Nada pendente 👍'}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
     ${state.me.role === 'dono' && (s.open_cents || s.to_receive_cents) ? `<div class="card"><h2>Pendências (todas)</h2><p>Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
-    ${s.expenses_by_category && Object.keys(s.expenses_by_category).length ? `<div class="card"><h2>Despesas</h2><ul class="list">${Object.entries(s.expenses_by_category).map(([k, v]) => `<li><div class="row"><span>${CATEGORIES[k] || k}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}
+    ${s.expenses_by_category && Object.keys(s.expenses_by_category).length ? `<div class="card"><h2>Despesas</h2><ul class="list">${Object.entries(s.expenses_by_category).map(([k, v]) => `<li><div class="row"><span>${CATEGORIES[k] || k}${k === 'combustivel' && s.fuel_gallons ? ` <span class="sub">${s.fuel_gallons.toLocaleString('en-US')} gal</span>` : ''}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}
     ${has('pagamentos') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/recebidos"><span>✅ Conferir caixa e banco (recebidos de serviços anteriores)</span><span>›</span></a>' : ''}
     ${state.me.role === 'dono' ? '<a class="card linkcard" href="#/relatorio"><span>🖨 Relatório do dia para imprimir</span><span>›</span></a>' : ''}
     ${has('planilha') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/planilha"><span>📊 Planilha do Excel</span><span>›</span></a>' : ''}`;
@@ -2664,18 +2666,20 @@ screens.despesas = async () => {
   view.innerHTML = `
     <form class="card" id="f">
       <h2>Nova despesa</h2>
+      <button type="button" class="secondary block" id="bomba">📷 Foto da bomba (lê o valor e os galões)</button>
       <div class="row2">
         <div><label>Valor</label><input name="amount" inputmode="decimal" required></div>
         <div><label>Tipo</label><select name="category">${Object.entries(CATEGORIES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
       </div>
+      <label>Galões (diesel) — opcional</label><input name="gallons" inputmode="decimal" placeholder="Ex.: 16.464">
       <label>Descrição</label><input name="description" placeholder="Diesel, pedágio I-90…">
       ${trucks.length ? `<label>Caminhão</label><select name="truck_id"><option value="">Nenhum (despesa geral)</option>${trucks.map((t) => `<option value="${t.id}"${t.id === defaultTruck ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>` : ''}
-      ${trucks.length ? '<label>Milhas do caminhão (painel) — opcional</label><input name="odometer" type="number" inputmode="numeric" placeholder="Ex.: depois de abastecer">' : ''}
+      ${trucks.length ? '<label>Milhas do caminhão (painel) — opcional</label><div class="actions"><input name="odometer" type="number" inputmode="numeric" placeholder="Ex.: depois de abastecer"><button type="button" class="secondary" id="painel">📷 Foto do painel</button></div>' : ''}
       <button class="block">Registrar</button>
     </form>
     <div class="card"><ul class="list">${
       list.length
-        ? list.map((e) => `<li><div class="row"><div>${CATEGORIES[e.category] || e.category}${e.description ? ' · ' + esc(e.description) : ''}<div class="sub">${when(e.created_at)}${state.me.role === 'dono' && e.user_name ? ' · ' + esc(e.user_name) : ''}${e.truck_name ? ' · 🚛 ' + esc(e.truck_name) : ''}</div></div>
+        ? list.map((e) => `<li><div class="row"><div>${CATEGORIES[e.category] || e.category}${e.description ? ' · ' + esc(e.description) : ''}${e.gallons ? `<div class="sub">⛽ ${gallonsText(e)}</div>` : ''}<div class="sub">${when(e.created_at)}${state.me.role === 'dono' && e.user_name ? ' · ' + esc(e.user_name) : ''}${e.truck_name ? ' · 🚛 ' + esc(e.truck_name) : ''}</div></div>
             <div class="right">${money(e.amount_cents)}<br><button class="danger" data-del="${e.id}">Apagar</button></div></div></li>`).join('')
         : '<li class="empty">Nenhuma despesa.</li>'
     }</ul></div>`;
@@ -2689,6 +2693,42 @@ screens.despesas = async () => {
       toast(err.message);
     }
   };
+  // Foto da bomba: o servidor lê o valor e os galões e preenche como diesel; a pessoa confere e registra.
+  view.querySelector('#bomba').onclick = async () => {
+    const file = await pickPhoto();
+    if (!file) return;
+    toast('Lendo a foto…');
+    try {
+      const read = await api('/expenses/ler-foto', { method: 'POST', raw: await shrinkImage(file, 2000), type: 'image/jpeg' });
+      const form = view.querySelector('#f');
+      fillForm(form, { amount: read.amount, gallons: read.gallons || '', category: 'combustivel', description: form.description.value || 'Diesel' });
+      const li = `Li $${read.amount}${read.gallons ? ` e ${read.gallons} galões` : ''}.`;
+      // Abasteceu: já pede a foto do painel para a milhagem (pedido do Caningado 25/10).
+      if (form.odometer) {
+        if (await ask(`⛽ ${li}\nAgora tire a foto do painel do caminhão para a milhagem.`, { ok: '📷 Foto do painel', cancel: 'Depois' })) await readPanel();
+      } else {
+        toast(`${li} Confira e toque em Registrar.`);
+      }
+      form.querySelector('button.block:not(#bomba)').focus();
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  // Foto do painel: lê a milhagem do odômetro.
+  async function readPanel() {
+    const file = await pickPhoto();
+    if (!file) return;
+    toast('Lendo o painel…');
+    try {
+      const read = await api('/expenses/ler-foto?tipo=painel', { method: 'POST', raw: await shrinkImage(file, 2000), type: 'image/jpeg' });
+      view.querySelector('#f').odometer.value = read.odometer;
+      toast(`Li ${read.odometer.toLocaleString('en-US')} mi no painel. Confira e toque em Registrar.`);
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+  const painel = view.querySelector('#painel');
+  if (painel) painel.onclick = readPanel;
   const spoken = takePrefill('despesa');
   if (spoken) {
     const form = view.querySelector('#f');

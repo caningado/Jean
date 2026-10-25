@@ -341,6 +341,17 @@ export function createBot(ctx) {
     if (media && !text.trim() && ai.enabled() && /^image\//.test(media.mime || 'image/') && !ctx.api.fotos?.mode?.(user.id)) {
       try {
         const read = await readPhotoText(ctx, media.buffer, media.mime);
+        // Foto da bomba: mostra o que leu e lança a despesa de diesel com o "sim".
+        if (read.tipo === 'bomba' && read.valor && ctx.has('despesas') && !conversation) {
+          const cmd = `abasteci ${read.valor.toFixed(2)}${read.galoes ? ` ${read.galoes} gal` : ''} diesel`;
+          saveConversation(user.id, 'ai_confirm', 0, { text: cmd });
+          return finish([...prefix, `⛽ Li na foto da bomba: *$${read.valor.toFixed(2)}*${read.galoes ? ` e *${read.galoes} galões*` : ''}.\nMande *sim* para lançar como despesa de diesel (ou outra coisa para deixar pra lá).`]);
+        }
+        // Foto do painel: mostra a milhagem que leu e atualiza o caminhão com o "sim".
+        if (read.tipo === 'painel' && read.milhas && ctx.has('manutencao') && !conversation) {
+          saveConversation(user.id, 'ai_confirm', 0, { text: `odometro ${read.milhas}` });
+          return finish([...prefix, `📏 Li no painel: *${read.milhas.toLocaleString('en-US')} mi*.\nMande *sim* para atualizar a milhagem do caminhão (ou outra coisa para deixar pra lá).`]);
+        }
         if (read.tipo === 'endereco' && read.texto && !conversation) {
           // Fora de um cadastro: mostra o que leu e pergunta se está certo (a Viviane só entra se estiver errado).
           lastPhoto.set(user.id, media);

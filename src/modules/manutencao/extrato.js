@@ -98,7 +98,8 @@ export function renderTruckMonth({ company, logo, data }) {
       }
       if (i % 2 === 1) doc.rect(L, y, W, 20).fill(SOFT);
       doc.font('Helvetica').fontSize(9).fillColor(DARK);
-      const vals = [dia(e.created_at), CATEGORIES[e.category] || e.category, e.description || '', e.user_name || '', amount(e.amount_cents)];
+      const gal = e.gallons ? `${Number(e.gallons).toLocaleString('en-US', { maximumFractionDigits: 3 })} gal` : '';
+      const vals = [dia(e.created_at), CATEGORIES[e.category] || e.category, [e.description, gal].filter(Boolean).join(' · '), e.user_name || '', amount(e.amount_cents)];
       cols.forEach((c, j) => doc.text(vals[j], c.x, y + 6, { width: c.w, align: c.align || 'left', lineBreak: false, ellipsis: true }));
       y += 20;
     });
