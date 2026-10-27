@@ -3582,8 +3582,12 @@ const VOICE_LABELS = {
   finalizar_servico: '✅ Serviço entregue',
   cancelar_servico: '✖ Serviço cancelado',
 };
+// Botões de áudio desligados no app (pedido do Caningado 27/10: não funcionavam bem).
+// O áudio pelo WhatsApp continua. Para voltar, troque VOICE_BUTTONS para true.
+const VOICE_BUTTONS = false;
 let voiceOn = null;
 async function voiceEnabled() {
+  if (!VOICE_BUTTONS) return false;
   if (voiceOn === null) voiceOn = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder) && (await api('/voice-command').then((r) => r.enabled).catch(() => false));
   return voiceOn;
 }
