@@ -611,6 +611,8 @@ function routes(api, ctx) {
 
   api.delete('/payments/:id', (req, res) => {
     if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode apagar pagamentos.');
+    // O link do cartão que apontava para esse pagamento fica sem pagamento.
+    ctx.db.prepare('UPDATE square_links SET payment_id = NULL WHERE payment_id = ?').run(Number(req.params.id));
     ctx.db.prepare('DELETE FROM payments WHERE id = ?').run(Number(req.params.id));
     res.json({ ok: true });
   });
