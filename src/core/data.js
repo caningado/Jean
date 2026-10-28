@@ -118,7 +118,7 @@ export function createCoreData(db, timeZone = 'America/New_York') {
     get(id) {
       return db.prepare(`${SERVICE_SELECT} WHERE s.id = ?`).get(id);
     },
-    list({ status, driverId, contactId, since, doneSince, hideCancelled = false, withQueue = false, noDriver = false, limit = 100 } = {}) {
+    list({ status, driverId, contactId, since, until, doneSince, doneUntil, hideCancelled = false, withQueue = false, noDriver = false, limit = 100 } = {}) {
       const where = [];
       const params = [];
       // Agendado que ainda não começou fica em Pendentes, mesmo já tendo motorista (pedido do Caningado 24/10).
@@ -147,6 +147,15 @@ export function createCoreData(db, timeZone = 'America/New_York') {
       if (doneSince) {
         where.push('COALESCE(s.completed_at, s.created_at) >= ?');
         params.push(doneSince);
+      }
+      // Busca por datas (ADM): até o fim do último dia escolhido.
+      if (until) {
+        where.push('s.created_at < ?');
+        params.push(until);
+      }
+      if (doneUntil) {
+        where.push('COALESCE(s.completed_at, s.created_at) < ?');
+        params.push(doneUntil);
       }
       const sql = `${SERVICE_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY s.id DESC LIMIT ?`;
       return db.prepare(sql).all(...params, limit);

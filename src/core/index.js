@@ -8,6 +8,7 @@ import { collectAlerts, servicesBlocked } from '../lib/daily.js';
 import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkServicePrice, FREE, isMapReference } from '../lib/validate.js';
 import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfWeekIso, startOfMonthIso, startOfYearIso, formatPhone, dayFormatter } from '../lib/util.js';
 import { speak, toWav, textoParaFala, MAX_FALA } from '../lib/tts.js';
+import { zonedMidnight } from '../modules/planilha/index.js';
 
 const migrations = [
   `CREATE TABLE users (
@@ -947,11 +948,28 @@ function routes(api, ctx) {
     const tz = ctx.config.timeZone;
     const starts = { dia: startOfDayIso, semana: startOfWeekIso, mes: startOfMonthIso };
     // Entregues contam pelo dia da entrega; "Todos" pelo dia em que o serviço foi aberto.
-    const start = starts[req.query.periodo]?.(tz) || null;
+    let start = starts[req.query.periodo]?.(tz) || null;
+    // ADM: busca por uma data ou um intervalo (de ... até, os dois dias entram).
+    let end = null;
+    const isDay = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+    if (req.user.role === 'dono' && isDay(req.query.de)) {
+      const de = req.query.de;
+      const ate = isDay(req.query.ate) ? req.query.ate : de;
+      if (ate < de) throw new HttpError(400, 'A data final tem que ser depois da inicial.');
+      const at = (day, plus = 0) => {
+        const [y, m, d] = day.split('-').map(Number);
+        const next = new Date(Date.UTC(y, m - 1, d + plus));
+        return zonedMidnight(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), tz);
+      };
+      start = at(de);
+      end = at(ate, 1);
+    }
     const doneSince = status === 'concluido' ? start : null;
     const since = status === 'concluido' ? null : start;
+    const doneUntil = status === 'concluido' ? end : null;
+    const until = status === 'concluido' ? null : end;
     // Cancelados não aparecem na lista (ficam guardados no histórico e no backup).
-    const list = data.services.list({ status, driverId, since, doneSince, hideCancelled: !status, withQueue: status === 'aberto', noDriver: status === 'pendente' && req.user.role === 'dono' && !req.query.driver, limit: Number(req.query.limit) || (start ? 2000 : 100) });
+    const list = data.services.list({ status, driverId, since, until, doneSince, doneUntil, hideCancelled: !status, withQueue: status === 'aberto', noDriver: status === 'pendente' && req.user.role === 'dono' && !req.query.driver, limit: Number(req.query.limit) || (start ? 2000 : 100) });
     // Pago ou não (para pintar a linha): só serviço com valor, em andamento ou entregue.
     // Serviço free conta como pago (fundo verde).
     const pag = ctx.api.pagamentos;

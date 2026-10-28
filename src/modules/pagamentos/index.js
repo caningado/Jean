@@ -50,6 +50,10 @@ const migrations = [
      created_at TEXT NOT NULL
    );
    CREATE INDEX square_links_order ON square_links(order_id);`,
+  // Conferência dos pagamentos pelo ADM (pedido do Caningado 28/10). Os que já existiam entram como conferidos.
+  `ALTER TABLE payments ADD COLUMN checked_at TEXT;
+   ALTER TABLE payments ADD COLUMN checked_by INTEGER REFERENCES users(id);
+   UPDATE payments SET checked_at = COALESCE(received_at, created_at) WHERE status = 'recebido';`,
 ];
 
 // Formas de pagamento que ficam na mão do motorista até ele entregar ao dono.
@@ -98,6 +102,40 @@ function addPayment(ctx, { serviceId, amountCents, method, payer = null, userId 
     .prepare('INSERT INTO payments (service_id, amount_cents, method, status, payer, received_by, created_at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
     .run(serviceId, amountCents, method, status, payer, status === 'recebido' ? userId : null, now, status === 'recebido' ? now : null);
   return ctx.db.prepare('SELECT * FROM payments WHERE id = ?').get(Number(info.lastInsertRowid));
+}
+
+// Avisa os ADM pelo WhatsApp quando entra pagamento (pedido do Caningado 28/10), marcando
+// os que estavam atrasados e os de cartão. Quem registrou não recebe o aviso.
+// items: [{ service, payment }] (uma baixa em lote vira uma mensagem só).
+export async function notifyPayments(ctx, items, byUserId = null) {
+  items = items.filter((i) => i.payment?.status === 'recebido');
+  if (!items.length || !ctx.send) return 0;
+  const admins = ctx.db.prepare("SELECT * FROM users WHERE active = 1 AND role = 'dono' AND id <> ?").all(byUserId || 0);
+  if (!admins.length) return 0;
+  const by = byUserId ? ctx.data.users.get(byUserId)?.name : null;
+  const rows = items.map(({ service, payment }) => {
+    const days = daysSince(service.completed_at || service.created_at);
+    return { service, payment, late: days >= ctx.config.overdueDays ? days : 0, left: balance(ctx, service).open_cents };
+  });
+  const total = rows.reduce((sum, r) => sum + r.payment.amount_cents, 0);
+  const card = rows.some((r) => r.payment.method === 'cartao');
+  const late = rows.filter((r) => r.late).length;
+  const title = `${late ? '⏰' : card ? '💳' : '💵'} *${rows.length > 1 ? `${rows.length} pagamentos recebidos` : 'Pagamento recebido'}${late ? (rows.length > 1 ? ` (${late} atrasado${late > 1 ? 's' : ''})` : ' de serviço atrasado') : ''}${card && !late ? ' no cartão' : ''}*`;
+  let sent = 0;
+  for (const admin of admins) {
+    const lines = rows.map((r) => {
+      const who = r.service.contact_name || r.service.vehicle || 'Cliente';
+      const how = METHODS[r.payment.method] + (r.payment.payer && r.payment.method !== 'cartao' ? ` (${r.payment.payer})` : '');
+      return `• #${ctx.data.services.ref(r.service, admin)} ${who}: ${formatMoney(r.payment.amount_cents)} – ${how}${r.payment.method === 'cartao' ? ' 💳' : ''}${r.late ? ` · ⏰ estava atrasado ${r.late} dias` : ''}${r.left > 0 ? ` · falta ${formatMoney(r.left)}` : ' · quitado ✅'}`;
+    });
+    const text = [title, ...lines, rows.length > 1 ? `Total: ${formatMoney(total)}` : '', by ? `Registrado por ${by}.` : ''].filter(Boolean).join('\n');
+    try {
+      if (await ctx.send(admin.phone, text)) sent++;
+    } catch (err) {
+      ctx.log?.(`Não consegui avisar ${admin.name} do pagamento`, err);
+    }
+  }
+  return sent;
 }
 
 // Quanto cada motorista tem em mãos: dinheiro e cheques recebidos menos o que o dono já recolheu.
@@ -261,9 +299,10 @@ export async function squarePaid(ctx, payment) {
   const row = addPayment(ctx, { serviceId: service.id, amountCents, method: 'cartao', payer: 'Square' });
   ctx.db.prepare('UPDATE square_links SET payment_id = ? WHERE order_id = ?').run(row.id, payment.order_id);
   const left = balance(ctx, service).open_cents;
+  const late = daysSince(service.completed_at || service.created_at);
   // O motorista vê o número do dia dele, nunca o número geral do serviço.
   const text = (person) =>
-    `💳 ${service.contact_name || 'Cliente'} pagou ${formatMoney(amountCents)} com cartão (Square) no serviço #${ctx.data.services.ref(service, person)}.${left ? `\nAinda falta ${formatMoney(left)}.` : '\nServiço quitado ✅'}`;
+    `💳 ${service.contact_name || 'Cliente'} pagou ${formatMoney(amountCents)} com cartão (Square) no serviço #${ctx.data.services.ref(service, person)}.${late >= ctx.config.overdueDays ? `\n⏰ Estava atrasado ${late} dias.` : ''}${left ? `\nAinda falta ${formatMoney(left)}.` : '\nServiço quitado ✅'}`;
   const people = ctx.db.prepare("SELECT * FROM users WHERE active = 1 AND (role = 'dono' OR id = ?)").all(service.driver_id || 0);
   for (const person of people) {
     try {
@@ -320,13 +359,18 @@ function alerts({ ctx, user }) {
   const clients = late.filter((s) => s.open_cents > 0);
   const insurers = late.filter((s) => s.to_receive_cents > 0);
   const out = [];
+  // Os 5 mais atrasados pelo nome, para o ADM saber quem cobrar.
+  const names = (list, cents, who) => {
+    const shown = list.slice(0, 5).map((s) => `${who(s)} ${formatMoney(cents(s))} (${s.days}d)`);
+    return ` – ${shown.join('; ')}${list.length > 5 ? `; e mais ${list.length - 5}` : ''}`;
+  };
   if (clients.length) {
     const total = clients.reduce((sum, s) => sum + s.open_cents, 0);
-    out.push({ text: `💰 ${clients.length} cliente(s) devendo há mais de ${ctx.config.overdueDays} dias: ${formatMoney(total)}`, href: '#/pendentes' });
+    out.push({ text: `💰 ${clients.length} cliente(s) devendo há mais de ${ctx.config.overdueDays} dias: ${formatMoney(total)}${names(clients, (s) => s.open_cents, (s) => s.company_name || s.contact_name || s.vehicle || `#${s.id}`)}`, href: '#/pendentes' });
   }
   if (insurers.length) {
     const total = insurers.reduce((sum, s) => sum + s.to_receive_cents, 0);
-    out.push({ text: `🧾 ${insurers.length} serviço(s) de seguradora sem pagar há mais de ${ctx.config.overdueDays} dias: ${formatMoney(total)}`, href: '#/pendentes' });
+    out.push({ text: `🧾 ${insurers.length} serviço(s) de seguradora sem pagar há mais de ${ctx.config.overdueDays} dias: ${formatMoney(total)}${names(insurers, (s) => s.to_receive_cents, (s) => s.payer || 'seguradora')}`, href: '#/pendentes' });
   }
   return out;
 }
@@ -335,7 +379,7 @@ const commands = [
   {
     names: ['pago', 'recebi', 'pagou'],
     help: '*pago 250 zelle* – registrar pagamento (zelle, dinheiro, cartão, cheque, seguradora, aaa...)',
-    run({ ctx, user, args }) {
+    async run({ ctx, user, args }) {
       const service = ctx.data.services.active(user);
       if (!service) return 'Nenhum serviço em andamento. Mande *abrir 12* para escolher o serviço.';
       let amountCents = null;
@@ -358,6 +402,7 @@ const commands = [
       }
       const payer = method.payer || (method.method === 'seguradora' && rest.length ? rest.join(' ') : null);
       const payment = addPayment(ctx, { serviceId: service.id, amountCents, method: method.method, payer, userId: user.id });
+      await notifyPayments(ctx, [{ service, payment }], user.id);
       const b = balance(ctx, service);
       const what =
         payment.status === 'a_receber'
@@ -521,22 +566,45 @@ function receivedEarlier(ctx, dia) {
   return { day, today, list, by_method: byMethod, total_cents: list.reduce((sum, p) => sum + p.amount_cents, 0) };
 }
 
+// Pagamentos para o ADM conferir: recebidos e ainda sem OK, menos os de serviço feito no mesmo dia do pagamento.
+function toCheck(ctx) {
+  const day = dayFormatter(ctx.config.timeZone);
+  return ctx.db
+    .prepare(
+      `SELECT p.id, p.service_id, p.amount_cents, p.method, p.payer, p.received_at, s.created_at AS service_created_at, s.completed_at AS service_completed_at,
+              c.name AS contact_name, s.vehicle, u.name AS received_by_name
+       FROM payments p JOIN services s ON s.id = p.service_id
+       LEFT JOIN contacts c ON c.id = s.contact_id LEFT JOIN users u ON u.id = p.received_by
+       WHERE p.status = 'recebido' AND p.checked_at IS NULL
+       ORDER BY p.received_at, p.id`
+    )
+    .all()
+    .filter((p) => {
+      const paid = day(p.received_at);
+      return paid !== day(p.service_created_at) && (!p.service_completed_at || paid !== day(p.service_completed_at));
+    });
+}
+
 function routes(api, ctx) {
-  api.post('/services/:id/payments', (req, res) => {
+  api.post('/services/:id/payments', async (req, res) => {
     const service = ctx.data.services.get(Number(req.params.id));
     if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
     const { amount, method, payer } = req.body || {};
     const amountCents = checkMoney(parseMoney(amount), { max: 20000, what: 'O valor do pagamento' });
     if (!METHODS[method]) throw new HttpError(400, 'Forma de pagamento inválida.');
-    res.status(201).json(addPayment(ctx, { serviceId: service.id, amountCents, method, payer, userId: req.user.id }));
+    const payment = addPayment(ctx, { serviceId: service.id, amountCents, method, payer, userId: req.user.id });
+    await notifyPayments(ctx, [{ service, payment }], req.user.id);
+    res.status(201).json(payment);
   });
 
   // Seguradora pagou: marca como recebido.
-  api.patch('/payments/:id', (req, res) => {
+  api.patch('/payments/:id', async (req, res) => {
     const payment = ctx.db.prepare('SELECT * FROM payments WHERE id = ?').get(Number(req.params.id));
-    if (!payment || !canSee(req.user, ctx.data.services.get(payment.service_id))) throw new HttpError(404, 'Pagamento não encontrado.');
+    const service = payment && ctx.data.services.get(payment.service_id);
+    if (!payment || !canSee(req.user, service)) throw new HttpError(404, 'Pagamento não encontrado.');
     if (req.body?.status === 'recebido' && payment.status !== 'recebido') {
       ctx.db.prepare("UPDATE payments SET status = 'recebido', received_at = ?, received_by = ? WHERE id = ?").run(nowIso(), req.user.id, payment.id);
+      await notifyPayments(ctx, [{ service, payment: ctx.db.prepare('SELECT * FROM payments WHERE id = ?').get(payment.id) }], req.user.id);
     }
     res.json(ctx.db.prepare('SELECT * FROM payments WHERE id = ?').get(payment.id));
   });
@@ -549,7 +617,7 @@ function routes(api, ctx) {
 
   // Baixa em vários serviços de uma vez, com a mesma forma. Sem valor, paga o que falta em cada um.
   // Com valor (ex.: cliente pagou $200 para 3 serviços), quita os mais antigos primeiro e o resto fica parcial.
-  api.post('/payments/lote', (req, res) => {
+  api.post('/payments/lote', async (req, res) => {
     const { service_ids: ids, method, amount } = req.body || {};
     if (!METHODS[method] || method === 'seguradora') throw new HttpError(400, 'Forma de pagamento inválida.');
     if (!Array.isArray(ids) || !ids.length || ids.length > 200) throw new HttpError(400, 'Escolha os serviços.');
@@ -570,14 +638,26 @@ function routes(api, ctx) {
       if (left <= 0) break;
       const pay = Math.min(open, left);
       left -= pay;
-      done.push({ ...addPayment(ctx, { serviceId: service.id, amountCents: pay, method, userId: req.user.id }), quitado: pay === open });
+      done.push({ ...addPayment(ctx, { serviceId: service.id, amountCents: pay, method, userId: req.user.id }), quitado: pay === open, service });
     }
+    await notifyPayments(ctx, done.map(({ service, ...payment }) => ({ service, payment })), req.user.id);
     res.status(201).json({
       count: done.length,
       total_cents: done.reduce((sum, p) => sum + p.amount_cents, 0),
       partial: done.filter((p) => !p.quitado).map((p) => p.service_id),
       still_open_cents: owed - done.reduce((sum, p) => sum + p.amount_cents, 0),
     });
+  });
+
+  api.get('/payments/conferir', (req, res) => {
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM confere os pagamentos.');
+    res.json(toCheck(ctx));
+  });
+  api.post('/payments/:id/ok', (req, res) => {
+    if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM confere os pagamentos.');
+    const info = ctx.db.prepare("UPDATE payments SET checked_at = ?, checked_by = ? WHERE id = ? AND status = 'recebido' AND checked_at IS NULL").run(nowIso(), req.user.id, Number(req.params.id));
+    if (!info.changes) throw new HttpError(404, 'Pagamento não encontrado ou já conferido.');
+    res.json({ ok: true });
   });
 
   api.get('/payments/recebidos', (req, res) => {

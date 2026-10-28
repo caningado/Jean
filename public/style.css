@@ -537,3 +537,12 @@ button.chat-mic svg { width: 22px; height: 22px; }
 .truck-tires .lbl { font: 700 11px system-ui, sans-serif; fill: var(--muted); text-anchor: middle; }
 .truck-tires.small { width: 44px; margin: 0; flex: none; }
 .tires-log { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
+.datas { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; margin: 0; }
+.datas label { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 0; white-space: nowrap; }
+.datas input { margin: 0; }
+.datas button { margin: 0; }
+[data-ok] { white-space: nowrap; margin: 0; }
+.toolbar { flex-wrap: wrap; }
+.toolbar .datas { flex: none; }
+.toolbar .datas input { flex: none; width: auto; padding: 8px 10px; }
+.toolbar .datas button { padding: 8px 16px; }
