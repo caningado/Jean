@@ -966,7 +966,7 @@ screens.servico = async (params, id) => {
       <h2>Pagamento</h2>
       ${s.payments?.length ? `<ul class="list">${s.payments.map((p) => `<li><div class="row">
           <div>${METHODS[p.method]}${p.payer ? ' · ' + esc(p.payer) : ''}<div class="sub">${p.status === 'recebido' ? 'Recebido ' + when(p.received_at) + (p.received_by_name ? ' por ' + esc(p.received_by_name) : '') : 'A receber'}</div></div>
-          <div class="right">${money(p.amount_cents)}${p.status === 'a_receber' ? `<br><button class="secondary" data-received="${p.id}">Recebi</button>` : ''}</div>
+          <div class="right">${money(p.amount_cents)}${p.status === 'a_receber' ? `<br><button class="secondary" data-received="${p.id}">Recebi</button>` : ''}${owner ? `<br><button class="danger small" data-delpayment="${p.id}">Apagar</button>` : ''}</div>
         </div></li>`).join('')}</ul>` : ''}
       ${b ? `<p>${b.open_cents ? `Falta receber: <strong>${money(b.open_cents)}</strong>` : s.price_cents ? '<strong>Quitado ✅</strong>' : ''}${b.to_receive_cents ? `<br>A receber de seguradora: ${money(b.to_receive_cents)}` : ''}</p>` : ''}
       <form id="payForm">
@@ -1215,8 +1215,12 @@ screens.servico = async (params, id) => {
     payForm.method.onchange = () => payForm.querySelectorAll('.payer').forEach((el) => el.classList.toggle('hidden', payForm.method.value !== 'seguradora'));
     payForm.onsubmit = async (e) => {
       e.preventDefault();
+      // Segunda confirmação antes de gravar (pedido do Caningado 28/10).
+      const body = formData(payForm);
+      const quem = body.method === 'seguradora' && body.payer ? ` (${body.payer})` : '';
+      if (!(await ask(`Confirmar pagamento de $${String(body.amount).trim()} por ${METHODS[body.method]}${quem}?`, { ok: 'Confirmar', cancel: 'Voltar' }))) return;
       try {
-        await api(`/services/${id}/payments`, { method: 'POST', body: formData(payForm) });
+        await api(`/services/${id}/payments`, { method: 'POST', body });
         toast('Pagamento registrado');
         reload();
       } catch (err) {
@@ -1261,8 +1265,24 @@ screens.servico = async (params, id) => {
       if (message) shareText(message, s.contact_phone);
     });
   }
+  // ADM apaga pagamento lançado errado.
+  view.querySelectorAll('[data-delpayment]').forEach((btn) => {
+    btn.onclick = async () => {
+      const p = s.payments.find((x) => String(x.id) === btn.dataset.delpayment);
+      if (!(await ask(`Apagar o pagamento de ${money(p.amount_cents)} (${METHODS[p.method] || p.method})? Não dá para desfazer.`, { ok: 'Apagar', cancel: 'Voltar', danger: true }))) return;
+      try {
+        await api(`/payments/${p.id}`, { method: 'DELETE' });
+        toast('Pagamento apagado');
+        reload();
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+  });
   view.querySelectorAll('[data-received]').forEach((btn) => {
     btn.onclick = async () => {
+      const p = s.payments.find((x) => String(x.id) === btn.dataset.received);
+      if (!(await ask(`Confirmar que recebeu ${money(p.amount_cents)}${p.payer ? ` de ${p.payer}` : ''}?`, { ok: 'Confirmar', cancel: 'Voltar' }))) return;
       await api(`/payments/${btn.dataset.received}`, { method: 'PATCH', body: { status: 'recebido' } });
       reload();
     };

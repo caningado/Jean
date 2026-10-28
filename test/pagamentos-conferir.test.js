@@ -78,3 +78,15 @@ test('ADM busca serviços por intervalo de datas', async (t) => {
   assert.deepEqual((await ids(`&de=${day(Date.now() - 12 * DAY)}&ate=${day(Date.now())}`)).sort(), [old.id, today.id].sort());
   assert.equal((await call('GET', `/services?status=&de=${day(Date.now())}&ate=${day(Date.now() - DAY)}`)).status, 400);
 });
+
+test('ADM apaga pagamento lançado errado (mesmo o do link do cartão); motorista não pode', async (t) => {
+  const { ctx, today } = setup();
+  const owner = await serve(t, ctx, OWNER_PHONE, '1234');
+  const { body: p } = await owner('POST', `/services/${today.id}/payments`, { amount: '90', method: 'cartao' });
+  ctx.db.prepare("INSERT INTO square_links (service_id, amount_cents, url, order_id, payment_id, created_at) VALUES (?, 9000, 'https://x', 'o1', ?, ?)").run(today.id, p.id, new Date().toISOString());
+  const drv = await serve(t, ctx, DRIVER_PHONE, '5678');
+  assert.equal((await drv('DELETE', `/payments/${p.id}`)).status, 403);
+  assert.equal((await owner('DELETE', `/payments/${p.id}`)).status, 200);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM payments').get().n, 0);
+  assert.equal(ctx.db.prepare('SELECT payment_id FROM square_links').get().payment_id, null);
+});
