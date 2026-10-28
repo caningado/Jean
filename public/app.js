@@ -269,6 +269,7 @@ const ICONS = {
   backup: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
   robo: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/>',
   mais: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
+  conferir: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
   sair: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
 };
 // Telas de dentro apontam para o item do menu de onde vieram.
@@ -284,6 +285,7 @@ function renderSide() {
       'Financeiro',
       [
         has('pagamentos') ? item('pendentes', '#/pendentes', owner ? 'Pendências' : 'Minhas pendências') : '',
+        has('pagamentos') && owner ? item('conferir', '#/conferir', 'Conferir pagamentos') : '',
         has('comissao') ? item('comissao', owner ? '#/comissao' : `#/motorista/${state.me.id}`, owner ? 'Pagar motoristas' : 'Meus ganhos') : '',
         has('despesas') ? item('despesas', '#/despesas', 'Despesas') : '',
         has('planilha') && owner ? item('planilha', '#/planilha', 'Planilha do Excel') : '',
@@ -468,10 +470,15 @@ screens.servicos = async (params) => {
   // Entregues: abre no dia de hoje; dá para trocar para a semana ou o mês.
   // "Todos" (só dono/sócio): também por período, de todos os motoristas.
   const comPeriodo = status === 'concluido' || (status === '' && state.me.role === 'dono');
-  const periodo = comPeriodo ? (['semana', 'mes'].includes(params.get('periodo')) ? params.get('periodo') : 'dia') : '';
+  // ADM no computador: também busca por uma data ou um intervalo de datas.
+  const porDatas = state.me.role === 'dono' && isDesk();
+  const periodo = comPeriodo ? (['semana', 'mes'].includes(params.get('periodo')) || (porDatas && params.get('periodo') === 'datas') ? params.get('periodo') : 'dia') : '';
+  const today = new Intl.DateTimeFormat('en-CA').format(new Date());
+  const de = periodo === 'datas' ? params.get('de') || today : '';
+  const ate = periodo === 'datas' ? params.get('ate') || de : '';
   // O ADM pode ver só os serviços de um motorista. A lista tem só quem tem cargo de motorista.
   const drivers = state.me.role === 'dono' ? (await api('/users')).filter((d) => drives(d) || String(d.id) === driver) : [];
-  const query = (s, d, p = '') => `#/servicos?status=${s}${d ? `&driver=${d}` : ''}${p ? `&periodo=${p}` : ''}`;
+  const query = (s, d, p = '', dates = p === 'datas' ? `&de=${de || today}&ate=${ate || de || today}` : '') => `#/servicos?status=${s}${d ? `&driver=${d}` : ''}${p ? `&periodo=${p}` : ''}${dates}`;
   // Fila: serviços pendentes, que ainda não têm motorista trabalhando.
   // Só o dono vê a fila: é ele quem escolhe o motorista.
   const fila = state.me.role === 'dono' ? await api('/services?status=pendente').catch(() => []) : [];
@@ -481,7 +488,8 @@ screens.servicos = async (params) => {
     <div class="segmented">
       ${state.me.role === 'dono' ? `<button data-s="pendente">Pendentes${fila.length ? ` <span class="badge pendente">${fila.length}</span>` : ''}</button>` : has('agenda') ? `<button data-s="pendente">Pendentes${agendados.length ? ` <span class="badge pendente">${agendados.length}</span>` : ''}</button>` : ''}<button data-s="aberto">Andamento</button><button data-s="concluido">Entregues</button>${state.me.role === 'dono' ? '<button data-s="">Todos</button>' : ''}
     </div>
-    ${periodo ? `<div class="segmented periodo">${[['dia', 'Hoje'], ['semana', 'Semana'], ['mes', 'Mês']].map(([p, l]) => `<button data-p="${p}" class="${p === periodo ? 'active' : ''}">${l}</button>`).join('')}</div>` : ''}
+    ${periodo ? `<div class="segmented periodo">${[['dia', 'Hoje'], ['semana', 'Semana'], ['mes', 'Mês'], ...(porDatas ? [['datas', '📅 Datas']] : [])].map(([p, l]) => `<button data-p="${p}" class="${p === periodo ? 'active' : ''}">${l}</button>`).join('')}</div>` : ''}
+    ${periodo === 'datas' ? `<form class="datas" id="datas"><label>De <input type="date" name="de" value="${de}" max="${today}" required></label><label>Até <input type="date" name="ate" value="${ate}" max="${today}" required></label><button>Buscar</button></form>` : ''}
     ${drivers.length > 1 ? `<select id="driver" aria-label="Motorista"><option value="">Todos os motoristas</option>${drivers.map((d) => `<option value="${d.id}" ${String(d.id) === driver ? 'selected' : ''}>${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select>` : ''}
     <div class="card"><ul class="list" id="list"><li class="empty">Carregando…</li></ul></div>`;
   view.querySelectorAll('.segmented:not(.periodo) button').forEach((b) => {
@@ -489,11 +497,22 @@ screens.servicos = async (params) => {
     b.onclick = () => (location.hash = query(b.dataset.s, driver));
   });
   view.querySelectorAll('.periodo button').forEach((b) => (b.onclick = () => (location.hash = query(status, driver, b.dataset.p))));
+  const datas = view.querySelector('#datas');
+  if (datas) {
+    datas.de.onchange = () => {
+      if (datas.ate.value < datas.de.value) datas.ate.value = datas.de.value;
+    };
+    datas.onsubmit = (e) => {
+      e.preventDefault();
+      if (datas.ate.value < datas.de.value) return toast('A data final tem que ser depois da inicial.');
+      location.hash = query(status, driver, 'datas', `&de=${datas.de.value}&ate=${datas.ate.value}`);
+    };
+  }
   const select = view.querySelector('#driver');
   if (select) select.onchange = () => (location.hash = query(status, select.value, periodo));
   let list;
   try {
-    list = await api(`/services?status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}${periodo ? `&periodo=${periodo}` : ''}`);
+    list = await api(`/services?status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}${periodo === 'datas' ? `&de=${de}&ate=${ate}` : periodo ? `&periodo=${periodo}` : ''}`);
   } catch (err) {
     // Lista suspensa por falta da milhagem da semana: mostra o que fazer.
     if (!/suspensa/.test(err.message)) throw err;
@@ -509,7 +528,12 @@ screens.servicos = async (params) => {
   }
   const empty = status === 'pendente' ? (state.me.role === 'dono' ? 'Nenhum serviço na fila. 👍' : 'Nenhum serviço agendado para você.') : (status === 'concluido'
         ? { dia: 'Nenhum serviço entregue hoje.', semana: 'Nenhum serviço entregue nesta semana.', mes: 'Nenhum serviço entregue neste mês.' }
-        : { dia: 'Nenhum serviço hoje.', semana: 'Nenhum serviço nesta semana.', mes: 'Nenhum serviço neste mês.' })[periodo] || 'Nenhum serviço aqui.';
+        : { dia: 'Nenhum serviço hoje.', semana: 'Nenhum serviço nesta semana.', mes: 'Nenhum serviço neste mês.' })[periodo] || (periodo === 'datas' ? 'Nenhum serviço nessas datas.' : 'Nenhum serviço aqui.');
+  // ADM no computador: aviso dos pagamentos esperando o OK.
+  if (state.me.role === 'dono' && isDesk() && has('pagamentos')) {
+    const conferir = await api('/payments/conferir').catch(() => []);
+    if (conferir.length) view.querySelector('.segmented').insertAdjacentHTML('afterend', `<a class="card linkcard conferir-card" href="#/conferir"><span>✅ <strong>${conferir.length}</strong> pagamento(s) para conferir · ${money(conferir.reduce((sum, p) => sum + p.amount_cents, 0))}</span><span>›</span></a>`);
+  }
   if (status === 'aberto' && fila.length) {
     view.querySelector('.segmented').insertAdjacentHTML('afterend', `<a class="card linkcard" href="${query('pendente', driver)}"><span>⏳ <strong>${fila.length}</strong> serviço(s) na fila, sem motorista</span><span>›</span></a>`);
   }
@@ -524,10 +548,10 @@ screens.servicos = async (params) => {
     tools.prepend(segmented);
     const per = view.querySelector('.periodo');
     if (per) segmented.after(per);
+    if (datas) (per || segmented).after(datas);
     if (select) tools.append(select);
     view.prepend(tools);
-    const filaCard = tools.querySelector('.linkcard');
-    if (filaCard) tools.after(filaCard);
+    [...tools.querySelectorAll('.linkcard')].reverse().forEach((card) => tools.after(card));
     view.querySelector('.card:last-child').outerHTML = list.length
       ? `<div class="card table-card"><table class="table">
           <thead><tr><th>#</th><th>Cliente</th><th>Veículo</th><th>Retirada → Destino</th>${owner ? '<th>Motorista</th>' : ''}<th>Data</th><th class="num">Valor</th><th>Status</th></tr></thead>
@@ -1552,6 +1576,7 @@ screens.resumo = async (params) => {
     ${state.me.role !== 'dono' && s.open_cents != null ? `<div class="card"><h2>Minhas pendências</h2><p>${s.open_cents || s.to_receive_cents ? `Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}` : 'Nada pendente 👍'}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
     ${state.me.role === 'dono' && (s.open_cents || s.to_receive_cents) ? `<div class="card"><h2>Pendências (todas)</h2><p>Clientes: ${money(s.open_cents)}<br>Seguradoras: ${money(s.to_receive_cents)}</p><a class="btn secondary" href="#/pendentes">Ver lista</a></div>` : ''}
     ${s.expenses_by_category && Object.keys(s.expenses_by_category).length ? `<div class="card"><h2>Despesas</h2><ul class="list">${Object.entries(s.expenses_by_category).map(([k, v]) => `<li><div class="row"><span>${CATEGORIES[k] || k}${k === 'combustivel' && s.fuel_gallons ? ` <span class="sub">${s.fuel_gallons.toLocaleString('en-US')} gal</span>` : ''}</span><span>${money(v)}</span></div></li>`).join('')}</ul></div>` : ''}
+    ${has('pagamentos') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/conferir"><span>✅ Conferir pagamentos (dar OK em cada um)</span><span>›</span></a>' : ''}
     ${has('pagamentos') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/recebidos"><span>✅ Conferir caixa e banco (recebidos de serviços anteriores)</span><span>›</span></a>' : ''}
     ${state.me.role === 'dono' ? '<a class="card linkcard" href="#/relatorio"><span>🖨 Relatório do dia para imprimir</span><span>›</span></a>' : ''}
     ${has('planilha') && state.me.role === 'dono' ? '<a class="card linkcard" href="#/planilha"><span>📊 Planilha do Excel</span><span>›</span></a>' : ''}`;
@@ -1710,6 +1735,47 @@ screens.recebidos = async (params) => {
         <div class="right">${money(p.amount_cents)}<br><span class="sub">${METHODS[p.method] || esc(p.method)}</span></div></a></li>`)
       .join('')}</ul></div>` : ''}`;
   view.querySelector('#dia').onchange = (e) => e.target.value && (location.hash = `#/recebidos?dia=${e.target.value}`);
+};
+
+// Pagamentos para o ADM dar OK, um por um. Só saem da lista depois do OK.
+// Pagamento de serviço feito no mesmo dia não entra (pedido do Caningado 28/10).
+screens.conferir = async () => {
+  setScreen('Conferir pagamentos', { tab: 'resumo', back: '#/resumo' });
+  const list = await api('/payments/conferir');
+  const day = (iso) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  const total = () => money(list.reduce((sum, p) => sum + p.amount_cents, 0));
+  const draw = () => {
+    view.innerHTML = `<div class="card"><p class="sub">Pagamentos recebidos de serviços de outro dia. Confira no caixa ou no banco e dê <strong>OK</strong> em cada um. Pagamento de serviço feito no mesmo dia não entra.</p>
+      <p>${list.length ? `<strong>${list.length}</strong> para conferir · ${total()}` : ''}</p></div>
+      <div class="card${isDesk() ? ' table-card' : ''}">${
+        !list.length
+          ? '<p class="empty">Nada para conferir 👍</p>'
+          : isDesk()
+            ? `<table class="table"><thead><tr><th>Recebido</th><th>#</th><th>Cliente</th><th>Serviço de</th><th>Forma</th><th>Recebido por</th><th class="num">Valor</th><th></th></tr></thead><tbody>${list
+                .map((p) => `<tr><td>${when(p.received_at)}</td><td><a href="#/servico/${p.service_id}">${p.service_id}</a></td><td>${esc(p.contact_name || p.vehicle || 'Serviço')}</td><td>${day(p.service_completed_at || p.service_created_at)}</td>
+                  <td>${METHODS[p.method] || esc(p.method)}${p.payer ? ` · ${esc(p.payer)}` : ''}</td><td>${esc(p.received_by_name || '')}</td><td class="num">${money(p.amount_cents)}</td><td><button type="button" data-ok="${p.id}">✓ OK</button></td></tr>`)
+                .join('')}</tbody></table>`
+            : `<ul class="list">${list
+                .map((p) => `<li><div class="row"><a href="#/servico/${p.service_id}" style="flex:1"><div><strong>#${p.service_id} ${esc(p.contact_name || p.vehicle || 'Serviço')} · ${money(p.amount_cents)}</strong>
+                  <div class="sub">${METHODS[p.method] || esc(p.method)}${p.payer ? ` · ${esc(p.payer)}` : ''} · recebido ${when(p.received_at)}${p.received_by_name ? ` por ${esc(p.received_by_name)}` : ''} · serviço de ${day(p.service_completed_at || p.service_created_at)}</div></div></a>
+                  <button type="button" data-ok="${p.id}">✓ OK</button></div></li>`)
+                .join('')}</ul>`
+      }</div>`;
+    view.querySelectorAll('[data-ok]').forEach((b) => {
+      b.onclick = async () => {
+        b.disabled = true;
+        try {
+          await api(`/payments/${b.dataset.ok}/ok`, { method: 'POST' });
+          list.splice(list.findIndex((p) => String(p.id) === b.dataset.ok), 1);
+          draw();
+        } catch (err) {
+          b.disabled = false;
+          toast(err.message);
+        }
+      };
+    });
+  };
+  draw();
 };
 
 // Serviços agendados (dia e hora marcados), do mais próximo ao mais longe.
