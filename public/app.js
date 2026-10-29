@@ -3454,6 +3454,13 @@ async function guidedPhotos(serviceId, kind, doneAngles = [], onlyAngle = null) 
     const want = wanted();
     try {
       if (!want) return screen.orientation?.unlock?.();
+      // App instalado já gira sem tela cheia. Só pede tela cheia se precisar: senão o Android
+      // mostra "Para sair da tela cheia..." por cima do botão de tirar foto.
+      try {
+        return await screen.orientation.lock(want);
+      } catch {}
+      // Frente e traseira (em pé): não vale a tela cheia só para travar, o celular já está em pé.
+      if (want === 'portrait') return;
       if (!document.fullscreenElement && overlay.requestFullscreen) {
         await overlay.requestFullscreen({ navigationUI: 'hide' });
         fullscreen = true;
