@@ -198,7 +198,9 @@ function dialog({ title = '', text = '', input = null, choices = null, ok = 'OK'
     back.querySelector('[data-act="no"]').onclick = no;
     back.querySelector('[data-act="yes"]')?.addEventListener('click', yes);
     back.querySelectorAll('[data-i]').forEach((b) => (b.onclick = () => done(Number(b.dataset.i))));
-    back.onclick = (e) => e.target === back && no();
+    back.onclick = (e) => {
+      if (e.target === back) no();
+    };
     document.addEventListener('keydown', onKey);
     document.body.append(back);
     (field || back.querySelector('[data-act="yes"]') || back.querySelector('[data-i]'))?.focus();
@@ -400,7 +402,9 @@ function linkRows(root) {
       if (e.target.closest('a, button, input, select')) return;
       location.hash = tr.dataset.href;
     };
-    tr.onkeydown = (e) => e.key === 'Enter' && tr.click();
+    tr.onkeydown = (e) => {
+      if (e.key === 'Enter') tr.click();
+    };
   });
 }
 
@@ -1483,7 +1487,10 @@ function searchPicker(box, { placeholder, items, onPick }) {
     clearTimeout(t);
     t = setTimeout(show, 250);
   };
-  input.onkeydown = (e) => e.key === 'Enter' && e.preventDefault();
+  // Corpo com chaves: devolver false aqui cancelaria todas as teclas e o campo não aceitaria texto.
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') e.preventDefault();
+  };
   show();
 }
 // Janela com busca (searchPicker). Devolve o item escolhido, null para "nenhum" ou undefined se voltou.
@@ -1502,7 +1509,9 @@ function pickDialog({ title, placeholder, none, items }) {
     const onKey = (e) => e.key === 'Escape' && done(undefined);
     back.querySelector('[data-act="no"]').onclick = () => done(undefined);
     back.querySelector('[data-none]')?.addEventListener('click', () => done(null));
-    back.onclick = (e) => e.target === back && done(undefined);
+    back.onclick = (e) => {
+      if (e.target === back) done(undefined);
+    };
     document.addEventListener('keydown', onKey);
     document.body.append(back);
     searchPicker(back.querySelector('.pick-box'), { placeholder, items, onPick: done });
@@ -3346,7 +3355,9 @@ function viewPhoto(photo, label, canDelete) {
     };
     const onKey = (e) => e.key === 'Escape' && done(false);
     back.querySelector('[data-act="close"]').onclick = () => done(false);
-    back.onclick = (e) => e.target === back && done(false);
+    back.onclick = (e) => {
+      if (e.target === back) done(false);
+    };
     const del = back.querySelector('[data-act="delete"]');
     if (del) {
       del.onclick = async () => {
