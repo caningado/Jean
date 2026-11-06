@@ -79,7 +79,7 @@ export function createBot(ctx) {
       try {
         data[step.key] = await step.parse(answer, { ctx, user, data });
       } catch (err) {
-        if (err instanceof ValidationError) return [`⚠️ ${err.message}`, step.ask(data, ctx)];
+        if (err instanceof ValidationError) return [`⚠️ ${err.message}`, ...[].concat(step.ask(data, ctx))];
         throw err;
       }
     }
@@ -279,7 +279,10 @@ export function createBot(ctx) {
     if (sameCar) {
       fotos.saveDoc({ serviceId: active.id, buffer: doc.buffer, mime: doc.mime, name: doc.name, userId: user.id });
       if (read?.vin && !active.vin && ctx.api.vin?.remember(user.id, read.vin)) await ctx.api.vin.attachPending(user, active);
-      return `📄 Documento guardado no serviço #${ctx.data.services.ref(active, user)}.${read?.vin && !active.vin ? ` VIN ${read.vin} salvo.` : ''} Aparece no painel, no serviço.`;
+      const newVin = read?.vin && !active.vin;
+      const saved = `📄 Documento guardado no serviço #${ctx.data.services.ref(active, user)}.${newVin ? ' VIN acima salvo.' : ''} Aparece no painel, no serviço.`;
+      // O VIN vai sozinho numa mensagem, para copiar fácil.
+      return newVin ? [read.vin, saved] : saved;
     }
     if (!read) {
       return ai.enabled()
@@ -293,13 +296,11 @@ export function createBot(ctx) {
     fs.writeFileSync(file, doc.buffer);
     if (read.vin) ctx.api.vin?.remember(user.id, read.vin);
     clearConversation(user.id);
-    const extras = [
-      read.vin && `VIN: ${read.vin}`,
-      read.observacoes && `Obs.: ${read.observacoes}`,
-    ].filter(Boolean);
+    const extras = [read.observacoes && `Obs.: ${read.observacoes}`].filter(Boolean);
     const reply = await startNewService(user, read.novo, { _doc: { file, mime: doc.mime, name: doc.name }, _notes: read.observacoes || null });
     if (extras.length && reply[0]?.startsWith('📝')) reply[0] += '\n' + extras.join('\n');
-    return [`📄 Li o ${read.tipo || 'documento'}.`, ...reply];
+    // O VIN vai sozinho numa mensagem, para copiar fácil.
+    return [`📄 Li o ${read.tipo || 'documento'}.`, ...(read.vin ? [read.vin] : []), ...reply];
   }
 
   // Ponto de entrada. Sempre devolve uma lista de textos para responder.

@@ -41,8 +41,9 @@ test('foto do VIN pelo WhatsApp é lida sem chave do Claude', async () => {
   const ctx = makeContext();
   await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'sim');
   const media = { buffer: await barcodePng(VIN, 'Code39'), mime: 'image/png' };
-  const [reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: 'vin', media });
-  assert.match(reply, new RegExp(`Li o VIN: \\*${VIN}\\*`));
+  const [vin, reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: 'vin', media });
+  assert.equal(vin, VIN); // o VIN vai sozinho, para copiar
+  assert.match(reply, /Li esse VIN\.\nEstá certo/);
   const [saved] = await chat(ctx, DRIVER_PHONE, 'sim');
   assert.match(saved, /VIN 1HGCM82633A004352 salvo/);
 });
@@ -90,14 +91,15 @@ test('foto sem legenda com código de barras de VIN: entende que é o VIN, sem p
   const ctx = makeContext();
   await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'sim');
   const media = { buffer: await barcodePng(VIN, 'Code39'), mime: 'image/png' };
-  const [reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media });
-  assert.match(reply, new RegExp(`Li o VIN: \\*${VIN}\\*`));
+  const [vin, reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media });
+  assert.equal(vin, VIN);
+  assert.match(reply, /Li esse VIN/);
 });
 
 test('foto de VIN sem serviço aberto é lida pelo código de barras', async () => {
   const ctx = makeContext();
   const media = { buffer: await barcodePng(VIN, 'Code39'), mime: 'image/png' };
-  const [reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media });
-  assert.match(reply, new RegExp(`VIN: \\*${VIN}\\*`));
+  const [vin, reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media });
+  assert.equal(vin, VIN);
   assert.match(reply, /Não tem serviço aberto/);
 });
