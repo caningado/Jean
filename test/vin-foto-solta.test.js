@@ -26,8 +26,8 @@ test('foto de VIN sem serviço aberto: lê, mostra o carro e põe no próximo se
   const prompts = fakeApis(t, answers);
   const media = { buffer: Buffer.from([0xff, 0xd8, 0xff]), mime: 'image/jpeg' };
 
-  const [read] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media });
-  assert.match(read, /VIN: \*3C6URVJG2JE139479\*/);
+  const [vin, read] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media });
+  assert.equal(vin, '3C6URVJG2JE139479'); // o VIN vai sozinho, para copiar
   assert.match(read, /Veículo: 2018 RAM 2500/);
   assert.match(read, /Quando você mandar \*novo\*/);
 

@@ -42,7 +42,7 @@ test('gate pass em PDF pelo WhatsApp: lê, abre o serviço e o PDF fica anexado'
   assert.match(all, /Li o gate pass/);
   assert.match(all, /Cliente: Hello Auto Sales LLC/);
   assert.match(all, /Pegar: CarMax - Clermont/);
-  assert.match(all, /VIN: 1C6RR6TT7LS111070/);
+  assert.ok(sent.includes('1C6RR6TT7LS111070')); // o VIN vai sozinho, para copiar
   assert.match(all, /no runner/);
 
   // Pergunta o que falta (milhas, valor) e confirma.
@@ -60,8 +60,9 @@ test('PDF do mesmo carro com o serviço aberto: fica anexado nele', async (t) =>
   const ctx = makeContext({ GEMINI_API_KEY: 'k' });
   fakeGemini(t, CARMAX);
   await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'Rua Alfa', 'pular', 'pular', 'pular', 'sim');
-  const [reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, doc: { buffer: PDF, mime: 'application/pdf', name: 'gate.pdf' } });
-  assert.match(reply, /Documento guardado no serviço #1\. VIN 1C6RR6TT7LS111070 salvo/);
+  const [vin, reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, doc: { buffer: PDF, mime: 'application/pdf', name: 'gate.pdf' } });
+  assert.equal(vin, '1C6RR6TT7LS111070');
+  assert.match(reply, /Documento guardado no serviço #1\. VIN acima salvo/);
   assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM service_docs WHERE service_id = 1').get().n, 1);
   assert.equal(ctx.db.prepare('SELECT vin FROM services WHERE id = 1').get().vin, '1C6RR6TT7LS111070');
 });

@@ -172,8 +172,11 @@ const flows = {
     steps: [
       {
         key: 'confirmed',
-        ask: (data) =>
-          `Li o VIN: *${data.vin}*${data.valid ? '' : ' (o dígito verificador não bateu)'}\nEstá certo? Mande *sim* ou digite o número correto.`,
+        // O VIN vai sozinho numa mensagem, para copiar fácil; a pergunta vem na seguinte.
+        ask: (data) => [
+          data.vin,
+          `☝️ Li esse VIN${data.valid ? '' : ' (o dígito verificador não bateu)'}.\nEstá certo? Mande *sim* ou digite o número correto.`,
+        ],
         parse(text, { data }) {
           if (['sim', 's', 'ok', 'certo'].includes(simplify(text))) return data.vin;
           const check = validateVin(text);
@@ -295,10 +298,14 @@ export default {
         const info = await decodeVin(check.vin);
         const vehicle = describeVehicle(info);
         pendentes.set(user.id, { vin: check.vin, valid: check.valid, vehicle, at: Date.now() });
+        // O VIN vai sozinho numa mensagem, para copiar fácil; o resto vem na seguinte.
         return [
-          `🔎 VIN: *${check.vin}*${check.valid ? '' : ' (o dígito verificador não bateu, confira)'}${vehicle ? `\nVeículo: ${vehicle}` : ''}`,
-          'Não tem serviço aberto agora. Quando você mandar *novo*, eu já coloco esse VIN no serviço.',
-        ].join('\n');
+          check.vin,
+          [
+            `☝️ Li esse VIN${check.valid ? '' : ' (o dígito verificador não bateu, confira)'}.${vehicle ? `\nVeículo: ${vehicle}` : ''}`,
+            'Não tem serviço aberto agora. Quando você mandar *novo*, eu já coloco esse VIN no serviço.',
+          ].join('\n'),
+        ];
       },
       // Usado pelo módulo de fotos: lê a foto e pede confirmação ao motorista.
       async askConfirmation(user, service, buffer, mime) {
