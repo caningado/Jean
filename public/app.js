@@ -962,6 +962,7 @@ screens.servico = async (params, id) => {
         ${s.photos?.length ? '<button class="secondary" id="sharePhotos">📤 Enviar fotos ao cliente</button>' : ''}
         <button class="secondary" data-photo="antes">📷 Fotos de antes</button>
         <button class="secondary" data-photo="depois">📷 Fotos de depois</button>
+        <button class="secondary" id="pastePhotos">📋 Colar ou escolher fotos</button>
       </div>
     </div>` : ''}
 
@@ -1146,6 +1147,14 @@ screens.servico = async (params, id) => {
       if (saved) reload();
     };
   });
+  // Colar (Ctrl+V ou "Colar" do celular) ou escolher da galeria fotos do carro já tiradas.
+  const kindNow = () => ((s.photos || []).some((p) => p.kind === 'antes') ? 'depois' : 'antes');
+  const pasteInto = async (files) => {
+    if (await pastePhotos(id, kindNow(), files)) reload();
+  };
+  // (Ctrl+V direto na tela do serviço continua anexando o gate pass; fotos do carro são coladas na janela.)
+  on('#pastePhotos', () => pasteInto([]));
+
   // Escolher fotos e mandar pelo WhatsApp/Mensagens do celular (compartilhar do sistema).
   const picked = new Set();
   const shareBar = view.querySelector('.share-bar');
@@ -3373,6 +3382,113 @@ function viewPhoto(photo, label, canDelete) {
     }
     document.addEventListener('keydown', onKey);
     document.body.append(back);
+  });
+}
+
+// Imagens que vieram num "colar" (Ctrl+V, ou segurar e Colar no celular).
+const pastedImages = (e) => [...(e.clipboardData?.files || [])].filter((f) => /^image\//.test(f.type));
+
+// Janela para colar ou escolher da galeria fotos do carro e salvar no serviço.
+// Devolve quantas fotos salvou.
+function pastePhotos(serviceId, kind, initial = []) {
+  return new Promise((resolve) => {
+    const files = [...initial];
+    const back = document.createElement('div');
+    back.className = 'dialog-back';
+    back.innerHTML = `<div class="dialog paste-dialog" role="dialog" aria-modal="true"><h2>Colar fotos do carro</h2>
+      <div class="paste-kind">${['antes', 'depois', 'outro'].map((k) => `<label><input type="radio" name="pkind" value="${k}"${k === kind ? ' checked' : ''}> ${PHOTO_KINDS[k]}</label>`).join('')}</div>
+      <div class="paste-area" contenteditable="true" inputmode="none" aria-label="Colar fotos aqui">${isDesk() ? 'Aperte <strong>Ctrl+V</strong> para colar, ou arraste as fotos para cá.' : 'Toque e segure aqui e escolha <strong>Colar</strong>.'}</div>
+      <div class="photos paste-list"></div>
+      <div class="actions"><button type="button" class="secondary" data-act="gallery">🖼️ Escolher da galeria</button>${navigator.clipboard?.read ? '<button type="button" class="secondary" data-act="clip">📋 Colar</button>' : ''}</div>
+      <div class="dialog-actions"><button type="button" class="secondary" data-act="no">Voltar</button><button type="button" data-act="save" disabled>Salvar</button></div></div>`;
+    const list = back.querySelector('.paste-list');
+    const save = back.querySelector('[data-act="save"]');
+    const area = back.querySelector('.paste-area');
+    const draw = () => {
+      list.innerHTML = files.map((f, i) => `<figure><img src="${URL.createObjectURL(f)}" alt=""><button type="button" class="paste-del" data-del="${i}" aria-label="Tirar">✕</button></figure>`).join('');
+      list.querySelectorAll('[data-del]').forEach((b) => {
+        b.onclick = () => {
+          files.splice(Number(b.dataset.del), 1);
+          draw();
+        };
+      });
+      save.disabled = !files.length;
+      save.textContent = files.length ? `Salvar ${files.length} foto${files.length > 1 ? 's' : ''}` : 'Salvar';
+    };
+    const add = (more) => {
+      const imgs = [...more].filter((f) => /^image\//.test(f.type));
+      if (!imgs.length) return toast('Não achei foto para colar. Copie a foto primeiro.');
+      files.push(...imgs);
+      draw();
+    };
+    const done = (v) => {
+      back.remove();
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('paste', onPaste);
+      resolve(v);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') done(0);
+    };
+    const onPaste = (e) => {
+      // Janela aberta: o colar é dela (não vira gate pass).
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      add(pastedImages(e));
+    };
+    area.oninput = () => {
+      area.innerHTML = area.innerHTML.replace(/<img[^>]*>/g, '');
+    };
+    back.ondragover = (e) => e.preventDefault();
+    back.ondrop = (e) => {
+      e.preventDefault();
+      add(e.dataTransfer?.files || []);
+    };
+    back.querySelector('[data-act="no"]').onclick = () => done(0);
+    back.querySelector('[data-act="gallery"]').onclick = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.multiple = true;
+      input.onchange = () => add(input.files);
+      input.click();
+    };
+    const clip = back.querySelector('[data-act="clip"]');
+    if (clip) {
+      clip.onclick = async () => {
+        try {
+          const blobs = [];
+          for (const item of await navigator.clipboard.read()) {
+            const type = item.types.find((t) => t.startsWith('image/'));
+            if (type) blobs.push(new File([await item.getType(type)], 'colada.png', { type }));
+          }
+          add(blobs);
+        } catch {
+          toast('Não consegui colar. Toque e segure na caixa e escolha Colar.');
+        }
+      };
+    }
+    save.onclick = async () => {
+      const chosen = back.querySelector('[name="pkind"]:checked').value;
+      save.disabled = true;
+      let saved = 0;
+      for (const f of files) {
+        save.textContent = `Salvando ${saved + 1} de ${files.length}…`;
+        try {
+          await api(`/services/${serviceId}/photos?kind=${chosen}`, { method: 'POST', raw: await shrinkImage(f), type: 'image/jpeg' });
+          saved++;
+        } catch (err) {
+          toast(err.message);
+          break;
+        }
+      }
+      if (saved) toast(`${saved} foto${saved === 1 ? '' : 's'} salva${saved === 1 ? '' : 's'}`);
+      done(saved);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('paste', onPaste);
+    document.body.append(back);
+    draw();
   });
 }
 
