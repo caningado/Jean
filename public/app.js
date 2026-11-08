@@ -1300,6 +1300,14 @@ screens.servico = async (params, id) => {
       reload();
     };
   });
+  // Veio do invoice com desconto: já cria o link do cartão com o valor novo.
+  if (takePrefill('cartao')) {
+    const btn = view.querySelector('#cardlink');
+    if (btn) {
+      btn.scrollIntoView({ block: 'center' });
+      btn.click();
+    } else toast(s.square ? 'Esse serviço não tem valor para receber.' : 'O Square ainda não está ligado.');
+  }
   // "Recebi 150 no Zelle" falado: preenche o pagamento para conferir.
   const pay = takePrefill('pagamento');
   if (pay) {
@@ -2448,6 +2456,8 @@ screens.invoice = async (params, id) => {
       <div class="row2"><div><label>Data</label><input type="date" name="issue_date" value="${inv.issue_date}"></div><div><label>Vencimento</label><input type="date" name="due_date" value="${inv.due_date}"></div></div>
       <h3>Itens</h3><div id="items">${inv.items.map(itemRow).join('')}</div>
       <button type="button" class="secondary" id="addItem">+ Item (milhas extras, espera, pedágio…)</button>
+      ${state.me.role === 'dono' ? `<label>Desconto ($)</label><input name="discount" inputmode="decimal" placeholder="0.00" value="${inv.discount_cents ? centsToInput(inv.discount_cents) : ''}">` : ''}
+      <p class="inv-total" id="invTotal"></p>
       <label>Observação (opcional)</label><textarea name="notes" rows="2">${esc(inv.notes || '')}</textarea>
       <p class="sub">O invoice sai em inglês, com o logo e os dados da empresa (Menu › Dados da empresa). Se o serviço já foi pago, sai com "PAID".</p>
       <button class="block">${editing ? 'Salvar' : 'Criar invoice'}</button>
@@ -2460,7 +2470,17 @@ screens.invoice = async (params, id) => {
     form.querySelector('#addItem').onclick = () => {
       items.insertAdjacentHTML('beforeend', itemRow());
       wire();
+      showTotal();
     };
+    // Total na hora, já com o desconto.
+    const cents = (v) => Math.round((Number(String(v || '').replace(/[^\d.]/g, '')) || 0) * 100);
+    const showTotal = () => {
+      const sub = [...items.querySelectorAll('.inv-item')].reduce((t, row) => t + Math.round((Number(String(row.querySelector('[name=qty]').value).replace(',', '.')) || 0) * cents(row.querySelector('[name=unit]').value)), 0);
+      const disc = cents(form.discount?.value);
+      form.querySelector('#invTotal').innerHTML = disc ? `${money(sub)} − desconto ${money(disc)} = <strong>${money(sub - disc)}</strong>` : `Total: <strong>${money(sub)}</strong>`;
+    };
+    form.addEventListener('input', showTotal);
+    showTotal();
     form.onsubmit = async (e) => {
       e.preventDefault();
       const body = {
@@ -2469,6 +2489,7 @@ screens.invoice = async (params, id) => {
         issue_date: form.issue_date.value,
         due_date: form.due_date.value,
         notes: form.notes.value,
+        ...(form.discount ? { discount: form.discount.value } : {}),
         items: [...items.querySelectorAll('.inv-item')].map((row) => ({
           description: row.querySelector('[name=description]').value,
           details: row.querySelector('[name=details]').value,
@@ -2481,6 +2502,11 @@ screens.invoice = async (params, id) => {
           ? await api(`/invoices/${editing.id}`, { method: 'PUT', body })
           : await api(`/services/${id}/invoices`, { method: 'POST', body });
         toast(`Invoice nº ${saved.number} pronto`);
+        // Mudou o desconto: o valor do serviço baixou. Oferece um link do cartão novo com o valor certo.
+        if ((saved.discount_cents || 0) !== (inv.discount_cents || 0)) {
+          const novo = await ask(`Desconto salvo. O serviço agora fica ${money(saved.total_cents)}.\nFazer um link do cartão novo com esse valor? (Se já mandou um link antes, mande só o novo.)`, { ok: '💳 Fazer link novo', cancel: 'Agora não' });
+          if (novo) return go(`#/servico/${id}`, 'cartao', true);
+        }
         if (location.hash === `#/invoice/${id}`) screens.invoice(new URLSearchParams(), id);
         else location.hash = `#/invoice/${id}`;
       } catch (err) {

@@ -114,8 +114,9 @@ export function renderInvoice(data) {
   y += 14;
 
   // ---- Totais (direita) e pagamento (esquerda) ----
-  const paid = Math.min(data.paid_cents || 0, subtotal);
-  const balance = subtotal - paid;
+  const discount = Math.min(invoice.discount_cents || 0, subtotal);
+  const paid = Math.min(data.paid_cents || 0, subtotal - discount);
+  const balance = subtotal - discount - paid;
   const tx = R - 230;
   const totalRow = (text, value, bold = false) => {
     doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).fillColor(bold ? DARK : GRAY).text(text, tx, y, { width: 130 });
@@ -124,6 +125,7 @@ export function renderInvoice(data) {
   };
   const totalsTop = y;
   totalRow('Subtotal', usd(subtotal));
+  if (discount) totalRow('Discount', `- ${usd(discount)}`);
   if (paid) totalRow('Amount paid', `- ${usd(paid)}`);
   y += 4;
   doc.rect(tx - 10, y, R - tx + 10, 32).fill(balance ? RED : '#15803D');
