@@ -42,6 +42,8 @@ const migrations = [
      updated_at TEXT
    );
    CREATE INDEX invoices_service ON invoices(service_id);`,
+  // Desconto no invoice (pedido do Caningado 08/11): sai como linha "Discount" e baixa o valor do serviço.
+  `ALTER TABLE invoices ADD COLUMN discount_cents INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 function getSetting(ctx, key) {
@@ -147,19 +149,31 @@ function cleanItems(items) {
   });
 }
 
-function saveInvoice(ctx, { service, body, userId, existing = null }) {
+function saveInvoice(ctx, { service, body, user = null, userId = user?.id, existing = null }) {
   const draft = draftFor(ctx, service);
   const items = body.items ? cleanItems(body.items) : draft.items;
-  const total = items.reduce((s, it) => s + Math.round(it.qty * it.unit_cents), 0);
+  const subtotal = items.reduce((s, it) => s + Math.round(it.qty * it.unit_cents), 0);
+  const oldDiscount = existing?.discount_cents || 0;
+  const discount = body.discount != null && String(body.discount).trim() !== '' ? parseMoney(String(body.discount)) : body.discount === '' ? 0 : oldDiscount;
+  if (!Number.isInteger(discount) || discount < 0) throw new HttpError(400, 'Desconto inválido.');
+  if (discount > subtotal) throw new HttpError(400, 'O desconto não pode ser maior que o total.');
+  if (discount !== oldDiscount && user && user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode dar desconto.');
+  const total = subtotal - discount;
   const issue = isDay(body.issue_date) ? body.issue_date : existing?.issue_date || draft.issue_date;
   const due = isDay(body.due_date) ? body.due_date : existing?.due_date || draft.due_date;
   if (due < issue) throw new HttpError(400, 'O vencimento não pode ser antes da data do invoice.');
   const billTo = String(body.bill_to ?? existing?.bill_to ?? draft.bill_to).trim().slice(0, 400);
   const notes = String(body.notes ?? existing?.notes ?? '').trim().slice(0, 1000);
+  // O desconto também baixa o valor do serviço: o que falta receber e o link do cartão já saem com o preço novo.
+  const applyDiscount = () => {
+    if (!service || discount === oldDiscount) return;
+    ctx.data.services.update(service.id, { price_cents: Math.max(0, (service.price_cents || 0) - (discount - oldDiscount)) }, userId);
+  };
   if (existing) {
     ctx.db
-      .prepare('UPDATE invoices SET bill_to = ?, items = ?, total_cents = ?, issue_date = ?, due_date = ?, notes = ?, updated_at = ? WHERE id = ?')
-      .run(billTo, JSON.stringify(items), total, issue, due, notes, nowIso(), existing.id);
+      .prepare('UPDATE invoices SET bill_to = ?, items = ?, total_cents = ?, discount_cents = ?, issue_date = ?, due_date = ?, notes = ?, updated_at = ? WHERE id = ?')
+      .run(billTo, JSON.stringify(items), total, discount, issue, due, notes, nowIso(), existing.id);
+    applyDiscount();
     return getInvoice(ctx, existing.id);
   }
   let number = body.number != null && body.number !== '' ? Number(body.number) : draft.number;
@@ -167,10 +181,11 @@ function saveInvoice(ctx, { service, body, userId, existing = null }) {
   if (ctx.db.prepare('SELECT 1 FROM invoices WHERE number = ?').get(number)) throw new HttpError(400, `O invoice ${number} já existe.`);
   const info = ctx.db
     .prepare(
-      `INSERT INTO invoices (number, service_id, bill_to, items, total_cents, issue_date, due_date, notes, token, created_by, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO invoices (number, service_id, bill_to, items, total_cents, discount_cents, issue_date, due_date, notes, token, created_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(number, service.id, billTo, JSON.stringify(items), total, issue, due, notes, crypto.randomBytes(16).toString('base64url'), userId, nowIso());
+    .run(number, service.id, billTo, JSON.stringify(items), total, discount, issue, due, notes, crypto.randomBytes(16).toString('base64url'), userId, nowIso());
+  applyDiscount();
   return getInvoice(ctx, Number(info.lastInsertRowid));
 }
 
@@ -319,7 +334,7 @@ function routes(api, ctx) {
   api.post('/services/:id/invoices', (req, res) => {
     const service = ctx.data.services.get(Number(req.params.id));
     if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
-    const invoice = saveInvoice(ctx, { service, body: req.body || {}, userId: req.user.id });
+    const invoice = saveInvoice(ctx, { service, body: req.body || {}, user: req.user });
     res.status(201).json({ ...invoice, link: publicLink(ctx, invoice) });
   });
 
@@ -332,7 +347,7 @@ function routes(api, ctx) {
 
   api.put('/invoices/:id', (req, res) => {
     const { invoice, service } = owned(req);
-    const saved = saveInvoice(ctx, { service, body: req.body || {}, userId: req.user.id, existing: invoice });
+    const saved = saveInvoice(ctx, { service, body: req.body || {}, user: req.user, existing: invoice });
     res.json({ ...saved, link: publicLink(ctx, saved) });
   });
 

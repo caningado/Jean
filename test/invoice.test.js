@@ -111,3 +111,34 @@ test('invoice de serviço pago sai com PAID', async (t) => {
   assert.equal(pdf.status, 200);
   assert.ok(pdf.data.length > 20000, 'tem o logo');
 });
+
+test('desconto no invoice: só o ADM dá, baixa o valor do serviço uma vez e sai no PDF', async (t) => {
+  const ctx = makeContext();
+  const { owner, driver } = await startServer(ctx, t);
+  const s = newService(ctx);
+  const created = await owner(`/services/${s.id}/invoices`, { method: 'POST', body: {} });
+  assert.equal(created.data.discount_cents, 0);
+
+  // Motorista não dá desconto.
+  const negado = await driver(`/invoices/${created.data.id}`, { method: 'PUT', body: { discount: '20' } });
+  assert.equal(negado.status, 403);
+
+  const editado = await owner(`/invoices/${created.data.id}`, { method: 'PUT', body: { discount: '20.00' } });
+  assert.equal(editado.status, 200);
+  assert.equal(editado.data.discount_cents, 2000);
+  assert.equal(editado.data.total_cents, 13000);
+  assert.equal(ctx.data.services.get(s.id).price_cents, 13000); // link do cartão e "falta receber" usam o preço novo
+
+  // Salvar de novo sem mudar o desconto não baixa outra vez; mudar para 30 baixa só a diferença.
+  await owner(`/invoices/${created.data.id}`, { method: 'PUT', body: { notes: 'obrigado' } });
+  assert.equal(ctx.data.services.get(s.id).price_cents, 13000);
+  await owner(`/invoices/${created.data.id}`, { method: 'PUT', body: { discount: '30' } });
+  assert.equal(ctx.data.services.get(s.id).price_cents, 12000);
+
+  const maior = await owner(`/invoices/${created.data.id}`, { method: 'PUT', body: { discount: '500' } });
+  assert.equal(maior.status, 400);
+
+  const pdf = await owner(`/invoices/${created.data.id}/pdf`);
+  assert.equal(pdf.status, 200);
+  assert.match(pdf.type, /pdf/);
+});
