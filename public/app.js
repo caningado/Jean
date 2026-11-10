@@ -432,7 +432,7 @@ screens.login = async () => {
       try {
         await api('/setup', { method: 'POST', body: formData(e.target) });
         await loadMe();
-        location.hash = '#/servicos';
+        location.hash = state.shared ? '#/novo' : '#/servicos';
       } catch (err) {
         toast(err.message);
       }
@@ -453,7 +453,7 @@ screens.login = async () => {
     try {
       await api('/login', { method: 'POST', body: formData(e.target) });
       await loadMe();
-      location.hash = '#/servicos';
+      location.hash = state.shared ? '#/novo' : '#/servicos';
     } catch (err) {
       toast(err.message);
     }
@@ -614,6 +614,56 @@ screens.servicos = async (params) => {
   }
 };
 
+// ---------- compartilhar para o app (Android) ----------
+// WhatsApp › localização › Compartilhar › Towing J&J: o app abre com o texto/link em ?s_text=…&s_url=…
+function sharedFromUrl() {
+  const q = new URLSearchParams(location.search);
+  if (!['s_title', 's_text', 's_url'].some((k) => q.has(k))) return null;
+  const parts = [];
+  for (const k of ['s_title', 's_text', 's_url']) {
+    const v = (q.get(k) || '').trim();
+    if (v && !parts.some((p) => p.includes(v))) parts.push(v);
+  }
+  history.replaceState(null, '', '/#/novo');
+  return parts.join('\n').slice(0, 1000) || null;
+}
+const NOVO_DRAFT = 'novoDraft';
+function saveNovoDraft(form) {
+  const data = {};
+  for (const el of form.elements) if (el.name && el.type !== 'file') data[el.name] = el.value;
+  try {
+    localStorage.setItem(NOVO_DRAFT, JSON.stringify({ at: Date.now(), data }));
+  } catch {}
+}
+function clearNovoDraft() {
+  try {
+    localStorage.removeItem(NOVO_DRAFT);
+  } catch {}
+}
+function restoreNovoDraft(form) {
+  let draft = null;
+  try {
+    draft = JSON.parse(localStorage.getItem(NOVO_DRAFT) || 'null');
+  } catch {}
+  // Só o rascunho recente (saiu para pegar a localização e voltou).
+  if (!draft || Date.now() - draft.at > 2 * 3600 * 1000) return clearNovoDraft();
+  for (const [name, value] of Object.entries(draft.data || {})) if (form.elements[name] && value) form.elements[name].value = value;
+  const picked = view.querySelector('.picked');
+  if (picked && form.contact_name?.value) {
+    picked.hidden = false;
+    picked.textContent = `👤 ${form.contact_name.value}`;
+  }
+}
+async function useSharedPlace(form, text) {
+  const choice = await dialog({ title: '📍 Local recebido', text, choices: ['Retirada (pegar aqui)', 'Destino (levar para cá)'], cancel: 'Não usar' });
+  if (choice == null) return;
+  const field = choice === 0 ? form.pickup : form.dropoff;
+  field.value = text;
+  saveNovoDraft(form);
+  field.scrollIntoView({ block: 'center' });
+  toast(choice === 0 ? 'Local colocado na retirada' : 'Local colocado no destino');
+}
+
 screens.novo = async () => {
   setScreen('Novo serviço', { tab: 'novo' });
   const drivers = state.me.role === 'dono' ? await api('/users') : [];
@@ -652,8 +702,14 @@ screens.novo = async () => {
       <button class="block">Criar serviço</button>
     </form>`;
   const form = view.querySelector('#f');
+  // Rascunho: se sair para o WhatsApp e voltar compartilhando a localização, o que já foi digitado continua.
+  const shared = state.shared;
+  state.shared = null;
+  if (shared) restoreNovoDraft(form);
+  form.addEventListener('input', () => saveNovoDraft(form));
   placeSuggestions(form.pickup);
   placeSuggestions(form.dropoff);
+  if (shared) setTimeout(() => useSharedPlace(form, shared), 50);
   // Veio do microfone (de outra tela): preenche e continua a conversa.
   const spoken = takePrefill('novo');
   if (spoken) setTimeout(() => talkNewService(form, spoken), 50);
@@ -870,6 +926,7 @@ screens.novo = async () => {
         location.hash = `#/servico/${service.id}`;
         return;
       }
+      clearNovoDraft();
       toast(queued(service) ? (service.driver_id === state.me.id ? `Serviço ${numTag(service)}na sua fila. Toque em Começar quando for fazer.` : `Serviço ${numTag(service)}na fila de ${service.driver_name || 'motorista'}`) : service.status === 'pendente' ? `Serviço #${num(service)} na fila` : `Serviço #${num(service)} criado`);
       location.hash = `#/servico/${service.id}`;
     } catch (err) {
@@ -4286,6 +4343,7 @@ document.addEventListener('visibilitychange', async () => {
 });
 // Virou a tela (ou mudou o tamanho da janela): desenha de novo no formato certo.
 deskQuery.addEventListener('change', () => state.me && route());
+state.shared = sharedFromUrl();
 await loadMe();
 checkNew();
 if (!location.hash) location.hash = state.me ? '#/servicos' : '#/login';
