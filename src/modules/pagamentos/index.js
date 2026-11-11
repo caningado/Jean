@@ -1,4 +1,4 @@
-// Módulo de pagamentos: Zelle, dinheiro, cartão, cheque e seguradora/motor club.
+// Módulo de pagamentos: Zelle, dinheiro, cartão, cheque, pago no Brasil e seguradora/motor club.
 // Guarda quem recebeu (para saber quanto dinheiro está com cada motorista) e o que falta receber.
 import { parseMoney, formatMoney, simplify, nowIso, HttpError, startOfDayIso, dayFormatter } from '../../lib/util.js';
 import { renderPendingList } from './lista-pdf.js';
@@ -12,6 +12,7 @@ export const METHODS = {
   dinheiro: 'Dinheiro',
   cartao: 'Cartão',
   cheque: 'Cheque',
+  brasil: 'Brasil',
   seguradora: 'Seguradora / motor club',
 };
 
@@ -54,6 +55,44 @@ const migrations = [
   `ALTER TABLE payments ADD COLUMN checked_at TEXT;
    ALTER TABLE payments ADD COLUMN checked_by INTEGER REFERENCES users(id);
    UPDATE payments SET checked_at = COALESCE(received_at, created_at) WHERE status = 'recebido';`,
+  // Forma "Brasil": cliente que paga no Brasil (pedido do Caningado 11/11). O SQLite não deixa mudar
+  // o CHECK, então a tabela é refeita com os mesmos dados. O square_links aponta para ela, então
+  // sai antes e volta depois, com os mesmos ids (senão a checagem de chave estrangeira falha).
+  `CREATE TEMP TABLE square_links_old AS SELECT * FROM square_links;
+   DROP TABLE square_links;
+   CREATE TABLE payments_new (
+     id INTEGER PRIMARY KEY,
+     service_id INTEGER NOT NULL REFERENCES services(id),
+     amount_cents INTEGER NOT NULL,
+     method TEXT NOT NULL CHECK (method IN ('zelle', 'dinheiro', 'cartao', 'cheque', 'brasil', 'seguradora')),
+     status TEXT NOT NULL DEFAULT 'recebido' CHECK (status IN ('recebido', 'a_receber')),
+     payer TEXT,
+     received_by INTEGER REFERENCES users(id),
+     created_at TEXT NOT NULL,
+     received_at TEXT,
+     checked_at TEXT,
+     checked_by INTEGER REFERENCES users(id)
+   );
+   INSERT INTO payments_new (id, service_id, amount_cents, method, status, payer, received_by, created_at, received_at, checked_at, checked_by)
+     SELECT id, service_id, amount_cents, method, status, payer, received_by, created_at, received_at, checked_at, checked_by FROM payments;
+   DROP TABLE payments;
+   ALTER TABLE payments_new RENAME TO payments;
+   CREATE INDEX payments_service ON payments(service_id);
+   CREATE TABLE square_links (
+     id INTEGER PRIMARY KEY,
+     service_id INTEGER NOT NULL REFERENCES services(id),
+     amount_cents INTEGER NOT NULL,
+     fee_cents INTEGER NOT NULL DEFAULT 0,
+     link_id TEXT,
+     url TEXT NOT NULL,
+     order_id TEXT,
+     payment_id INTEGER REFERENCES payments(id),
+     created_at TEXT NOT NULL
+   );
+   INSERT INTO square_links (id, service_id, amount_cents, fee_cents, link_id, url, order_id, payment_id, created_at)
+     SELECT id, service_id, amount_cents, fee_cents, link_id, url, order_id, payment_id, created_at FROM square_links_old;
+   DROP TABLE square_links_old;
+   CREATE INDEX square_links_order ON square_links(order_id);`,
 ];
 
 // Formas de pagamento que ficam na mão do motorista até ele entregar ao dono.
@@ -69,6 +108,7 @@ export function parseMethod(word) {
   if (['dinheiro', 'cash', 'especie', 'dim'].includes(s)) return { method: 'dinheiro' };
   if (['cartao', 'card', 'credito', 'debito', 'credit', 'debit'].includes(s)) return { method: 'cartao' };
   if (['cheque', 'check'].includes(s)) return { method: 'cheque' };
+  if (['brasil', 'brazil', 'br', 'pix'].includes(s)) return { method: 'brasil' };
   if (['seguradora', 'seguro', 'insurance', 'motorclub', 'clube'].includes(s)) return { method: 'seguradora' };
   if (MOTOR_CLUBS[s]) return { method: 'seguradora', payer: MOTOR_CLUBS[s] };
   return null;
@@ -378,7 +418,7 @@ function alerts({ ctx, user }) {
 const commands = [
   {
     names: ['pago', 'recebi', 'pagou'],
-    help: '*pago 250 zelle* – registrar pagamento (zelle, dinheiro, cartão, cheque, seguradora, aaa...)',
+    help: '*pago 250 zelle* – registrar pagamento (zelle, dinheiro, cartão, cheque, brasil, seguradora, aaa...)',
     async run({ ctx, user, args }) {
       const service = ctx.data.services.active(user);
       if (!service) return 'Nenhum serviço em andamento. Mande *abrir 12* para escolher o serviço.';
@@ -875,7 +915,7 @@ export default {
   publicRoutes,
   summary,
   summaryLines,
-  serviceHint: '💵 Pagamento: *pago 250 zelle* (ou dinheiro, cartão, cheque, aaa...). Para cobrar o cliente: *cobrar*.',
+  serviceHint: '💵 Pagamento: *pago 250 zelle* (ou dinheiro, cartão, cheque, brasil, aaa...). Para cobrar o cliente: *cobrar*.',
   serviceDetail: ({ ctx, service }) => ({ payments: listPayments(ctx, service.id), balance: balance(ctx, service), square: Boolean(ctx.square?.configured) }),
   async daily({ ctx }) {
     try {

@@ -8,7 +8,7 @@ const toastEl = document.getElementById('toast');
 const state = { me: null, modules: [], company: 'Towing J&J' };
 const has = (name) => state.modules.some((m) => m.name === name);
 
-const METHODS = { zelle: 'Zelle', dinheiro: 'Dinheiro', cartao: 'Cartão', cheque: 'Cheque', seguradora: 'Seguradora / motor club' };
+const METHODS = { zelle: 'Zelle', dinheiro: 'Dinheiro', cartao: 'Cartão', cheque: 'Cheque', brasil: 'Brasil', seguradora: 'Seguradora / motor club' };
 const CATEGORIES = { combustivel: 'Combustível', pedagio: 'Pedágio', manutencao: 'Manutenção', alimentacao: 'Alimentação', outros: 'Outros' };
 const STATUS = { pendente: 'Pendente', aberto: 'Em andamento', concluido: 'Entregue', cancelado: 'Cancelado' };
 // Pendente que já tem motorista: está na fila dele, "Aguardando" ele escolher e começar.
