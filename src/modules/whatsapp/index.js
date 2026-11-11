@@ -17,10 +17,32 @@ const migrations = [
 ];
 
 // isTeam(telefone): o robô só manda mensagem para quem é da equipe (ADM ou motorista ativo).
-export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () => false } = {}) {
+// Trava contra enxurrada: no máximo FLOOD_MAX mensagens para o mesmo número em FLOOD_MS
+// (11/11: o Jay mandou mais de 200 mensagens para a Viviane num dia). Conversa normal fica bem abaixo disso.
+export const FLOOD_MAX = 40;
+export const FLOOD_MS = 10 * 60000;
+
+export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () => false, log = () => {}, now = () => Date.now() } = {}) {
   const { token, phoneNumberId, apiVersion } = config.whatsapp;
   const base = `https://graph.facebook.com/${apiVersion}`;
   const headers = { Authorization: `Bearer ${token}` };
+  const recent = new Map(); // telefone → horários das últimas mensagens mandadas
+  const warned = new Map(); // telefone → quando avisou no log que travou
+  const guard = (to) => {
+    const phone = normalizePhone(to);
+    const t = now();
+    const list = (recent.get(phone) || []).filter((at) => t - at < FLOOD_MS);
+    if (list.length >= FLOOD_MAX) {
+      recent.set(phone, list);
+      if (!warned.has(phone) || t - warned.get(phone) > FLOOD_MS) {
+        warned.set(phone, t);
+        log(`WhatsApp: TRAVA – já mandei ${list.length} mensagens para ${formatPhone(phone)} em 10 min. Parei de mandar para esse número por um tempo.`);
+      }
+      throw new Error(`Trava: muitas mensagens seguidas para ${formatPhone(phone)}.`);
+    }
+    list.push(t);
+    recent.set(phone, list);
+  };
 
   return {
     configured: Boolean(token && phoneNumberId),
@@ -28,6 +50,7 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
     async sendText(to, body) {
       // Trava: nunca fala com cliente nem com ninguém de fora da equipe.
       if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
+      guard(to);
       const res = await fetchImpl(`${base}/${phoneNumberId}/messages`, {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
@@ -40,6 +63,7 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
     // Foto (ex.: a que o Jay não entendeu, para a pessoa de apoio ver).
     async sendImage(to, buffer, mime = 'image/jpeg', caption = '') {
       if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
+      guard(to);
       const form = new FormData();
       form.append('messaging_product', 'whatsapp');
       form.append('type', mime);
@@ -59,6 +83,7 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
     // Mensagem de voz (.ogg Opus): sobe o arquivo na Meta e manda como áudio.
     async sendAudio(to, ogg) {
       if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
+      guard(to);
       const form = new FormData();
       form.append('messaging_product', 'whatsapp');
       form.append('type', 'audio/ogg');
@@ -313,7 +338,7 @@ export default {
   routes,
   publicRoutes,
   setup(ctx) {
-    const client = createWhatsAppClient(ctx.config, fetch, { isTeam: (phone) => Boolean(ctx.bot.findUser(phone)) });
+    const client = createWhatsAppClient(ctx.config, fetch, { isTeam: (phone) => Boolean(ctx.bot.findUser(phone)), log: (...a) => ctx.log(...a) });
     ctx.api.whatsapp = { client };
     ctx.whatsappFailures = new Map(); // último erro de entrega da Meta por telefone
     if (client.configured) {
