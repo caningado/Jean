@@ -87,3 +87,28 @@ test('mensagens encaminhadas juntas (endereços, carro, valor e cartão de conta
   assert.doesNotMatch(all, /milhas/); // o Jay não pergunta milhas
   assert.match(all, /Confere\?/);
 });
+
+test('trava contra enxurrada: no máximo 40 mensagens para o mesmo número em 10 min', async () => {
+  const ctx = makeContext();
+  let t = 0;
+  let calls = 0;
+  const logs = [];
+  const client = createWhatsAppClient(
+    { whatsapp: { token: 'tk', phoneNumberId: '999', apiVersion: 'v21.0' } },
+    async () => {
+      calls += 1;
+      return { ok: true, json: async () => ({}), text: async () => '' };
+    },
+    { isTeam: () => true, log: (m) => logs.push(m), now: () => t },
+  );
+  for (let i = 0; i < 40; i += 1) await client.sendText(DRIVER_PHONE, `oi ${i}`);
+  await assert.rejects(client.sendText(DRIVER_PHONE, 'demais'), /Trava/);
+  await assert.rejects(client.sendText(DRIVER_PHONE, 'demais'), /Trava/);
+  assert.equal(calls, 40);
+  assert.equal(logs.length, 1);
+  await client.sendText(OWNER_PHONE, 'outro número passa');
+  t = 10 * 60000 + 1;
+  await client.sendText(DRIVER_PHONE, 'depois de 10 min volta');
+  assert.equal(calls, 42);
+  void ctx;
+});

@@ -24,8 +24,9 @@ const migrations = [
   `ALTER TABLE help_requests ADD COLUMN solution TEXT;`,
 ];
 
-// De quanto em quanto tempo cobra a pessoa de apoio enquanto o pedido está aberto (Caningado pediu 2 min).
-const REMIND_MS = 2 * 60000;
+// Quanto o Jay espera antes de cada cobrança à pessoa de apoio (a 1ª em 2 min, pedido do Caningado).
+// Depois da última, para de cobrar: o pedido continua aberto em *ajudas*.
+const REMIND_AFTER_MS = [2, 10, 30].map((m) => m * 60000);
 // Mensagens seguidas da mesma pessoa entram no mesmo pedido.
 const SAME_MS = 15 * 60000;
 
@@ -280,26 +281,38 @@ const commands = [
 ];
 
 // Cobra a pessoa de apoio enquanto tem pedido aberto (roda a cada minuto).
+// Trava contra excesso (11/11: o Jay mandou mais de 200 cobranças para a Viviane num dia):
+// cada pedido é cobrado poucas vezes, com espera cada vez maior, e depois o Jay para de cobrar.
+// Vários pedidos abertos viram uma cobrança só por vez.
 async function minuteTick({ ctx, now = new Date() }) {
   const h = helper(ctx);
+  const due = new Map(); // telefone → pedidos para cobrar agora
   for (const req of openRequests(ctx)) {
     const to = req.helper_phone || h?.phone;
-    if (!to) continue;
-    if (now.getTime() - Date.parse(req.notified_at || req.created_at) < REMIND_MS - 15000) continue;
+    if (!to || req.reminders >= REMIND_AFTER_MS.length) continue;
+    if (now.getTime() - Date.parse(req.notified_at || req.created_at) < REMIND_AFTER_MS[req.reminders] - 15000) continue;
+    if (!due.has(to)) due.set(to, []);
+    due.get(to).push(req);
+  }
+  for (const [to, reqs] of due) {
+    const [req, ...others] = reqs;
     const mins = Math.round((now.getTime() - Date.parse(req.created_at)) / 60000);
     const waited = mins >= 60 ? `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}` : `${mins} min`;
     const title = `⏰ *Pedido de ajuda #${req.id} ainda aberto* (há ${waited})`;
     const person = ctx.db.prepare('SELECT * FROM users WHERE phone = ? AND active = 1').get(to);
     const talking = person && ctx.bot?.getConversation?.(person.id);
     // Já está conversando com o Jay sobre este pedido: só repete a pergunta. Livre: abre a conversa.
-    const text =
+    let text =
       talking?.flow === 'ajuda_resposta' && talking.data.reqId === req.id
         ? [title, ...[].concat(ctx.flows.ajuda_resposta.steps[talking.step].ask(talking.data, ctx))].join('\n')
         : person
           ? await converse(ctx, person, req, title)
           : pedidoTexto(ctx, req, title, false);
+    if (others.length) text += `\n\nTambém abertos: ${others.map((r) => `*#${r.id}*`).join(', ')}. Mande *ajudas* para ver.`;
+    if (reqs.every((r) => r.reminders + 1 >= REMIND_AFTER_MS.length)) text += '\n\n(Não vou cobrar de novo. Mande *ajudas* quando puder.)';
     await send(ctx, to, text);
-    ctx.db.prepare('UPDATE help_requests SET notified_at = ?, reminders = reminders + 1 WHERE id = ?').run(now.toISOString(), req.id);
+    const mark = ctx.db.prepare('UPDATE help_requests SET notified_at = ?, reminders = reminders + 1 WHERE id = ?');
+    for (const r of reqs) mark.run(now.toISOString(), r.id);
   }
 }
 

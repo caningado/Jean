@@ -30,7 +30,7 @@ test('Jay não entendeu: chama a Viviane, junta as mensagens seguidas e cobra at
   assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM help_requests').get().n, 1);
   assert.match(sent[1].text, /Mais sobre o pedido de ajuda \*#1\*/);
 
-  // Cobrança: antes de 2 min não manda; depois manda a cada 2 min.
+  // Cobrança: 2 min, depois 10 min, depois 30 min, e para (trava contra excesso).
   const t0 = Date.now();
   await runMinuteTick(ctx, new Date(t0 + 60000));
   assert.equal(sent.length, 2);
@@ -38,10 +38,15 @@ test('Jay não entendeu: chama a Viviane, junta as mensagens seguidas e cobra at
   assert.equal(sent.length, 3);
   assert.match(sent[2].text, /⏰ \*Pedido de ajuda #1 ainda aberto\*/);
   assert.match(sent[2].text, /"xpto qwerty\nzzz www"/);
-  await runMinuteTick(ctx, new Date(t0 + 3 * 60000 + 5000));
-  assert.equal(sent.length, 3); // só 2 min depois da última cobrança
   await runMinuteTick(ctx, new Date(t0 + 4 * 60000 + 5000));
+  assert.equal(sent.length, 3); // a 2ª cobrança só 10 min depois da 1ª
+  await runMinuteTick(ctx, new Date(t0 + 12 * 60000 + 5000));
   assert.equal(sent.length, 4);
+  await runMinuteTick(ctx, new Date(t0 + 42 * 60000 + 5000));
+  assert.equal(sent.length, 5);
+  assert.match(sent[4].text, /Não vou cobrar de novo/);
+  for (let m = 43; m < 24 * 60; m += 1) await runMinuteTick(ctx, new Date(t0 + m * 60000));
+  assert.equal(sent.length, 5); // um dia inteiro sem cobrar mais
 
   // Motorista não fecha.
   [r] = await chat(ctx, DRIVER_PHONE, 'resolvido 1');
@@ -175,4 +180,17 @@ test('a inteligência respondeu mas não soube resolver (duvida): chama a Vivian
   const [ok] = await chat(ctx, OWNER_PHONE, 'bom dia');
   assert.doesNotMatch(ok, /Passei para/);
   assert.equal(sent.length, before);
+});
+
+test('vários pedidos abertos: uma cobrança só por vez, nunca uma enxurrada', async () => {
+  const { ctx, sent } = setup();
+  const t0 = Date.now();
+  for (let i = 0; i < 5; i += 1) {
+    ctx.db
+      .prepare('INSERT INTO help_requests (user_id, text, created_at, notified_at, helper_phone) VALUES (1, ?, ?, ?, ?)')
+      .run(`pedido ${i}`, new Date(t0).toISOString(), new Date(t0).toISOString(), VIVIANE);
+  }
+  for (let m = 1; m < 24 * 60; m += 1) await runMinuteTick(ctx, new Date(t0 + m * 60000));
+  assert.equal(sent.length, 3);
+  assert.match(sent[0].text, /Também abertos: \*#2\*, \*#3\*, \*#4\*, \*#5\*/);
 });
