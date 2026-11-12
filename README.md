@@ -9,7 +9,7 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 - **Agenda de contatos**: importa a agenda do celular (.vcf); cliente novo que aparece entra sozinho; histórico de cada cliente.
 - **Fotos (opcionais)**: antes (retirada), depois (entrega) e VIN, com data e hora.
 - **VIN**: confere o número, descobre marca/modelo/ano (base gratuita da NHTSA), escaneia o código de barras pela câmera (Android) e lê o número de uma foto (Android e iPhone; lê melhor com `GEMINI_API_KEY`, grátis, ou `ANTHROPIC_API_KEY`).
-- **Pagamentos**: Zelle, dinheiro, cartão, cheque e seguradora/motor club (AAA, Agero, Honk…). Mostra o que falta receber, quanto dinheiro está com cada motorista, e gera a mensagem de cobrança com o Zelle.
+- **Pagamentos**: Zelle, dinheiro, cartão, cheque, Brasil (cliente que paga no Brasil) e seguradora/motor club (AAA, Agero, Honk…). Mostra o que falta receber, quanto dinheiro está com cada motorista, e gera a mensagem de cobrança com o Zelle.
 - **Despesas**: combustível, pedágio, manutenção…
 - **Resumo** do dia e do mês: faturado, recebido, despesas e saldo.
 - **Cobrança atrasada**: avisa quem deve há mais de `COBRANCA_DIAS` dias (padrão 7).
@@ -28,7 +28,7 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 | `novo` | Registra um serviço, perguntando passo a passo |
 | `antes` / `depois` + fotos | Guarda as fotos da retirada ou da entrega |
 | foto com legenda `vin` ou `vin 1HGCM82633A004352` | Salva o VIN |
-| `pago 250 zelle` | Registra pagamento (zelle, dinheiro, cartão, cheque, aaa, agero…) |
+| `pago 250 zelle` | Registra pagamento (zelle, dinheiro, cartão, cheque, brasil, aaa, agero…) |
 | `caixa` | Quanto dinheiro/cheque está em mãos com cada motorista (acumula até o dono recolher) |
 | `recolhi Jorge` / `recolhi 200 Jorge` | (dono) Pegou o dinheiro do motorista: zera, ou desconta só uma parte |
 | `caminhao` | Milhas e manutenção do caminhão (óleo, pneus, freios, inspeção, registro) |

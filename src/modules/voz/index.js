@@ -180,7 +180,7 @@ export const QUESTIONS = {
   veiculo: 'Qual é o carro?',
   valor: 'Qual o valor do serviço?',
 };
-const PAY_METHODS = ['zelle', 'dinheiro', 'cartao', 'cheque', 'seguradora'];
+const PAY_METHODS = ['zelle', 'dinheiro', 'cartao', 'cheque', 'brasil', 'seguradora'];
 const EXPENSE_TYPES = ['combustivel', 'pedagio', 'manutencao', 'alimentacao', 'outros'];
 
 const ASSISTANT_PROMPT = `Você é o assistente de voz do app de uma empresa de guincho nos EUA (Flórida). Quem fala é {quem}, em português do Brasil, muitas vezes informal e misturando inglês. Pode ter barulho de rua ou de motor. {contexto}
@@ -188,7 +188,7 @@ Escolha a intenção:
 - abrir_tela: quer ver/abrir uma parte do app ("abre as despesas", "mostra meus ganhos", "cadê os serviços de hoje", "procura o cliente João"). Ponha a tela em "tela" e, se pediu um cliente, o nome em "busca".
 - servico_novo: está ditando um serviço novo (cliente, telefone, onde pegar, para onde levar, carro, preço). Preencha cliente, telefone (só números), retirada, destino, veiculo, placa, vin, distancia (milhas da viagem), valor (preço em dólares), motorista (quem vai fazer), observacoes.
 - status_servico: muda a situação do serviço atual. Ponha em "acao": iniciar_servico ("bora começar", "vou lá buscar"), peguei_o_carro ("carro carregado", "peguei a máquina"), indo_entregar ("tô levando"), finalizar_servico ("entreguei", "acabou"), cancelar_servico ("cancela", "cliente desistiu").
-- pagamento: recebeu dinheiro do serviço ("recebi 150 no zelle", "cliente pagou em cash"). valor em dólares; forma: zelle, dinheiro (cash), cartao, cheque ou seguradora (AAA, Agero, Honk, motor club, com o nome em "pagador").
+- pagamento: recebeu dinheiro do serviço ("recebi 150 no zelle", "cliente pagou em cash"). valor em dólares; forma: zelle, dinheiro (cash), cartao, cheque, brasil (cliente pagou no Brasil, ex. pix) ou seguradora (AAA, Agero, Honk, motor club, com o nome em "pagador").
 - despesa: gastou dinheiro ("abasteci 80 dólares", "paguei 12 de pedágio", "troquei o pneu, 300"). valor em dólares; categoria: combustivel, pedagio, manutencao, alimentacao ou outros; descricao curta (ex.: "diesel"); se disse as milhas do painel do caminhão (odômetro), ponha em "odometro"; se disse qual caminhão, em "caminhao".
 - milhas_caminhao: só informa as milhas do painel do caminhão ("o caminhão está com 123 mil e 400 milhas"). Número inteiro em "odometro"; caminhão em "caminhao" se disse.
 - pular: não sabe ou quer deixar a pergunta em branco ("não sei", "pula", "depois eu vejo").
