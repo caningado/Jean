@@ -118,7 +118,7 @@ export function createCoreData(db, timeZone = 'America/New_York') {
     get(id) {
       return db.prepare(`${SERVICE_SELECT} WHERE s.id = ?`).get(id);
     },
-    list({ status, driverId, contactId, since, until, doneSince, doneUntil, hideCancelled = false, withQueue = false, noDriver = false, limit = 100 } = {}) {
+    list({ status, driverId, contactId, since, until, doneSince, doneUntil, hideCancelled = false, hideQuotes = false, withQueue = false, noDriver = false, limit = 100 } = {}) {
       const where = [];
       const params = [];
       // Agendado que ainda não começou fica em Pendentes, mesmo já tendo motorista (pedido do Caningado 24/10).
@@ -131,6 +131,8 @@ export function createCoreData(db, timeZone = 'America/New_York') {
       }
       if (noDriver) where.push(sched ? '(s.driver_id IS NULL OR s.scheduled_at IS NOT NULL)' : 's.driver_id IS NULL');
       if (hideCancelled) where.push("s.status <> 'cancelado'");
+      // Pendente sem motorista pode ser só uma cotação: fica só na aba Pendentes (pedido do Caningado 13/11).
+      if (hideQuotes) where.push("NOT (s.status = 'pendente' AND s.driver_id IS NULL)");
       if (driverId) {
         where.push('s.driver_id = ?');
         params.push(driverId);

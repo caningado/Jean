@@ -361,8 +361,8 @@ const daysSince = (iso, now = Date.now()) => Math.max(0, Math.floor((now - new D
 // overdue = passou de COBRANCA_DIAS sem receber.
 function pendingList(ctx, userId) {
   const services = ctx.data.services
-    .list({ driverId: userId, limit: 1000 })
-    .filter((s) => s.status !== 'cancelado' && s.price_cents);
+    .list({ driverId: userId, hideCancelled: true, hideQuotes: true, limit: 1000 })
+    .filter((s) => s.price_cents);
   // Serviço de oficina/dealer: junta o nome da empresa do solicitante.
   const companies = new Map();
   const companyOf = (contactId) => {

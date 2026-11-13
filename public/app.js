@@ -1041,7 +1041,7 @@ screens.servico = async (params, id) => {
         <div id="cardlinkOut"></div>
       </form>
     </div>` : ''}
-    ${has('invoice') ? `<a class="card linkcard" href="#/invoice/${s.id}"><span>🧾 Invoice para o cliente${s.invoice_number ? ` <span class="sub">nº ${s.invoice_number}</span>` : ''}</span><span>›</span></a>` : ''}`;
+    ${has('invoice') ? `<a class="card linkcard" href="#/invoice/${s.id}"><span>🧾 ${s.status === 'pendente' && !s.driver_id ? 'Quote (orçamento)' : 'Invoice'} para o cliente${s.invoice_number ? ` <span class="sub">nº ${s.invoice_number}</span>` : ''}</span><span>›</span></a>` : ''}`;
 
   const reload = () => screens.servico(params, id);
   const on = (sel, fn) => view.querySelector(sel) && (view.querySelector(sel).onclick = fn);
@@ -2466,28 +2466,30 @@ screens.manutencao = async (params, id) => {
 const centsToInput = (c) => ((c || 0) / 100).toFixed(2);
 const dayFmt = (day) => (day ? day.split('-').reverse().join('/') : '');
 
-async function shareInvoice(inv) {
-  const name = `Invoice ${inv.number}.pdf`;
+async function shareInvoice(inv, word = 'Invoice') {
+  const name = `${word} ${inv.number}.pdf`;
   try {
     const res = await net(`/api/invoices/${inv.id}/pdf`);
     const file = new File([await res.blob()], name, { type: 'application/pdf' });
     if (navigator.canShare?.({ files: [file] })) {
-      await navigator.share({ files: [file], title: name, text: `Invoice #${inv.number}` });
+      await navigator.share({ files: [file], title: name, text: `${word} #${inv.number}` });
       return;
     }
   } catch (err) {
     if (err.name === 'AbortError') return;
   }
   if (inv.link && navigator.share) {
-    await navigator.share({ title: name, text: `Here is your invoice #${inv.number}: ${inv.link}` }).catch(() => {});
+    await navigator.share({ title: name, text: `Here is your ${word.toLowerCase()} #${inv.number}: ${inv.link}` }).catch(() => {});
     return;
   }
   location.href = `/api/invoices/${inv.id}/pdf?download=1`;
 }
 
 screens.invoice = async (params, id) => {
-  setScreen('Invoice', { tab: 'servicos', back: `#/servico/${id}` });
-  const { draft, invoices } = await api(`/services/${id}/invoices`);
+  const { quote, draft, invoices } = await api(`/services/${id}/invoices`);
+  // Pendente sem motorista é só cotação: o documento sai como Quote (vira Invoice quando tiver motorista).
+  const W = quote ? 'Quote' : 'Invoice';
+  setScreen(W, { tab: 'servicos', back: `#/servico/${id}` });
   const editId = params.get('editar');
   const editing = editId ? invoices.find((i) => String(i.id) === editId) : null;
   const showForm = editing || !invoices.length || params.get('novo') === '1';
@@ -2500,7 +2502,7 @@ screens.invoice = async (params, id) => {
       <button type="button" class="danger small" data-rm>Tirar item</button>
     </div>`;
   view.innerHTML = `
-    ${invoices.length ? `<div class="card"><h2>Invoices deste serviço</h2><ul class="list">${invoices
+    ${invoices.length ? `<div class="card"><h2>${W}s deste serviço</h2><ul class="list">${invoices
       .map(
         (i) => `<li><div class="row"><div><strong>Nº ${i.number}</strong> · ${money(i.total_cents)}<div class="sub">${dayFmt(i.issue_date)} · ${esc((i.bill_to || '').split('\n')[0])}</div></div></div>
         <div class="actions"><a class="btn secondary" href="/api/invoices/${i.id}/pdf" target="_blank" rel="noopener" data-view="${i.id}">Ver PDF</a>
@@ -2508,9 +2510,9 @@ screens.invoice = async (params, id) => {
           <a class="btn secondary" href="#/invoice/${id}?editar=${i.id}">Editar</a>
           ${state.me.role === 'dono' ? `<button class="danger" data-del="${i.id}">🗑 Apagar</button>` : ''}</div></li>`
       )
-      .join('')}</ul>${showForm ? '' : `<a class="btn secondary block" href="#/invoice/${id}?novo=1">Fazer outro invoice</a>`}</div>` : ''}
+      .join('')}</ul>${showForm ? '' : `<a class="btn secondary block" href="#/invoice/${id}?novo=1">Fazer outro ${W.toLowerCase()}</a>`}</div>` : ''}
     ${showForm ? `<form class="card" id="f">
-      <h2>${editing ? `Editar invoice nº ${editing.number}` : 'Novo invoice'}</h2>
+      <h2>${editing ? `Editar ${W.toLowerCase()} nº ${editing.number}` : `Novo ${W.toLowerCase()}`}</h2>${quote ? '<p class="sub">Serviço Pendente sem motorista: sai como QUOTE (orçamento). Quando escolher o motorista, o mesmo número passa a sair como INVOICE.</p>' : ''}
       <div class="row2"><div><label>Número</label><input name="number" inputmode="numeric" value="${inv.number}" ${editing ? 'disabled' : ''}></div><div></div></div>
       <label>Para (Bill to): nome, endereço…</label><textarea name="bill_to" rows="3">${esc(inv.bill_to || '')}</textarea>
       <div class="row2"><div><label>Data</label><input type="date" name="issue_date" value="${inv.issue_date}"></div><div><label>Vencimento</label><input type="date" name="due_date" value="${inv.due_date}"></div></div>
@@ -2519,8 +2521,8 @@ screens.invoice = async (params, id) => {
       ${state.me.role === 'dono' ? `<label>Desconto ($)</label><input name="discount" inputmode="decimal" placeholder="0.00" value="${inv.discount_cents ? centsToInput(inv.discount_cents) : ''}">` : ''}
       <p class="inv-total" id="invTotal"></p>
       <label>Observação (opcional)</label><textarea name="notes" rows="2">${esc(inv.notes || '')}</textarea>
-      <p class="sub">O invoice sai em inglês, com o logo e os dados da empresa (Menu › Dados da empresa). Se o serviço já foi pago, sai com "PAID".</p>
-      <button class="block">${editing ? 'Salvar' : 'Criar invoice'}</button>
+      <p class="sub">O ${W.toLowerCase()} sai em inglês, com o logo e os dados da empresa (Menu › Dados da empresa). Se o serviço já foi pago, sai com "PAID".</p>
+      <button class="block">${editing ? 'Salvar' : `Criar ${W.toLowerCase()}`}</button>
     </form>` : ''}`;
   const form = view.querySelector('#f');
   if (form) {
@@ -2561,7 +2563,7 @@ screens.invoice = async (params, id) => {
         const saved = editing
           ? await api(`/invoices/${editing.id}`, { method: 'PUT', body })
           : await api(`/services/${id}/invoices`, { method: 'POST', body });
-        toast(`Invoice nº ${saved.number} pronto`);
+        toast(`${W} nº ${saved.number} pronto`);
         // Mudou o desconto: o valor do serviço baixou. Oferece um link do cartão novo com o valor certo.
         if ((saved.discount_cents || 0) !== (inv.discount_cents || 0)) {
           const novo = await ask(`Desconto salvo. O serviço agora fica ${money(saved.total_cents)}.\nFazer um link do cartão novo com esse valor? (Se já mandou um link antes, mande só o novo.)`, { ok: '💳 Fazer link novo', cancel: 'Agora não' });
@@ -2575,7 +2577,7 @@ screens.invoice = async (params, id) => {
     };
   }
   view.querySelectorAll('[data-share]').forEach((b) => {
-    b.onclick = () => shareInvoice(invoices.find((i) => String(i.id) === b.dataset.share));
+    b.onclick = () => shareInvoice(invoices.find((i) => String(i.id) === b.dataset.share), W);
   });
   // Ver PDF abre aqui dentro do app, com Voltar (no celular, a aba do PDF não tinha como voltar).
   view.querySelectorAll('[data-view]').forEach((a) => {
@@ -2583,16 +2585,16 @@ screens.invoice = async (params, id) => {
       if (e.ctrlKey || e.metaKey || e.shiftKey) return;
       e.preventDefault();
       const i = invoices.find((x) => String(x.id) === a.dataset.view);
-      openDoc({ url: `/api/invoices/${i.id}/pdf`, name: `Invoice ${i.number}.pdf`, mime: 'application/pdf' });
+      openDoc({ url: `/api/invoices/${i.id}/pdf`, name: `${W} ${i.number}.pdf`, mime: 'application/pdf' });
     };
   });
   view.querySelectorAll('[data-del]').forEach((b) => {
     b.onclick = async () => {
       const i = invoices.find((x) => String(x.id) === b.dataset.del);
-      if (!(await ask(`Apagar o invoice nº ${i.number}? Não dá para desfazer.`, { ok: 'Apagar', cancel: 'Voltar', danger: true }))) return;
+      if (!(await ask(`Apagar o ${W.toLowerCase()} nº ${i.number}? Não dá para desfazer.`, { ok: 'Apagar', cancel: 'Voltar', danger: true }))) return;
       try {
         await api(`/invoices/${i.id}`, { method: 'DELETE' });
-        toast(`Invoice nº ${i.number} apagado`);
+        toast(`${W} nº ${i.number} apagado`);
         screens.invoice(new URLSearchParams(), id);
       } catch (err) {
         toast(err.message);

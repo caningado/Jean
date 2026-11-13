@@ -15,9 +15,11 @@ test('Pendências: procurar quem deve, pagar vários de uma vez e pagamento parc
   const call = (method, path, body) => fetch(`${base}/api${path}`, { method, headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
   const json = (...a) => call(...a).then((r) => r.json());
 
-  const a = await json('POST', '/services', { contact_name: 'Ana Souza', contact_phone: '4075552697', pickup: '12 Main St, Orlando FL', price: '500' });
-  const b = await json('POST', '/services', { contact_name: 'Bia Lima', pickup: '12 Main St, Orlando FL', price: '150' });
-  const c = await json('POST', '/services', { contact_name: 'Caio Reis', pickup: '12 Main St, Orlando FL', price: '90' });
+  // Com motorista: pendente sem motorista pode ser só cotação e não entra nas listas/totais.
+  const me = (await json('GET', '/me')).user;
+  const a = await json('POST', '/services', { driver_id: me.id, contact_name: 'Ana Souza', contact_phone: '4075552697', pickup: '12 Main St, Orlando FL', price: '500' });
+  const b = await json('POST', '/services', { driver_id: me.id, contact_name: 'Bia Lima', pickup: '12 Main St, Orlando FL', price: '150' });
+  const c = await json('POST', '/services', { driver_id: me.id, contact_name: 'Caio Reis', pickup: '12 Main St, Orlando FL', price: '90' });
 
   // Parcial: devia 500, pagou 200.
   await json('POST', `/services/${a.id}/payments`, { amount: '200', method: 'zelle' });
@@ -43,9 +45,9 @@ test('Pendências: procurar quem deve, pagar vários de uma vez e pagamento parc
   assert.equal((await call('POST', '/payments/lote', { service_ids: [c.id], method: 'seguradora' })).status, 400);
 
   // Um pagamento só para vários serviços: deve 500 em 3, pagou 200.
-  const x = await json('POST', '/services', { contact_name: 'Dino', pickup: '12 Main St, Orlando FL', price: '150' });
-  const y = await json('POST', '/services', { contact_name: 'Dino', pickup: '20 Oak St, Orlando FL', price: '200' });
-  const z = await json('POST', '/services', { contact_name: 'Dino', pickup: '30 Pine St, Orlando FL', price: '150' });
+  const x = await json('POST', '/services', { driver_id: me.id, contact_name: 'Dino', pickup: '12 Main St, Orlando FL', price: '150' });
+  const y = await json('POST', '/services', { driver_id: me.id, contact_name: 'Dino', pickup: '20 Oak St, Orlando FL', price: '200' });
+  const z = await json('POST', '/services', { driver_id: me.id, contact_name: 'Dino', pickup: '30 Pine St, Orlando FL', price: '150' });
   assert.equal((await call('POST', '/payments/lote', { service_ids: [x.id, y.id, z.id], method: 'zelle', amount: '600' })).status, 400);
   const p = await json('POST', '/payments/lote', { service_ids: [z.id, y.id, x.id], method: 'zelle', amount: '200' });
   assert.deepEqual(p, { count: 2, total_cents: 20000, partial: [y.id], still_open_cents: 30000 });
@@ -61,8 +63,8 @@ test('Pendências: procurar quem deve, pagar vários de uma vez e pagamento parc
   assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0, 4).toString(), '%PDF');
 
   // Cliente de empresa: procurar quem pediu traz tudo o que a empresa deve.
-  const m1 = await json('POST', '/services', { contact_name: 'Mike', pickup: '40 Elm St, Orlando FL', price: '100' });
-  const m2 = await json('POST', '/services', { contact_name: 'Carlos', pickup: '50 Elm St, Orlando FL', price: '70' });
+  const m1 = await json('POST', '/services', { driver_id: me.id, contact_name: 'Mike', pickup: '40 Elm St, Orlando FL', price: '100' });
+  const m2 = await json('POST', '/services', { driver_id: me.id, contact_name: 'Carlos', pickup: '50 Elm St, Orlando FL', price: '70' });
   ctx.db.prepare("INSERT INTO companies (name, token, created_at) VALUES ('USAVE Motors', 'tk', '2026-01-01')").run();
   ctx.db.prepare("UPDATE contacts SET company_id = (SELECT id FROM companies) WHERE name IN ('Mike', 'Carlos')").run();
   const [emp] = await chat(ctx, OWNER_PHONE, 'pendentes carlos');

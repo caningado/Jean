@@ -189,6 +189,10 @@ function saveInvoice(ctx, { service, body, user = null, userId = user?.id, exist
   return getInvoice(ctx, Number(info.lastInsertRowid));
 }
 
+// Pendente sem motorista é só cotação: o documento sai como QUOTE, não INVOICE (pedido do Caningado 13/11).
+// Quando o ADM escolhe o motorista, o mesmo documento (mesmo número) passa a sair como INVOICE.
+export const isQuote = (service) => !!service && service.status === 'pendente' && !service.driver_id;
+
 function getInvoice(ctx, id) {
   const row = ctx.db.prepare('SELECT * FROM invoices WHERE id = ?').get(id);
   return row && { ...row, items: JSON.parse(row.items) };
@@ -230,10 +234,14 @@ export async function invoicePdf(ctx, invoice, fetchImpl = fetch) {
     invoice,
     service: service && { ...service, vehicle: vehicleName(service), pickup: where[0], dropoff: where[1] },
     paid_cents: paidFor(ctx, invoice),
+    quote: isQuote(service),
   });
 }
 
-const fileName = (ctx, invoice) => `Invoice ${invoice.number} - ${getCompany(ctx).name}.pdf`.replace(/[^\w &.-]/g, '');
+const fileName = (ctx, invoice) => {
+  const service = invoice.service_id ? ctx.data.services.get(invoice.service_id) : null;
+  return `${isQuote(service) ? 'Quote' : 'Invoice'} ${invoice.number} - ${getCompany(ctx).name}.pdf`.replace(/[^\w &.-]/g, '');
+};
 
 function sendPdf(res, buf, name, download) {
   res.set('Content-Type', 'application/pdf');
@@ -328,7 +336,7 @@ function routes(api, ctx) {
     const service = ctx.data.services.get(Number(req.params.id));
     if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
     const list = ctx.db.prepare('SELECT id FROM invoices WHERE service_id = ? ORDER BY id DESC').all(service.id).map((r) => getInvoice(ctx, r.id));
-    res.json({ draft: draftFor(ctx, service), invoices: list.map((i) => ({ ...i, link: publicLink(ctx, i) })) });
+    res.json({ quote: isQuote(service), draft: draftFor(ctx, service), invoices: list.map((i) => ({ ...i, link: publicLink(ctx, i) })) });
   });
 
   api.post('/services/:id/invoices', (req, res) => {
