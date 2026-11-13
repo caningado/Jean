@@ -1041,7 +1041,7 @@ screens.servico = async (params, id) => {
         <div id="cardlinkOut"></div>
       </form>
     </div>` : ''}
-    ${has('invoice') ? `<a class="card linkcard" href="#/invoice/${s.id}"><span>🧾 Invoice para o cliente${s.invoice_number ? ` <span class="sub">nº ${s.invoice_number}</span>` : ''}</span><span>›</span></a>` : ''}`;
+    ${has('invoice') && !(s.status === 'pendente' && !s.driver_id) ? `<a class="card linkcard" href="#/invoice/${s.id}"><span>🧾 Invoice para o cliente${s.invoice_number ? ` <span class="sub">nº ${s.invoice_number}</span>` : ''}</span><span>›</span></a>` : ''}`;
 
   const reload = () => screens.servico(params, id);
   const on = (sel, fn) => view.querySelector(sel) && (view.querySelector(sel).onclick = fn);

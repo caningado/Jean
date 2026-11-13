@@ -150,6 +150,8 @@ function cleanItems(items) {
 }
 
 function saveInvoice(ctx, { service, body, user = null, userId = user?.id, existing = null }) {
+  // Pendente sem motorista é só cotação: não gera invoice (pedido do Caningado 13/11).
+  if (!existing && service?.status === 'pendente' && !service.driver_id) throw new HttpError(400, 'Serviço Pendente é só uma cotação: escolha o motorista antes de fazer o invoice.');
   const draft = draftFor(ctx, service);
   const items = body.items ? cleanItems(body.items) : draft.items;
   const subtotal = items.reduce((s, it) => s + Math.round(it.qty * it.unit_cents), 0);

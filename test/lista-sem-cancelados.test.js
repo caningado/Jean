@@ -49,3 +49,21 @@ test('Pendente sem motorista (cotação) fica só na aba Pendentes, fora de Todo
   await json('POST', `/services/${cotacao.id}/passar`, { driver_id: me.id });
   assert.ok((await json('GET', '/services?status=')).some((s) => s.id === cotacao.id));
 });
+
+test('Pendente sem motorista (cotação) não gera invoice', async (t) => {
+  const ctx = makeContext({ GEOCODER: 'off' });
+  const server = createApp(ctx).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const login = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: OWNER_PHONE, pin: '1234' }) });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const call = (method, path, body) => fetch(`${base}/api${path}`, { method, headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+  const me = (await (await call('GET', '/me')).json()).user;
+  const cotacao = await (await call('POST', '/services', { contact_name: 'Cotação', pickup: '12 Main St, Orlando FL', price: '130' })).json();
+  const nao = await call('POST', `/services/${cotacao.id}/invoices`, {});
+  assert.equal(nao.status, 400);
+  assert.match((await nao.json()).error, /cotação/);
+  await call('POST', `/services/${cotacao.id}/passar`, { driver_id: me.id });
+  assert.equal((await call('POST', `/services/${cotacao.id}/invoices`, {})).status, 201);
+});
