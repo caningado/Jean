@@ -41,6 +41,15 @@ test('Relatório do dia: serviços do dia, sem cancelados, com pago e a receber'
   const dia = new Intl.DateTimeFormat('en-CA', { timeZone: ctx.config.timeZone }).format(new Date(Date.now() - 3 * 86400000));
   assert.deepEqual((await json('GET', `/relatorio/dia?dia=${dia}`)).reports[0].services.map((s) => s.id), [ontem.id]);
 
+  // Aberto num dia e entregue no outro: conta só no dia da entrega (não repete nem soma duas vezes).
+  const doisDias = await json('POST', '/services', { contact_name: 'Edgard', pickup: '12 Main St, Orlando FL', price: '150' });
+  const quatroDias = new Date(Date.now() - 4 * 86400000).toISOString();
+  ctx.db.prepare("UPDATE services SET created_at = ?, completed_at = ?, status = 'concluido' WHERE id = ?").run(quatroDias, new Date(Date.now() - 3 * 86400000).toISOString(), doisDias.id);
+  const diaAbertura = new Intl.DateTimeFormat('en-CA', { timeZone: ctx.config.timeZone }).format(new Date(quatroDias));
+  assert.ok(!(await json('GET', `/relatorio/dia?dia=${diaAbertura}`)).reports[0].services.some((s) => s.id === doisDias.id));
+  assert.ok((await json('GET', `/relatorio/dia?dia=${dia}`)).reports[0].services.some((s) => s.id === doisDias.id));
+  assert.ok(!(await json('GET', '/relatorio/dia')).reports[0].services.some((s) => s.id === doisDias.id));
+
   // Motorista da VIP: os serviços dele vão para a folha da VIP.
   const jorge = (await json('GET', '/users')).find((u) => u.name === 'Jorge');
   assert.equal(jorge.firm, 'jj');

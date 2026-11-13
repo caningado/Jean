@@ -1134,7 +1134,9 @@ function routes(api, ctx) {
     res.json({ period, ...buildSummary(ctx, { since: periodStart(ctx, period), userId }) });
   });
 
-  // Relatório do dia para imprimir: serviços abertos ou entregues no dia (sem cancelados).
+  // Relatório do dia para imprimir (sem cancelados). Cada serviço entra num dia só:
+  // entregue conta no dia da entrega; ainda não entregue conta no dia em que foi aberto.
+  // É a mesma regra do pagamento do motorista e das pendências por empresa.
   api.get('/relatorio/dia', (req, res) => {
     requireOwner(req);
     const tz = ctx.config.timeZone;
@@ -1150,10 +1152,10 @@ function routes(api, ctx) {
         `SELECT s.*, c.name AS contact_name, c.phone AS contact_phone, u.name AS driver_name, u.firm AS driver_firm
          FROM services s LEFT JOIN contacts c ON c.id = s.contact_id LEFT JOIN users u ON u.id = s.driver_id
          WHERE s.status <> 'cancelado'
-           AND ((s.created_at >= ? AND s.created_at < ?) OR (s.completed_at >= ? AND s.completed_at < ?))
+           AND COALESCE(s.completed_at, s.created_at) >= ? AND COALESCE(s.completed_at, s.created_at) < ?
          ORDER BY s.created_at, s.id`
       )
-      .all(start, end, start, end)
+      .all(start, end)
       // Agendado que ainda não começou não entra: só conta no dia em que o motorista pegar o carro.
       .filter((s) => !s.scheduled_at || s.status === 'concluido' || (s.status !== 'pendente' && s.scheduled_at < end));
     const pag = ctx.api.pagamentos;
