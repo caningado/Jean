@@ -149,6 +149,8 @@ function saveServiceChange(ctx, user, service, body, motivoRaw = '') {
   if (service.status === 'pendente' && body.status === 'aberto' && !body.driver_id) body.driver_id = service.driver_id || user.id;
   // Volta para a fila geral: sem motorista (só o dono).
   if (body.status === 'pendente' && body.driver_id === undefined) body.driver_id = null;
+  // Dono tirou o motorista de um serviço em andamento: volta para a fila geral (Pendente, sem motorista).
+  if (body.driver_id === null && service.driver_id && (body.status ?? service.status) === 'aberto') body.status = 'pendente';
   // Começar (ou reabrir): no máximo config.maxActive em andamento por motorista.
   const starting = body.status === 'aberto' && service.status !== 'aberto';
   if (starting) checkCanStart(ctx, body.driver_id || service.driver_id || user.id, service.id);
@@ -177,6 +179,11 @@ function saveServiceChange(ctx, user, service, body, motivoRaw = '') {
   }
   // Dono passou para a fila de um motorista (ou trocou o motorista da fila): avisa.
   if (updated.status === 'pendente' && updated.driver_id && updated.driver_id !== service.driver_id) notifyAssigned(ctx, updated, user);
+  // Saiu da mão de um motorista (ficou sem motorista ou foi para outro): deixa de ser o "em mãos" dele e ele é avisado.
+  if (service.driver_id && updated.driver_id !== service.driver_id) {
+    db.prepare('UPDATE users SET active_service_id = NULL WHERE id = ? AND active_service_id = ?').run(service.driver_id, service.id);
+    if (['pendente', 'aberto'].includes(service.status)) notifyUnassigned(ctx, service, user);
+  }
   if (body.status && body.status !== 'aberto') {
     db.prepare('UPDATE users SET active_service_id = NULL WHERE active_service_id = ?').run(service.id);
   }
@@ -228,6 +235,19 @@ async function notifyAssigned(ctx, service, byUser) {
     await ctx.send(driver.phone, [`🚚 ${byUser.name} passou um serviço para a sua fila.`, ctx.data.services.describe(service, driver), `Para começar, mande *abrir ${ctx.data.services.ref(service, driver)}* (ou toque em Começar no painel).`].join('\n\n'));
   } catch (err) {
     ctx.log(`Não consegui avisar ${driver.name} do serviço #${service.id}`, err);
+  }
+}
+
+// Avisa o motorista que o dono tirou um serviço dele (deixou sem motorista ou passou para outro).
+async function notifyUnassigned(ctx, before, byUser) {
+  if (!ctx.send || before.driver_id === byUser.id) return;
+  const driver = ctx.data.users.get(before.driver_id);
+  if (!driver) return;
+  const who = before.contact_name || before.vehicle;
+  try {
+    await ctx.send(driver.phone, `↩️ ${byUser.name} tirou o serviço #${ctx.data.services.ref(before, driver)}${who ? ` (${who})` : ''} de você. Não precisa fazer esse.`);
+  } catch (err) {
+    ctx.log(`Não consegui avisar ${driver.name} do serviço #${before.id}`, err);
   }
 }
 
@@ -1120,11 +1140,20 @@ function routes(api, ctx) {
     const service = data.services.get(Number(req.params.id));
     if (!service) throw new HttpError(404, 'Serviço não encontrado.');
     if (service.status !== 'pendente') throw new HttpError(409, service.driver_name ? `Esse serviço já está com ${service.driver_name}.` : 'Esse serviço não está mais na fila.');
+    // "Sem motorista": tira da fila do motorista e volta para a lista geral (Pendente).
+    const none = req.body?.driver_id;
+    if (none === null || none === '' || none === 0 || none === 'nenhum') {
+      res.json(saveServiceChange(ctx, req.user, service, { status: 'pendente', driver_id: null }).updated);
+      return;
+    }
     const driver = data.users.get(Number(req.body?.driver_id) || req.user.id);
     if (!driver || !driver.active) throw new HttpError(400, 'Motorista não encontrado.');
     // Entra na fila do motorista; ele escolhe quando começar.
     const updated = assignService(ctx, service, driver.id, req.user.id);
-    if (driver.id !== service.driver_id) notifyAssigned(ctx, updated, req.user);
+    if (driver.id !== service.driver_id) {
+      notifyAssigned(ctx, updated, req.user);
+      if (service.driver_id) notifyUnassigned(ctx, service, req.user);
+    }
     res.json(updated);
   });
 
