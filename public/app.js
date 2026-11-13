@@ -967,7 +967,7 @@ screens.servico = async (params, id) => {
         ${s.status === 'pendente' ? (queued(s) && (owner || s.driver_id === state.me.id) ? '<button id="start">▶ Começar</button>' : '') : s.status === 'aberto' ? '<button id="done">✅ Entregue</button>' : '<button class="secondary" id="reopen">Reabrir</button>'}
         ${s.status !== 'pendente' || owner || s.driver_id === state.me.id ? '<button class="secondary" id="edit">Editar</button>' : ''}
       </div>
-      ${s.status === 'pendente' ? `<p class="sub">${queued(s) ? `⏳ Aguardando: na fila de ${esc(s.driver_name || 'motorista')}. Toque em Começar quando for fazer este.` : '⏳ Na fila: ainda sem motorista.'}</p>${owner ? `<label>Escolher o motorista</label><div class="actions"><select id="assign" aria-label="Escolher o motorista"><option value="">${queued(s) ? 'Passar para outro motorista?' : 'Quem vai fazer?'}</option>${drivers.filter((d) => d.active && drives(d)).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></div>` : ''}` : ''}
+      ${s.status === 'pendente' ? `<p class="sub">${queued(s) ? `⏳ Aguardando: na fila de ${esc(s.driver_name || 'motorista')}. Toque em Começar quando for fazer este.` : '⏳ Na fila: ainda sem motorista.'}</p>${owner ? `<label>Escolher o motorista</label><div class="actions"><select id="assign" aria-label="Escolher o motorista"><option value="">${queued(s) ? 'Passar para outro motorista?' : 'Quem vai fazer?'}</option>${drivers.filter((d) => d.active && drives(d) && d.id !== s.driver_id).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}${queued(s) ? '<option value="nenhum">🚫 Sem motorista (tirar da fila)</option>' : ''}</select></div>` : ''}` : ''}
       ${s.status === 'aberto' && owner ? '<div class="actions"><button class="secondary" id="queue">⏳ Voltar para a fila</button></div>' : ''}
       ${(['aberto', 'pendente'].includes(s.status) && (owner || s.driver_id === state.me.id)) ? '<div class="actions"><button class="danger" id="cancel">✖ Cancelar serviço</button></div>' : ''}
     </div>
@@ -1094,9 +1094,10 @@ screens.servico = async (params, id) => {
   if (assign) {
     assign.onchange = async () => {
       if (!assign.value) return;
+      const none = assign.value === 'nenhum';
       try {
-        const done = await api(`/services/${id}/passar`, { method: 'POST', body: { driver_id: Number(assign.value) } });
-        toast(`Passado para ${done.driver_name}`);
+        const done = await api(`/services/${id}/passar`, { method: 'POST', body: { driver_id: none ? 'nenhum' : Number(assign.value) } });
+        toast(none ? 'Serviço ficou sem motorista (Pendente)' : `Passado para ${done.driver_name}`);
         reload();
       } catch (err) {
         toast(err.message);
@@ -1396,7 +1397,7 @@ screens.editar = async (params, id) => {
         <div><label>Milhas</label><input name="miles" type="number" step="0.1" value="${s.miles ?? ''}"></div>
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal" placeholder="0 = free" value="${s.price_cents != null ? (s.price_cents / 100).toFixed(2) : ''}"></div>
       </div>
-      ${drivers.length ? `<label>Motorista</label><select name="driver_id">${s.driver_id ? '' : '<option value="" selected>Ninguém ainda (fila)</option>'}${drivers.filter((d) => d.id === s.driver_id || (d.active && drives(d))).map((d) => `<option value="${d.id}" ${d.id === s.driver_id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>` : ''}
+      ${drivers.length ? `<label>Motorista</label><select name="driver_id"><option value=""${s.driver_id ? '' : ' selected'}>${s.driver_id ? '🚫 Sem motorista' : 'Ninguém ainda (fila)'}</option>${drivers.filter((d) => d.id === s.driver_id || (d.active && drives(d))).map((d) => `<option value="${d.id}" ${d.id === s.driver_id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>` : ''}
       <label>Situação</label><select name="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === s.status ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <label>Observações</label><textarea name="notes" rows="3">${esc(s.notes)}</textarea>
       <button class="block">Salvar</button>
@@ -1432,6 +1433,8 @@ screens.editar = async (params, id) => {
     if (String(body.contact_id || '') === String(s.contact_id || '')) delete body.contact_id;
     body.miles = body.miles === '' ? null : Number(body.miles);
     if (body.driver_id) body.driver_id = Number(body.driver_id);
+    else if (s.driver_id && body.driver_id === '') body.driver_id = null; // escolheu "Sem motorista"
+    else delete body.driver_id;
     try {
       await sendCheckingAddress((b) => api(`/services/${id}`, { method: 'PATCH', body: b }), body);
       toast('Salvo');

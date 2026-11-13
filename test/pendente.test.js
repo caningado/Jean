@@ -78,6 +78,42 @@ test('serviço na fila: só o dono põe na fila e escolhe o motorista', async (t
   assert.equal(edit.body.driver_id, driver.id);
 });
 
+test('dono deixa o serviço sem motorista: volta para Pendente e o motorista é avisado', async (t) => {
+  const { ctx, call, drv, driver } = await start(t);
+  const sent = [];
+  ctx.send = async (phone, text) => sent.push({ phone, text });
+  const r = await call('POST', '/services', { pickup: '100 Main St, Oviedo FL', vehicle: 'F150', contact_name: 'Gabriel', driver_id: 'fila' });
+  await call('POST', `/services/${r.body.id}/passar`, { driver_id: driver.id });
+  await new Promise((r) => setImmediate(r));
+  sent.length = 0;
+
+  // Só o dono tira.
+  assert.equal((await call('POST', `/services/${r.body.id}/passar`, { driver_id: 'nenhum' }, drv)).status, 403);
+  // Na fila do motorista → "Sem motorista": Pendente, sem motorista, sumiu da fila dele, e ele recebe aviso.
+  const tirou = await call('POST', `/services/${r.body.id}/passar`, { driver_id: 'nenhum' });
+  assert.equal(tirou.status, 200);
+  assert.equal(tirou.body.status, 'pendente');
+  assert.equal(tirou.body.driver_id, null);
+  assert.equal((await call('GET', '/services?status=pendente', null, drv)).body.length, 0);
+  await new Promise((r) => setImmediate(r));
+  assert.match(sent.find((m) => m.phone === DRIVER_PHONE).text, /tirou o serviço .*Gabriel/);
+  // Aparece na fila do dono pelo WhatsApp (os sem motorista).
+  const [fila] = await chat(ctx, OWNER_PHONE, 'fila');
+  assert.match(fila, new RegExp(`#${r.body.id}\\*`));
+
+  // Em andamento → Editar com "Sem motorista": volta para Pendente sem motorista e deixa de ser o "em mãos" dele.
+  await call('POST', `/services/${r.body.id}/passar`, { driver_id: driver.id });
+  await call('PATCH', `/services/${r.body.id}`, { status: 'aberto' }, drv);
+  assert.equal(ctx.db.prepare('SELECT active_service_id FROM users WHERE id = ?').get(driver.id).active_service_id, r.body.id);
+  sent.length = 0;
+  const edit = await call('PATCH', `/services/${r.body.id}`, { driver_id: null });
+  assert.equal(edit.body.status, 'pendente');
+  assert.equal(edit.body.driver_id, null);
+  assert.equal(ctx.db.prepare('SELECT active_service_id FROM users WHERE id = ?').get(driver.id).active_service_id, null);
+  await new Promise((r) => setImmediate(r));
+  assert.match(sent.find((m) => m.phone === DRIVER_PHONE).text, /tirou o serviço/);
+});
+
 test('pelo WhatsApp: só o dono vê a fila', async (t) => {
   const { ctx, call } = await start(t);
   const [vazia] = await chat(ctx, OWNER_PHONE, 'fila');
