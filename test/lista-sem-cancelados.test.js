@@ -50,7 +50,7 @@ test('Pendente sem motorista (cotação) fica só na aba Pendentes, fora de Todo
   assert.ok((await json('GET', '/services?status=')).some((s) => s.id === cotacao.id));
 });
 
-test('Pendente sem motorista (cotação) não gera invoice', async (t) => {
+test('Pendente sem motorista (cotação): o documento sai como QUOTE e vira INVOICE com motorista', async (t) => {
   const ctx = makeContext({ GEOCODER: 'off' });
   const server = createApp(ctx).listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -61,9 +61,14 @@ test('Pendente sem motorista (cotação) não gera invoice', async (t) => {
   const call = (method, path, body) => fetch(`${base}/api${path}`, { method, headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
   const me = (await (await call('GET', '/me')).json()).user;
   const cotacao = await (await call('POST', '/services', { contact_name: 'Cotação', pickup: '12 Main St, Orlando FL', price: '130' })).json();
-  const nao = await call('POST', `/services/${cotacao.id}/invoices`, {});
-  assert.equal(nao.status, 400);
-  assert.match((await nao.json()).error, /cotação/);
+  assert.equal((await (await call('GET', `/services/${cotacao.id}/invoices`)).json()).quote, true);
+  const criado = await call('POST', `/services/${cotacao.id}/invoices`, {});
+  assert.equal(criado.status, 201);
+  const inv = await criado.json();
+  const pdf = await call('GET', `/invoices/${inv.id}/pdf`);
+  assert.match(pdf.headers.get('content-disposition'), /Quote \d+/);
+  // Escolheu o motorista: o mesmo número sai como Invoice.
   await call('POST', `/services/${cotacao.id}/passar`, { driver_id: me.id });
-  assert.equal((await call('POST', `/services/${cotacao.id}/invoices`, {})).status, 201);
+  assert.equal((await (await call('GET', `/services/${cotacao.id}/invoices`)).json()).quote, false);
+  assert.match((await call('GET', `/invoices/${inv.id}/pdf`)).headers.get('content-disposition'), new RegExp(`Invoice ${inv.number}`));
 });

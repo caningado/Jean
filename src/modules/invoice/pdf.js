@@ -23,8 +23,10 @@ const qtyText = (q) => (Number.isInteger(q) ? String(q) : String(Number(q).toFix
 // data = { company, logo (Buffer|null), invoice: { number, issue_date, due_date, bill_to, items, notes },
 //          service: { vehicle, vin, plate, pickup, dropoff, miles } | null, paid_cents }
 export function renderInvoice(data) {
-  const { company, logo, invoice, service } = data;
-  const { doc, done } = startDoc(`Invoice ${invoice.number} - ${company.name}`, company);
+  const { company, logo, invoice, service, quote } = data;
+  // quote: serviço ainda é só cotação (Pendente sem motorista): sai como QUOTE, sem "PAID".
+  const word = quote ? 'Quote' : 'Invoice';
+  const { doc, done } = startDoc(`${word} ${invoice.number} - ${company.name}`, company);
   const L = 50;
   const R = doc.page.width - 50;
   const W = R - L;
@@ -33,11 +35,11 @@ export function renderInvoice(data) {
   // ---- Faixa do título ----
   doc.rect(L, y, W, 2).fill(RED);
   y += 14;
-  doc.font('Helvetica-Bold').fontSize(26).fillColor(DARK).text('INVOICE', L, y);
+  doc.font('Helvetica-Bold').fontSize(26).fillColor(DARK).text(word.toUpperCase(), L, y);
   const meta = [
-    ['Invoice No.', String(invoice.number)],
-    ['Issue date', longDate(invoice.issue_date)],
-    ['Due date', longDate(invoice.due_date)],
+    [`${word} No.`, String(invoice.number)],
+    [quote ? 'Date' : 'Issue date', longDate(invoice.issue_date)],
+    ...(quote ? [] : [['Due date', longDate(invoice.due_date)]]),
   ];
   let my = y + 2;
   for (const [label, value] of meta) {
@@ -128,9 +130,9 @@ export function renderInvoice(data) {
   if (discount) totalRow('Discount', `- ${usd(discount)}`);
   if (paid) totalRow('Amount paid', `- ${usd(paid)}`);
   y += 4;
-  doc.rect(tx - 10, y, R - tx + 10, 32).fill(balance ? RED : '#15803D');
-  doc.font('Helvetica-Bold').fontSize(12).fillColor('#FFFFFF').text(balance ? 'BALANCE DUE (USD)' : 'PAID IN FULL', tx, y + 10, { width: 150 });
-  doc.text(usd(balance), R - 110, y + 10, { width: 100, align: 'right' });
+  doc.rect(tx - 10, y, R - tx + 10, 32).fill(balance || quote ? RED : '#15803D');
+  doc.font('Helvetica-Bold').fontSize(12).fillColor('#FFFFFF').text(quote ? 'QUOTE TOTAL (USD)' : balance ? 'BALANCE DUE (USD)' : 'PAID IN FULL', tx, y + 10, { width: 150 });
+  doc.text(usd(quote ? subtotal - discount : balance), R - 110, y + 10, { width: 100, align: 'right' });
   const totalsBottom = y + 32;
 
   // Pagamento
@@ -145,7 +147,7 @@ export function renderInvoice(data) {
   y = Math.max(totalsBottom, py) + 18;
 
   // Carimbo PAGO, embaixo do total.
-  if (!balance && subtotal > 0) {
+  if (!balance && subtotal > 0 && !quote) {
     const sx = R - 165;
     const sy = totalsBottom + 26;
     doc.save();
