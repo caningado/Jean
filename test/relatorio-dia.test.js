@@ -15,16 +15,18 @@ test('Relatório do dia: serviços do dia, sem cancelados, com pago e a receber'
   const call = (method, path, body, c = cookie) => fetch(`${base}/api${path}`, { method, headers: { Cookie: c, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
   const json = (...a) => call(...a).then((r) => r.json());
 
-  const pago = await json('POST', '/services', { contact_name: 'Ana', pickup: '12 Main St, Orlando FL', price: '150' });
-  const falta = await json('POST', '/services', { contact_name: 'Bia', pickup: '12 Main St, Orlando FL', price: '200' });
-  const cancelado = await json('POST', '/services', { contact_name: 'Caio', pickup: '12 Main St, Orlando FL', price: '90' });
-  const ontem = await json('POST', '/services', { contact_name: 'Davi', pickup: '12 Main St, Orlando FL', price: '80' });
+  // Com motorista: pendente sem motorista pode ser só cotação e não entra nas listas/totais.
+  const me = (await json('GET', '/me')).user;
+  const pago = await json('POST', '/services', { driver_id: me.id, contact_name: 'Ana', pickup: '12 Main St, Orlando FL', price: '150' });
+  const falta = await json('POST', '/services', { driver_id: me.id, contact_name: 'Bia', pickup: '12 Main St, Orlando FL', price: '200' });
+  const cancelado = await json('POST', '/services', { driver_id: me.id, contact_name: 'Caio', pickup: '12 Main St, Orlando FL', price: '90' });
+  const ontem = await json('POST', '/services', { driver_id: me.id, contact_name: 'Davi', pickup: '12 Main St, Orlando FL', price: '80' });
   await json('POST', `/services/${pago.id}/payments`, { amount: '150', method: 'zelle' });
   await json('PATCH', `/services/${cancelado.id}`, { status: 'cancelado', motivo: 'desistiu' });
   ctx.db.prepare('UPDATE services SET created_at = ? WHERE id = ?').run(new Date(Date.now() - 3 * 86400000).toISOString(), ontem.id);
 
   // Agendado que ainda não começou não entra no relatório do dia.
-  const agendado = await json('POST', '/services', { contact_name: 'Eva', pickup: '12 Main St, Orlando FL', price: '120' });
+  const agendado = await json('POST', '/services', { driver_id: me.id, contact_name: 'Eva', pickup: '12 Main St, Orlando FL', price: '120' });
   await json('PUT', `/services/${agendado.id}/agenda`, { scheduled_at: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 16) });
 
   const r = await json('GET', '/relatorio/dia');
@@ -42,7 +44,7 @@ test('Relatório do dia: serviços do dia, sem cancelados, com pago e a receber'
   assert.deepEqual((await json('GET', `/relatorio/dia?dia=${dia}`)).reports[0].services.map((s) => s.id), [ontem.id]);
 
   // Aberto num dia e entregue no outro: conta só no dia da entrega (não repete nem soma duas vezes).
-  const doisDias = await json('POST', '/services', { contact_name: 'Edgard', pickup: '12 Main St, Orlando FL', price: '150' });
+  const doisDias = await json('POST', '/services', { driver_id: me.id, contact_name: 'Edgard', pickup: '12 Main St, Orlando FL', price: '150' });
   const quatroDias = new Date(Date.now() - 4 * 86400000).toISOString();
   ctx.db.prepare("UPDATE services SET created_at = ?, completed_at = ?, status = 'concluido' WHERE id = ?").run(quatroDias, new Date(Date.now() - 3 * 86400000).toISOString(), doisDias.id);
   const diaAbertura = new Intl.DateTimeFormat('en-CA', { timeZone: ctx.config.timeZone }).format(new Date(quatroDias));

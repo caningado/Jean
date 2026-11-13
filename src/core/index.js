@@ -257,7 +257,8 @@ function periodStart(ctx, period) {
 
 // Junta o resumo do núcleo com o que cada módulo acrescenta (pagamentos, despesas...).
 function buildSummary(ctx, { since, userId }) {
-  const list = ctx.data.services.list({ since, driverId: userId, limit: 10000 }).filter((s) => s.status !== 'cancelado');
+  // Pendente sem motorista (pode ser só cotação) não entra nos totais.
+  const list = ctx.data.services.list({ since, driverId: userId, hideCancelled: true, hideQuotes: true, limit: 10000 });
   const summary = {
     services: list.length,
     delivered: list.filter((s) => s.status === 'concluido').length,
@@ -989,7 +990,7 @@ function routes(api, ctx) {
     const doneUntil = status === 'concluido' ? end : null;
     const until = status === 'concluido' ? null : end;
     // Cancelados não aparecem na lista (ficam guardados no histórico e no backup).
-    const list = data.services.list({ status, driverId, since, until, doneSince, doneUntil, hideCancelled: !status, withQueue: status === 'aberto', noDriver: status === 'pendente' && req.user.role === 'dono' && !req.query.driver, limit: Number(req.query.limit) || (start ? 2000 : 100) });
+    const list = data.services.list({ status, driverId, since, until, doneSince, doneUntil, hideCancelled: !status, hideQuotes: !status, withQueue: status === 'aberto', noDriver: status === 'pendente' && req.user.role === 'dono' && !req.query.driver, limit: Number(req.query.limit) || (start ? 2000 : 100) });
     // Pago ou não (para pintar a linha): só serviço com valor, em andamento ou entregue.
     // Serviço free conta como pago (fundo verde).
     const pag = ctx.api.pagamentos;
@@ -1180,7 +1181,7 @@ function routes(api, ctx) {
       .prepare(
         `SELECT s.*, c.name AS contact_name, c.phone AS contact_phone, u.name AS driver_name, u.firm AS driver_firm
          FROM services s LEFT JOIN contacts c ON c.id = s.contact_id LEFT JOIN users u ON u.id = s.driver_id
-         WHERE s.status <> 'cancelado'
+         WHERE s.status <> 'cancelado' AND NOT (s.status = 'pendente' AND s.driver_id IS NULL)
            AND COALESCE(s.completed_at, s.created_at) >= ? AND COALESCE(s.completed_at, s.created_at) < ?
          ORDER BY s.created_at, s.id`
       )

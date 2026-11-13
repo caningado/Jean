@@ -82,7 +82,7 @@ const localDay = (ctx, iso) =>
 export function statementData(ctx, company, periodo = 'abertos') {
   const month = /^\d{4}-\d{2}$/.test(periodo) ? monthRange(periodo, ctx.config.timeZone) : null;
   const params = [company.id];
-  let where = "c.company_id = ? AND s.status <> 'cancelado' AND s.price_cents > 0";
+  let where = "c.company_id = ? AND s.status <> 'cancelado' AND NOT (s.status = 'pendente' AND s.driver_id IS NULL) AND s.price_cents > 0";
   if (month) {
     where += ' AND COALESCE(s.completed_at, s.created_at) >= ? AND COALESCE(s.completed_at, s.created_at) < ?';
     params.push(month.from, month.to);
