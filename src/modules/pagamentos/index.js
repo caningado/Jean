@@ -930,6 +930,12 @@ export default {
   },
   setup(ctx) {
     ctx.square = createSquare(ctx.config.square);
-    ctx.api.pagamentos = { balance: (service) => balance(ctx, service), methods: METHODS };
+    ctx.api.pagamentos = {
+      balance: (service) => balance(ctx, service),
+      methods: METHODS,
+      add: (fields) => addPayment(ctx, fields),
+      notify: (items, byUserId) => notifyPayments(ctx, items, byUserId),
+      list: (serviceId) => ctx.db.prepare('SELECT * FROM payments WHERE service_id = ? ORDER BY id').all(serviceId),
+    };
   },
 };

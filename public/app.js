@@ -985,7 +985,7 @@ screens.servico = async (params, id) => {
       <button type="button" class="mic" id="mic" aria-label="Comando de voz"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
       <p class="voice-status" id="voiceStatus">Segure e fale: "peguei o carro", "indo entregar", "finalizar", "recebi 150 no Zelle"…</p>
     </div>` : ''}
-    ${s.events?.length ? `<div class="card"><h2>Histórico</h2><ul class="list">${s.events.map((e) => `<li><div class="row"><span>${esc(VOICE_LABELS[e.action] || e.action)}</span><span class="sub">${when(e.created_at)} · ${esc(e.user_name || '')}${e.source === 'voz' ? ' 🎤' : ''}</span></div></li>`).join('')}</ul></div>` : ''}
+    ${s.events?.length ? `<div class="card"><h2>Histórico</h2><ul class="list">${s.events.map((e) => `<li><div class="row"><span>${esc(VOICE_LABELS[e.action] || e.action)}</span><span class="sub">${when(e.created_at)} · ${esc(e.user_name || '')}${e.source === 'voz' ? ' 🎤' : e.source === 'claude' ? ' · 🤖 Claude' : ''}</span></div></li>`).join('')}</ul></div>` : ''}
 
     ${has('fotos') ? `
     <div class="card docs-card" id="docs-zone">
@@ -3889,6 +3889,11 @@ const VOICE_LABELS = {
   indo_entregar: '🏁 Indo entregar',
   finalizar_servico: '✅ Serviço entregue',
   cancelar_servico: '✖ Serviço cancelado',
+  criado_servico: '🆕 Serviço criado',
+  editado: '✏️ Dados alterados',
+  vin_salvo: '🔎 VIN salvo',
+  pagamento: '💵 Pagamento registrado',
+  motorista: '🚚 Motorista escolhido',
 };
 // Botões de áudio desligados no app (pedido do Caningado 27/10: não funcionavam bem).
 // O áudio pelo WhatsApp continua. Para voltar, troque VOICE_BUTTONS para true.

@@ -263,6 +263,7 @@ export default {
     ctx.api.vin = {
       validate: validateVin,
       decode: decodeVin,
+      save: (service, vin) => saveVin(ctx, service, vin),
       readFromImage: (buffer, mime) => readVinFromImage(ctx, buffer, mime),
       // Último VIN lido sem serviço (para o robô responder "qual VIN?").
       pending(userId) {

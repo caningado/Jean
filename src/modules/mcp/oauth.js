@@ -55,6 +55,16 @@ export const migrations = [
      revoked INTEGER NOT NULL DEFAULT 0,
      created_at TEXT NOT NULL
    );`,
+  // Registro de tudo que o Claude fez no sistema (quem, o quê, quando).
+  `CREATE TABLE mcp_actions (
+     id INTEGER PRIMARY KEY,
+     service_id INTEGER,
+     tool TEXT NOT NULL,
+     details TEXT,
+     user_id INTEGER REFERENCES users(id),
+     created_at TEXT NOT NULL
+   );
+   CREATE INDEX mcp_actions_service ON mcp_actions(service_id, id);`,
 ];
 
 const sha256 = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
