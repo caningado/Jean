@@ -35,7 +35,7 @@ const events = (ctx, id) => ctx.db.prepare('SELECT action, source FROM service_e
 test('mcp ferramentas: lista tudo e não tem ferramenta de apagar', async (t) => {
   const { client } = await setup(t);
   const names = (await client.listTools()).tools.map((x) => x.name).sort();
-  assert.deepEqual(names, ['apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'criar_servico', 'equipe', 'listar_servicos', 'marcar_pago', 'teste', 'ver_servico']);
+  assert.deepEqual(names, ['apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'caixa_de_entrada', 'criar_servico', 'equipe', 'listar_servicos', 'marcar_caixa_lida', 'marcar_pago', 'teste', 'ver_servico']);
   assert.ok(!names.some((n) => /apagar|delete|excluir/.test(n)));
 });
 
@@ -143,4 +143,35 @@ test('mcp ferramentas: buscar cliente por nome, telefone e apelido; vários com 
   assert.match((await call('apelido_cliente', { cliente_id: souza.id, apelido: 'Luan mecânico' })).text, /gravado/);
   const byNick = await call('buscar_cliente', { busca: 'mecanico' });
   assert.match(byNick.text, /Luan Souza \("Luan mecânico"\)/);
+});
+
+test('mcp caixa de entrada: guarda cópia do que o dono manda ao Jay, o Jay responde igual, e o Claude lê', async (t) => {
+  const { processMessage, extractMessages } = await import('../src/modules/whatsapp/index.js');
+  const { ctx, call } = await setup(t);
+  const sent = [];
+  const client = { sendText: async (to, text) => sent.push({ to, text }), downloadMedia: async () => null };
+  const payload = (from, m) => ({ entry: [{ changes: [{ value: { contacts: [{ wa_id: from, profile: { name: 'X' } }], messages: [{ from, ...m }] } }] }] });
+  const [texto] = extractMessages(payload(OWNER_PHONE, { id: 'w1', type: 'text', text: { body: 'Pickup 12 Main St, Orlando. Honda Civic $150' } }));
+  const [local] = extractMessages(payload(OWNER_PHONE, { id: 'w2', type: 'location', location: { latitude: 28.5383, longitude: -81.3792, name: 'Shell' } }));
+  const [motorista] = extractMessages(payload(DRIVER_PHONE, { id: 'w3', type: 'text', text: { body: 'ajuda' } }));
+  await processMessage(ctx, client, texto);
+  await processMessage(ctx, client, local);
+  await processMessage(ctx, client, motorista);
+  await processMessage(ctx, client, texto); // repetida pela Meta: não duplica
+  assert.ok(sent.length > 0, 'o Jay continua respondendo');
+
+  const rows = ctx.db.prepare('SELECT * FROM jay_inbox ORDER BY id').all();
+  assert.equal(rows.length, 2, 'só o que veio do dono, sem repetir');
+  const caixa = await call('caixa_de_entrada');
+  assert.match(caixa.text, /2 mensagem\(ns\)/);
+  assert.match(caixa.text, /\[1\] .* texto: Pickup 12 Main St/);
+  assert.match(caixa.text, /\[2\] .* localização: Shell \(28\.5383, -81\.3792\)\n    Mapa: https:\/\/www\.google\.com\/maps\?q=28\.5383,-81\.3792/);
+
+  const s = await call('criar_servico', { cliente_nome: 'Caio', marca: 'Honda', modelo: 'Civic', retirada: '12 Main St, Orlando FL', destino: '28.5383, -81.3792', preco: 150, motorista: 'Jorge' });
+  assert.equal(s.error, false, s.text);
+  const id = ctx.db.prepare('SELECT MAX(id) AS id FROM services').get().id;
+  assert.match((await call('marcar_caixa_lida', { ids: [1, 2], numero_servico: id })).text, /2 mensagem\(ns\) marcada/);
+  assert.match((await call('caixa_de_entrada')).text, /Nada novo/);
+  assert.match((await call('caixa_de_entrada', { incluir_lidas: true })).text, /já tratada \(serviço #/);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM jay_inbox').get().n, 2, 'nada foi apagado');
 });

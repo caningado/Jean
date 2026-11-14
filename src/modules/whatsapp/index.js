@@ -165,6 +165,7 @@ export function extractMessages(payload) {
           // Localização 📍 mandada pelo WhatsApp: vira texto com nome, endereço e coordenadas.
           const { latitude, longitude, name, address } = m.location;
           const label = [name, address].filter(Boolean).join(', ');
+          msg.location = { latitude, longitude };
           msg.text = `${label ? label + ' ' : ''}(${latitude}, ${longitude})`;
         } else if (m.type === 'contacts' && m.contacts?.length) {
           // Cartão de contato (o cliente que mandou o serviço): vira texto com nome e telefone.
@@ -194,6 +195,12 @@ export async function processMessage(ctx, client, msg) {
     return handleOutsider(ctx, client, msg);
   }
   ctx.log(`WhatsApp: mensagem de ${user.name} (${formatPhone(msg.from)}), tipo ${msg.type}.`);
+  // Cópia na caixa de entrada do Jay (para o Claude ler depois). Nunca atrapalha o robô.
+  try {
+    ctx.api.caixa?.save(user, msg);
+  } catch (err) {
+    ctx.log('Caixa de entrada: não consegui guardar a mensagem', err.message);
+  }
 
   if (!msg.audio && !msg.mediaId) {
     if (!msg.text) {
