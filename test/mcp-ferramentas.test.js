@@ -158,7 +158,16 @@ test('mcp caixa de entrada: guarda cópia do que o dono manda ao Jay, o Jay resp
   await processMessage(ctx, client, local);
   await processMessage(ctx, client, motorista);
   await processMessage(ctx, client, texto); // repetida pela Meta: não duplica
-  assert.ok(sent.length > 0, 'o Jay continua respondendo');
+  // O Jay só guarda o que o dono manda (um "guardei" por rajada) e não cria serviço; o motorista continua sendo atendido.
+  assert.equal(sent.filter((m) => m.to === OWNER_PHONE).length, 1);
+  assert.match(sent.find((m) => m.to === OWNER_PHONE).text, /Guardei na caixa de entrada/);
+  assert.ok(sent.some((m) => m.to === DRIVER_PHONE));
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM services').get().n, 0);
+  // Comando do dono continua indo para o Jay (e também fica na caixa).
+  const [cmd] = extractMessages(payload(OWNER_PHONE, { id: 'w4', type: 'text', text: { body: 'ajuda' } }));
+  await processMessage(ctx, client, cmd);
+  assert.ok(sent.filter((m) => m.to === OWNER_PHONE).length > 1);
+  ctx.db.prepare("DELETE FROM jay_inbox WHERE wa_id = 'w4'").run();
 
   const rows = ctx.db.prepare('SELECT * FROM jay_inbox ORDER BY id').all();
   assert.equal(rows.length, 2, 'só o que veio do dono, sem repetir');
@@ -174,4 +183,14 @@ test('mcp caixa de entrada: guarda cópia do que o dono manda ao Jay, o Jay resp
   assert.match((await call('caixa_de_entrada')).text, /Nada novo/);
   assert.match((await call('caixa_de_entrada', { incluir_lidas: true })).text, /já tratada \(serviço #/);
   assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM jay_inbox').get().n, 2, 'nada foi apagado');
+});
+
+test('mcp caixa de entrada: JAY_CAIXA=off deixa o Jay como antes', async () => {
+  const { processMessage } = await import('../src/modules/whatsapp/index.js');
+  const ctx = makeContext({ JAY_CAIXA: 'off' });
+  const sent = [];
+  const client = { sendText: async (to, text) => sent.push({ to, text }), downloadMedia: async () => null };
+  await processMessage(ctx, client, { id: 'x1', from: OWNER_PHONE, type: 'text', text: 'oi Jay', mediaId: null });
+  assert.ok(!sent.some((m) => /Guardei na caixa/.test(m.text)));
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM jay_inbox').get().n, 1, 'a cópia continua sendo guardada');
 });

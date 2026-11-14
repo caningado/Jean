@@ -30,6 +30,10 @@ export function loadConfig(overrides = {}) {
     companyName: env.COMPANY_NAME || 'Towing J&J',
     // Endereço público do sistema (o Render preenche RENDER_EXTERNAL_URL sozinho). Usado no login do conector do Claude.
     publicUrl: (env.PUBLIC_URL || env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, ''),
+    mcp: {
+      // Dono manda serviço para o Jay: só guarda na caixa (o Claude cria). JAY_CAIXA=off: o Jay cria como antes.
+      jayCaixa: !['off', '0', 'nao', 'não', 'false'].includes(String(env.JAY_CAIXA || '').trim().toLowerCase()),
+    },
     modules: withMcp(env.MODULES ? env.MODULES.split(',').map((m) => m.trim()).filter(Boolean) : ALL_MODULES, env),
     pricing: {
       // Valor médio do serviço ($100, Caningado 23/10): é a sugestão quando não há milhas.

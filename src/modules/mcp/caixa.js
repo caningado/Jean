@@ -24,8 +24,29 @@ export const caixaMigrations = [
 
 const KIND = { image: 'foto', document: 'arquivo', audio: 'áudio', location: 'localização', contacts: 'contato', text: 'texto' };
 
+// Só guardar (sem o Jay criar serviço) vale para texto, localização e cartão de contato do dono,
+// fora de uma conversa com o Jay e sem ser comando. JAY_CAIXA=off volta ao jeito antigo.
+const HOLD_TYPES = ['text', 'location', 'contacts'];
+const RECEIPT_MS = 60 * 1000;
+
 export function createCaixa(ctx) {
+  const lastReceipt = new Map();
   return {
+    holds(user, msg) {
+      if (ctx.config.mcp?.jayCaixa === false || user.role !== 'dono') return false;
+      if (!HOLD_TYPES.includes(msg.type) || msg.mediaId || msg.audio || !msg.text) return false;
+      if (ctx.bot.getConversation(user.id)) return false;
+      if (ctx.bot.isCommand(msg.text)) return false;
+      return true;
+    },
+    // "Guardei" uma vez por rajada de mensagens (encaminhar 5 mensagens não gera 5 respostas).
+    receipt(user) {
+      const now = Date.now();
+      const last = lastReceipt.get(user.id) || 0;
+      lastReceipt.set(user.id, now);
+      if (now - last < RECEIPT_MS) return null;
+      return '📥 Guardei na caixa de entrada. Quando quiser, peça ao Claude para organizar e criar o serviço.';
+    },
     // Só guarda o que vem do dono (ADM).
     save(user, msg) {
       if (user.role !== 'dono') return null;
