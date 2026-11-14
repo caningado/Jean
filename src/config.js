@@ -12,7 +12,7 @@ function loadDotEnv(file) {
   }
 }
 
-export const ALL_MODULES = ['vin', 'fotos', 'pagamentos', 'despesas', 'whatsapp', 'planilha', 'manutencao', 'invoice', 'empresas', 'comissao', 'backup', 'notificacoes', 'voz', 'ajuda', 'agenda'];
+export const ALL_MODULES = ['vin', 'fotos', 'pagamentos', 'despesas', 'whatsapp', 'planilha', 'manutencao', 'invoice', 'empresas', 'comissao', 'backup', 'notificacoes', 'voz', 'ajuda', 'agenda', 'mcp'];
 
 export function loadConfig(overrides = {}) {
   loadDotEnv(path.resolve('.env'));
@@ -28,7 +28,7 @@ export function loadConfig(overrides = {}) {
     secureCookies: env.SECURE_COOKIES === '1' || env.NODE_ENV === 'production',
     timeZone: env.TIME_ZONE || 'America/New_York',
     companyName: env.COMPANY_NAME || 'Towing J&J',
-    modules: (env.MODULES ? env.MODULES.split(',').map((m) => m.trim()).filter(Boolean) : ALL_MODULES),
+    modules: withMcp(env.MODULES ? env.MODULES.split(',').map((m) => m.trim()).filter(Boolean) : ALL_MODULES, env),
     pricing: {
       // Valor médio do serviço ($100, Caningado 23/10): é a sugestão quando não há milhas.
       baseCents: Math.round(Number(env.PRICE_BASE ?? 100) * 100),
@@ -101,4 +101,12 @@ function persistentSecret(dataDir) {
   const file = path.join(dataDir, '.session-secret');
   if (!fs.existsSync(file)) fs.writeFileSync(file, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
   return fs.readFileSync(file, 'utf8').trim();
+}
+
+// O conector do Claude (MCP) vem ligado mesmo quando o MODULES do Render é uma lista antiga sem ele.
+// Para desligar: MCP=off.
+function withMcp(modules, env) {
+  const off = ['off', '0', 'nao', 'não', 'false'].includes(String(env.MCP || '').trim().toLowerCase());
+  const list = modules.filter((m) => m !== 'mcp');
+  return off ? list : [...list, 'mcp'];
 }

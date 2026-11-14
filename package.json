@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@tesseract.js-data/eng": "^1.0.0",
     "barcode-detector": "^3.2.2",
     "express": "^5.2.1",
@@ -21,6 +22,7 @@
     "pdfkit": "^0.17.2",
     "tesseract.js": "^7.0.0",
     "web-push": "^3.6.7",
+    "zod": "^4.6.7",
     "zxing-wasm": "3.1.3"
   }
 }
