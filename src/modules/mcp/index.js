@@ -8,6 +8,7 @@ import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelconte
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { nowIso } from '../../lib/util.js';
 import { registerTools } from './tools.js';
+import { caixaMigrations, createCaixa, registerCaixaTools } from './caixa.js';
 import { migrations, createOAuthProvider, createLoginGuard, loginBodyParser, clientIp, owners } from './oauth.js';
 
 export const MCP_PATH = '/mcp';
@@ -19,6 +20,7 @@ Regras:
 - Quando faltar dado obrigatório, pergunte ao dono. Não invente endereço, telefone, preço nem VIN.
 - Quando o dono pedir um endereço, fale o endereço e mostre o link do Google Maps como link clicável.
 - Não existe ferramenta para apagar serviço.
+- O dono manda serviços, localizações e recados para o Jay (robô do WhatsApp); leia com caixa_de_entrada, organize com ele e só crie o serviço quando ele mandar. Depois marque as mensagens usadas com marcar_caixa_lida.
 - Dinheiro em dólar (US$). Formas de pagamento: Zelle, dinheiro, cartão (Square entra como cartão), cheque, Brasil, seguradora.`;
 
 // Endereço público do sistema (no Render vem sozinho; no computador, localhost).
@@ -53,6 +55,7 @@ export function createMcpServer(ctx, user) {
   );
 
   registerTools(server, ctx, user);
+  registerCaixaTools(server, ctx, user);
   return server;
 }
 
@@ -62,7 +65,11 @@ const rateLimit = { keyGenerator: clientIp, validate: false };
 export default {
   name: 'mcp',
   label: 'Conector do Claude (MCP)',
-  migrations,
+  migrations: [...migrations, ...caixaMigrations],
+
+  setup(ctx) {
+    ctx.api.caixa = createCaixa(ctx);
+  },
 
   publicRoutes(app, ctx) {
     const guard = createLoginGuard({
