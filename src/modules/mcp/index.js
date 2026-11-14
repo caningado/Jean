@@ -1,16 +1,25 @@
 // Servidor MCP: liga o Claude (app do Claude, inclusive no celular e no modo voz) ao sistema.
 // Fica em /mcp, com o transporte "Streamable HTTP" do SDK oficial do MCP.
 // Só entra quem passou pelo login (OAuth com telefone e PIN do dono, veja oauth.js).
-// Etapa 3: login pronto; por enquanto só a ferramenta de teste. As de serviço vêm na etapa 4.
 import express from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { nowIso } from '../../lib/util.js';
+import { registerTools } from './tools.js';
 import { migrations, createOAuthProvider, createLoginGuard, loginBodyParser, clientIp, owners } from './oauth.js';
 
 export const MCP_PATH = '/mcp';
+
+const INSTRUCTIONS = `Sistema do guincho Towing J&J (empresa nos EUA; o dono também tem a Towing VIP LLC no mesmo sistema). Fale sempre em português do Brasil, de forma simples: o dono costuma usar por voz, dirigindo.
+Regras:
+- Antes de criar ou alterar qualquer coisa (serviço, situação, pagamento, motorista, apelido), leia os dados para o dono e só chame a ferramenta depois que ele confirmar.
+- Antes de criar serviço, use buscar_cliente para não duplicar cliente. Se vierem vários com o mesmo nome, leia telefone, último carro e endereços e pergunte qual é.
+- Quando faltar dado obrigatório, pergunte ao dono. Não invente endereço, telefone, preço nem VIN.
+- Quando o dono pedir um endereço, fale o endereço e mostre o link do Google Maps como link clicável.
+- Não existe ferramenta para apagar serviço.
+- Dinheiro em dólar (US$). Formas de pagamento: Zelle, dinheiro, cartão (Square entra como cartão), cheque, Brasil, seguradora.`;
 
 // Endereço público do sistema (no Render vem sozinho; no computador, localhost).
 export function baseUrl(ctx) {
@@ -22,10 +31,7 @@ export function baseUrl(ctx) {
 export function createMcpServer(ctx, user) {
   const server = new McpServer(
     { name: 'towing-jj', title: 'Towing J&J', version: '0.1.0' },
-    {
-      instructions:
-        'Sistema do guincho Towing J&J. Responda em português do Brasil. Por enquanto só existe a ferramenta de teste.',
-    }
+    { instructions: INSTRUCTIONS }
   );
 
   server.registerTool(
@@ -46,6 +52,7 @@ export function createMcpServer(ctx, user) {
     })
   );
 
+  registerTools(server, ctx, user);
   return server;
 }
 

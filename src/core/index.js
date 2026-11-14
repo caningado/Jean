@@ -103,6 +103,8 @@ const migrations = [
   },
   // ADM que também faz serviço: aparece nas listas de motorista.
   `ALTER TABLE users ADD COLUMN drives INTEGER NOT NULL DEFAULT 0;`,
+  // Apelido do cliente (ex.: "Luan mecânico"), para achar entre vários com o mesmo nome.
+  `ALTER TABLE contacts ADD COLUMN nickname TEXT;`,
 ];
 
 // As duas empresas do dono. O nome da J&J vem dos dados da invoice.
@@ -765,6 +767,109 @@ function serviceFields(body, { partial = false } = {}) {
   return out;
 }
 
+// Cria um serviço com as regras do painel (cliente, endereços, fila, motorista, toque duplo).
+// Usado pela tela Novo serviço e pelo conector do Claude (MCP).
+async function createService(ctx, user, rawBody) {
+  const { data } = ctx;
+  const blocked = servicesBlocked(ctx, user);
+  if (blocked) throw new HttpError(423, blocked.replace(/\*/g, ''));
+  const body = expandNicknames(ctx, rawBody || {});
+  // Confere tudo antes de criar qualquer coisa.
+  const fields = serviceFields(body);
+  await checkPlaces(ctx, fields, body);
+  let contactName = optional(body.contact_name, (v) => checkName(v, 'O nome do cliente'));
+  const contactPhone = optional(body.contact_phone, checkPhone);
+  let contactId = Number(body.contact_id) || null;
+  // Apelido de empresa no nome do cliente (ex.: "SS"): vira a empresa.
+  let companyId = Number(body.company_id) || null;
+  if (!contactId && contactName && ctx.has('empresas')) {
+    const co = ctx.db.prepare('SELECT * FROM companies').all().find((c) => c.nickname && simplify(c.nickname) === simplify(contactName));
+    if (co) {
+      contactName = co.name;
+      companyId = co.id;
+    }
+  }
+  const chosen = contactId && data.contacts.get(contactId);
+  if (contactId && !chosen) throw new HttpError(400, 'Cliente não encontrado.');
+  // Cliente escolhido da agenda sem telefone: guarda o telefone digitado.
+  if (chosen && !chosen.phone && contactPhone && !data.contacts.byPhone(contactPhone)) data.contacts.update(chosen.id, { phone: contactPhone });
+  // Mesmo nome de um contato que já existe: usa ele em vez de duplicar.
+  const sameName = () => {
+    if (!contactName) return null;
+    const same = ctx.db.prepare('SELECT * FROM contacts').all().filter((c) => simplify(c.name) === simplify(contactName));
+    return same.length === 1 ? same[0] : null;
+  };
+  if (!contactId && contactPhone) {
+    const twin = !data.contacts.byPhone(contactPhone) && sameName();
+    if (twin && !twin.phone) {
+      data.contacts.update(twin.id, { phone: contactPhone });
+      contactId = twin.id;
+    } else contactId = data.contacts.findOrCreate({ phone: contactPhone, name: contactName }).id;
+  } else if (!contactId && contactName) contactId = (sameName() || data.contacts.create({ name: contactName })).id;
+  // Cliente novo de uma empresa: já fica ligado a ela.
+  if (companyId && contactId && ctx.has('empresas') && ctx.db.prepare('SELECT 1 FROM companies WHERE id = ?').get(companyId)) {
+    ctx.db.prepare('UPDATE contacts SET company_id = ? WHERE id = ? AND company_id IS NULL').run(companyId, contactId);
+  }
+  // Toque duplo no "Criar serviço": o mesmo pedido em menos de 30 s devolve o serviço já criado.
+  const since = new Date(Date.now() - 30 * 1000).toISOString();
+  const twinService = ctx.db
+    .prepare("SELECT id FROM services WHERE created_at >= ? AND IFNULL(contact_id, 0) = ? AND IFNULL(pickup, '') = ? AND status IN ('aberto', 'pendente') ORDER BY id DESC")
+    .get(since, contactId || 0, fields.pickup || '');
+  if (twinService) return { status: 200, service: data.services.get(twinService.id) };
+  // "fila": entra como pendente, sem motorista, até o dono escolher quem vai. Só o dono.
+  // Sem motorista escolhido, o serviço do dono também começa Pendente.
+  const noDriver = body.driver_id == null || body.driver_id === '';
+  if (user.role === 'dono' && (noDriver || body.fila === true || body.fila === '1' || body.driver_id === 'fila' || body.status === 'pendente')) {
+    const service = data.services.create({ ...fields, driver_id: null, contact_id: contactId, status: 'pendente' }, user.id);
+    return { status: 201, service };
+  }
+  const driverId = user.role === 'dono' ? fields.driver_id || user.id : user.id;
+  // Serviço novo nunca começa sozinho: entra na fila do motorista e ele toca em Começar.
+  const service = data.services.create({ ...fields, status: 'pendente', contact_id: contactId, driver_id: driverId }, user.id);
+  if (driverId !== user.id) notifyAssigned(ctx, service, user);
+  return { status: 201, service };
+}
+
+// Edita um serviço com as regras do painel (endereços no mapa, cliente, situação, motorista).
+// Usado pela tela Editar e pelo conector do Claude (MCP).
+async function editService(ctx, user, service, rawBody) {
+  const { data } = ctx;
+  if (!canSee(user, service)) throw new HttpError(404, 'Serviço não encontrado.');
+  const raw = rawBody || {};
+  expandNicknames(ctx, raw);
+  const body = serviceFields(raw, { partial: true });
+  await checkPlaces(ctx, body, raw, service);
+  if (body.pickup === null) delete body.pickup; // retirada não pode ficar vazia
+  // Trocar o cliente (quem pediu o serviço).
+  if (raw.contact_id !== undefined) {
+    const contactId = Number(raw.contact_id) || null;
+    if (contactId && !data.contacts.get(contactId)) throw new HttpError(400, 'Cliente não encontrado.');
+    body.contact_id = contactId;
+  }
+  return saveServiceChange(ctx, user, service, body, raw.motivo);
+}
+
+// O dono passa um serviço da fila para um motorista (ou deixa sem motorista com null/''/0/'nenhum').
+function passService(ctx, user, service, driverIdRaw) {
+  const { data } = ctx;
+  if (!service) throw new HttpError(404, 'Serviço não encontrado.');
+  if (service.status !== 'pendente') throw new HttpError(409, service.driver_name ? `Esse serviço já está com ${service.driver_name}.` : 'Esse serviço não está mais na fila.');
+  // "Sem motorista": tira da fila do motorista e volta para a lista geral (Pendente).
+  const none = driverIdRaw;
+  if (none === null || none === '' || none === 0 || none === 'nenhum') {
+    return saveServiceChange(ctx, user, service, { status: 'pendente', driver_id: null }).updated;
+  }
+  const driver = data.users.get(Number(driverIdRaw) || user.id);
+  if (!driver || !driver.active) throw new HttpError(400, 'Motorista não encontrado.');
+  // Entra na fila do motorista; ele escolhe quando começar.
+  const updated = assignService(ctx, service, driver.id, user.id);
+  if (driver.id !== service.driver_id) {
+    notifyAssigned(ctx, updated, user);
+    if (service.driver_id) notifyUnassigned(ctx, service, user);
+  }
+  return updated;
+}
+
 function routes(api, ctx) {
   const { data, db } = ctx;
 
@@ -1049,63 +1154,8 @@ function routes(api, ctx) {
   });
 
   api.post('/services', async (req, res) => {
-    const blocked = servicesBlocked(ctx, req.user);
-    if (blocked) throw new HttpError(423, blocked.replace(/\*/g, ''));
-    const body = expandNicknames(ctx, req.body || {});
-    // Confere tudo antes de criar qualquer coisa.
-    const fields = serviceFields(body);
-    await checkPlaces(ctx, fields, body);
-    let contactName = optional(body.contact_name, (v) => checkName(v, 'O nome do cliente'));
-    const contactPhone = optional(body.contact_phone, checkPhone);
-    let contactId = Number(body.contact_id) || null;
-    // Apelido de empresa no nome do cliente (ex.: "SS"): vira a empresa.
-    let companyId = Number(body.company_id) || null;
-    if (!contactId && contactName && ctx.has('empresas')) {
-      const co = ctx.db.prepare('SELECT * FROM companies').all().find((c) => c.nickname && simplify(c.nickname) === simplify(contactName));
-      if (co) {
-        contactName = co.name;
-        companyId = co.id;
-      }
-    }
-    const chosen = contactId && data.contacts.get(contactId);
-    if (contactId && !chosen) throw new HttpError(400, 'Cliente não encontrado.');
-    // Cliente escolhido da agenda sem telefone: guarda o telefone digitado.
-    if (chosen && !chosen.phone && contactPhone && !data.contacts.byPhone(contactPhone)) data.contacts.update(chosen.id, { phone: contactPhone });
-    // Mesmo nome de um contato que já existe: usa ele em vez de duplicar.
-    const sameName = () => {
-      if (!contactName) return null;
-      const same = ctx.db.prepare('SELECT * FROM contacts').all().filter((c) => simplify(c.name) === simplify(contactName));
-      return same.length === 1 ? same[0] : null;
-    };
-    if (!contactId && contactPhone) {
-      const twin = !data.contacts.byPhone(contactPhone) && sameName();
-      if (twin && !twin.phone) {
-        data.contacts.update(twin.id, { phone: contactPhone });
-        contactId = twin.id;
-      } else contactId = data.contacts.findOrCreate({ phone: contactPhone, name: contactName }).id;
-    } else if (!contactId && contactName) contactId = (sameName() || data.contacts.create({ name: contactName })).id;
-    // Cliente novo de uma empresa: já fica ligado a ela.
-    if (companyId && contactId && ctx.has('empresas') && ctx.db.prepare('SELECT 1 FROM companies WHERE id = ?').get(companyId)) {
-      ctx.db.prepare('UPDATE contacts SET company_id = ? WHERE id = ? AND company_id IS NULL').run(companyId, contactId);
-    }
-    // Toque duplo no "Criar serviço": o mesmo pedido em menos de 30 s devolve o serviço já criado.
-    const since = new Date(Date.now() - 30 * 1000).toISOString();
-    const twinService = ctx.db
-      .prepare("SELECT id FROM services WHERE created_at >= ? AND IFNULL(contact_id, 0) = ? AND IFNULL(pickup, '') = ? AND status IN ('aberto', 'pendente') ORDER BY id DESC")
-      .get(since, contactId || 0, fields.pickup || '');
-    if (twinService) return res.status(200).json(data.services.get(twinService.id));
-    // "fila": entra como pendente, sem motorista, até o dono escolher quem vai. Só o dono.
-    // Sem motorista escolhido, o serviço do dono também começa Pendente.
-    const noDriver = body.driver_id == null || body.driver_id === '';
-    if (req.user.role === 'dono' && (noDriver || body.fila === true || body.fila === '1' || body.driver_id === 'fila' || body.status === 'pendente')) {
-      const service = data.services.create({ ...fields, driver_id: null, contact_id: contactId, status: 'pendente' }, req.user.id);
-      return res.status(201).json(service);
-    }
-    const driverId = req.user.role === 'dono' ? fields.driver_id || req.user.id : req.user.id;
-    // Serviço novo nunca começa sozinho: entra na fila do motorista e ele toca em Começar.
-    const service = data.services.create({ ...fields, status: 'pendente', contact_id: contactId, driver_id: driverId }, req.user.id);
-    if (driverId !== req.user.id) notifyAssigned(ctx, service, req.user);
-    res.status(201).json(service);
+    const { status, service } = await createService(ctx, req.user, req.body);
+    res.status(status).json(service);
   });
   api.get('/services/:id', (req, res) => {
     const service = data.services.get(Number(req.params.id));
@@ -1119,43 +1169,14 @@ function routes(api, ctx) {
     res.json({ ...service, vin_info: service.vin_info ? JSON.parse(service.vin_info) : null, pickup_name: nick(service.pickup), dropoff_name: nick(service.dropoff), ...extras });
   });
   api.patch('/services/:id', async (req, res) => {
-    const service = data.services.get(Number(req.params.id));
-    if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
-    expandNicknames(ctx, req.body || {});
-    const body = serviceFields(req.body || {}, { partial: true });
-    await checkPlaces(ctx, body, req.body || {}, service);
-    if (body.pickup === null) delete body.pickup; // retirada não pode ficar vazia
-    // Trocar o cliente (quem pediu o serviço).
-    if (req.body?.contact_id !== undefined) {
-      const contactId = Number(req.body.contact_id) || null;
-      if (contactId && !data.contacts.get(contactId)) throw new HttpError(400, 'Cliente não encontrado.');
-      body.contact_id = contactId;
-    }
-    const { updated, notices } = saveServiceChange(ctx, req.user, service, body, req.body?.motivo);
+    const { updated, notices } = await editService(ctx, req.user, data.services.get(Number(req.params.id)), req.body);
     res.json(notices.length ? { ...updated, notices } : updated);
   });
 
   // Passar um serviço da fila para um motorista. Só o dono escolhe.
   api.post('/services/:id/passar', (req, res) => {
     if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM escolhe o motorista do serviço.');
-    const service = data.services.get(Number(req.params.id));
-    if (!service) throw new HttpError(404, 'Serviço não encontrado.');
-    if (service.status !== 'pendente') throw new HttpError(409, service.driver_name ? `Esse serviço já está com ${service.driver_name}.` : 'Esse serviço não está mais na fila.');
-    // "Sem motorista": tira da fila do motorista e volta para a lista geral (Pendente).
-    const none = req.body?.driver_id;
-    if (none === null || none === '' || none === 0 || none === 'nenhum') {
-      res.json(saveServiceChange(ctx, req.user, service, { status: 'pendente', driver_id: null }).updated);
-      return;
-    }
-    const driver = data.users.get(Number(req.body?.driver_id) || req.user.id);
-    if (!driver || !driver.active) throw new HttpError(400, 'Motorista não encontrado.');
-    // Entra na fila do motorista; ele escolhe quando começar.
-    const updated = assignService(ctx, service, driver.id, req.user.id);
-    if (driver.id !== service.driver_id) {
-      notifyAssigned(ctx, updated, req.user);
-      if (service.driver_id) notifyUnassigned(ctx, service, req.user);
-    }
-    res.json(updated);
+    res.json(passService(ctx, req.user, data.services.get(Number(req.params.id)), req.body?.driver_id));
   });
 
   api.get('/summary', (req, res) => {
@@ -1335,7 +1356,14 @@ export default {
   publicRoutes,
   exportSheets,
   setup(ctx) {
-    ctx.api.servicos = { change: (user, service, body, motivo) => saveServiceChange(ctx, user, service, body, motivo), canSee };
+    ctx.api.servicos = {
+      change: (user, service, body, motivo) => saveServiceChange(ctx, user, service, body, motivo),
+      canSee,
+      create: (user, body) => createService(ctx, user, body),
+      edit: (user, service, body) => editService(ctx, user, service, body),
+      pass: (user, service, driverId) => passService(ctx, user, service, driverId),
+      firmName: (id) => firmName(ctx, id),
+    };
     const fixed = repairEncodedNames(ctx.db);
     if (fixed) ctx.log?.(`Nomes de clientes corrigidos (importação antiga): ${fixed}`);
   },

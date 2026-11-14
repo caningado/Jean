@@ -99,7 +99,7 @@ test('mcp: login com telefone e PIN do dono dá o crachá, e o Claude usa a ferr
   const mcp = await mcpClient(t, base, tokens.access_token);
   assert.equal(mcp.getServerVersion().name, 'towing-jj');
   const { tools } = await mcp.listTools();
-  assert.deepEqual(tools.map((x) => x.name), ['teste']);
+  assert.ok(tools.map((x) => x.name).includes('teste'));
   const result = await mcp.callTool({ name: 'teste', arguments: {} });
   assert.match(result.content[0].text, /Conectado ao sistema Towing J&J como Caningado/);
 
