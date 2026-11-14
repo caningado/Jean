@@ -28,6 +28,8 @@ export function loadConfig(overrides = {}) {
     secureCookies: env.SECURE_COOKIES === '1' || env.NODE_ENV === 'production',
     timeZone: env.TIME_ZONE || 'America/New_York',
     companyName: env.COMPANY_NAME || 'Towing J&J',
+    // Endereço público do sistema (o Render preenche RENDER_EXTERNAL_URL sozinho). Usado no login do conector do Claude.
+    publicUrl: (env.PUBLIC_URL || env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, ''),
     modules: withMcp(env.MODULES ? env.MODULES.split(',').map((m) => m.trim()).filter(Boolean) : ALL_MODULES, env),
     pricing: {
       // Valor médio do serviço ($100, Caningado 23/10): é a sugestão quando não há milhas.
