@@ -1,17 +1,25 @@
 // Servidor MCP: liga o Claude (app do Claude, inclusive no celular e no modo voz) ao sistema.
 // Fica em /mcp, com o transporte "Streamable HTTP" do SDK oficial do MCP.
-// Etapa 2: só uma ferramenta de teste, que não mostra nenhum dado do sistema.
-// O login (OAuth) e as ferramentas de serviço entram nas próximas etapas.
+// Só entra quem passou pelo login (OAuth com telefone e PIN do dono, veja oauth.js).
+// Etapa 3: login pronto; por enquanto só a ferramenta de teste. As de serviço vêm na etapa 4.
 import express from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
+import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { nowIso } from '../../lib/util.js';
+import { migrations, createOAuthProvider, createLoginGuard, loginBodyParser, clientIp, owners } from './oauth.js';
 
 export const MCP_PATH = '/mcp';
 
+// Endereço público do sistema (no Render vem sozinho; no computador, localhost).
+export function baseUrl(ctx) {
+  return ctx.config.publicUrl || `http://localhost:${ctx.config.port}`;
+}
+
 // Um servidor novo a cada pedido ("sem sessão"): nada fica guardado na memória entre um pedido
 // e outro, então funciona igual depois de cada deploy ou reinício do Render.
-export function createMcpServer(ctx) {
+export function createMcpServer(ctx, user) {
   const server = new McpServer(
     { name: 'towing-jj', title: 'Towing J&J', version: '0.1.0' },
     {
@@ -29,35 +37,90 @@ export function createMcpServer(ctx) {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async () => ({
-      content: [{ type: 'text', text: `Conectado ao sistema ${ctx.config.companyName || 'Towing J&J'}. Hora no servidor: ${nowIso()}.` }],
+      content: [
+        {
+          type: 'text',
+          text: `Conectado ao sistema ${ctx.config.companyName || 'Towing J&J'} como ${user.name}. Hora no servidor: ${nowIso()}.`,
+        },
+      ],
     })
   );
 
   return server;
 }
 
+// Os limites do SDK contam por endereço de quem pede (o Render passa no X-Forwarded-For).
+const rateLimit = { keyGenerator: clientIp, validate: false };
+
 export default {
   name: 'mcp',
   label: 'Conector do Claude (MCP)',
+  migrations,
 
   publicRoutes(app, ctx) {
-    app.post(MCP_PATH, express.json({ limit: '1mb' }), async (req, res) => {
-      const server = createMcpServer(ctx);
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-      res.on('close', () => {
-        transport.close();
-        server.close();
-      });
-      try {
-        await server.connect(transport);
-        await transport.handleRequest(req, res, req.body);
-      } catch (err) {
-        ctx.log('MCP: erro', err);
-        if (!res.headersSent) {
-          res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Erro no servidor.' }, id: null });
+    const guard = createLoginGuard({
+      onLock: (kind) => {
+        const text =
+          kind === 'geral'
+            ? '⚠️ Alguém errou o telefone/PIN no login do conector do Claude muitas vezes. Travei esse login por 1 hora. Se não foi você, troque o seu PIN no painel.'
+            : '⚠️ Alguém errou o PIN do seu telefone 10 vezes no login do conector do Claude. Travei esse login por 24 horas. Se não foi você, troque o seu PIN no painel.';
+        ctx.log(`MCP: login do conector TRAVADO (${kind}).`);
+        for (const owner of owners(ctx)) Promise.resolve(ctx.send(owner.phone, text)).catch(() => {});
+      },
+    });
+    const provider = createOAuthProvider(ctx, guard);
+
+    // As rotas do login dependem do endereço público; montadas no primeiro pedido.
+    let auth = null;
+    const build = () => {
+      if (auth) return auth;
+      const base = baseUrl(ctx);
+      const resourceUrl = new URL(MCP_PATH, base);
+      auth = {
+        router: mcpAuthRouter({
+          provider,
+          issuerUrl: new URL(base),
+          resourceServerUrl: resourceUrl,
+          resourceName: ctx.config.companyName || 'Towing J&J',
+          authorizationOptions: { rateLimit },
+          tokenOptions: { rateLimit },
+          clientRegistrationOptions: { rateLimit, clientSecretExpirySeconds: 0 },
+          revocationOptions: { rateLimit },
+        }),
+        bearer: requireBearerAuth({ verifier: provider, resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceUrl) }),
+      };
+      return auth;
+    };
+
+    // /authorize, /token, /register, /revoke e os /.well-known do OAuth.
+    const AUTH_PATHS = ['/authorize', '/token', '/register', '/revoke', '/.well-known/oauth-'];
+    app.use((req, res, next) => (AUTH_PATHS.some((p) => req.path.startsWith(p)) ? build().router(req, res, next) : next()));
+
+    app.post(`${MCP_PATH}/login`, loginBodyParser, (req, res) => provider.loginHandler(req, res));
+
+    app.post(
+      MCP_PATH,
+      (req, res, next) => build().bearer(req, res, next),
+      express.json({ limit: '1mb' }),
+      async (req, res) => {
+        const user = ctx.db.prepare('SELECT * FROM users WHERE id = ? AND active = 1').get(req.auth.extra.userId);
+        const server = createMcpServer(ctx, user);
+        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+        res.on('close', () => {
+          transport.close();
+          server.close();
+        });
+        try {
+          await server.connect(transport);
+          await transport.handleRequest(req, res, req.body);
+        } catch (err) {
+          ctx.log('MCP: erro', err);
+          if (!res.headersSent) {
+            res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Erro no servidor.' }, id: null });
+          }
         }
       }
-    });
+    );
 
     // Sem sessão, não há canal aberto (GET) nem sessão para encerrar (DELETE).
     const notAllowed = (req, res) =>
