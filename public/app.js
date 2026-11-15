@@ -942,7 +942,7 @@ screens.servico = async (params, id) => {
   const owner = state.me.role === 'dono';
   const drivers = owner && s.status === 'pendente' ? await api('/users') : [];
   const voice = has('voz') && ['pendente', 'aberto'].includes(s.status) && (s.driver_id === state.me.id || (owner && s.driver_id)) && (await voiceEnabled());
-  const vehicleInfo = s.vin_info ? [s.vin_info.year, s.vin_info.make, s.vin_info.model, s.vin_info.drive].filter(Boolean).join(' · ') : '';
+  const vehicleInfo = s.vin_info ? [s.vin_info.year, s.vin_info.make, s.vin_info.model, String(s.vin_info.drive || '').split('/')[0]].filter(Boolean).join(' · ') : '';
   const b = s.balance;
 
   view.innerHTML = `
