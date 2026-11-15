@@ -308,6 +308,26 @@ export default {
         if (!p || service.vin) return null;
         return (await saveVin(ctx, service, p.vin)).service;
       },
+      // Texto que é só um VIN. Serviço aberto sem VIN: salva nele. Senão, mostra o carro e guarda para o próximo serviço.
+      async fromText(user, text) {
+        const raw = String(text || '').trim();
+        if (!/^[A-Za-z0-9]{17}$/.test(raw) || !/\d/.test(raw) || !/[A-Za-z]/.test(raw)) return null;
+        const check = validateVin(raw);
+        const service = ctx.data.services.active(user);
+        if (service && !service.vin && check.valid) {
+          const saved = await saveVin(ctx, service, check.vin);
+          return savedMessage(ctx, saved.service, saved.info, user);
+        }
+        const info = await (ctx.api.vin.decode || decodeVin)(check.vin);
+        const vehicle = describeVehicle(info);
+        if (!check.valid && !vehicle) return null;
+        if (!service) pendentes.set(user.id, { vin: check.vin, valid: check.valid, vehicle, at: Date.now() });
+        return [
+          vehicle ? `🚗 ${vehicle}` : 'Não achei as informações desse carro na base do VIN.',
+          check.valid ? null : '⚠️ O dígito verificador não bateu, confira o VIN.',
+          service ? null : 'Quando você mandar *novo*, eu já coloco esse VIN no serviço.',
+        ].filter(Boolean).join('\n');
+      },
       // Foto sem serviço aberto: lê o VIN mesmo assim, mostra o carro e guarda para o próximo serviço.
       async readLoose(user, buffer, mime) {
         let result;
