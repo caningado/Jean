@@ -60,8 +60,38 @@ function companyName(ctx, id) {
   }
 }
 
-// Devolve { cents, fonte: 'empresa' | 'historico' | 'tabela', n, texto } ou null.
-export function priceSuggestion(ctx, miles, { contactId = null, companyId = null } = {}) {
+// Preço pelo tempo do caminhão: ida + volta (o mesmo tempo da rota) + carregar e descarregar,
+// vezes o valor da hora. null quando não tem os minutos ou o valor da hora.
+export function timePrice(ctx, minutes) {
+  const min = Number(minutes);
+  const { perHourCents = 0, loadMinutes = 30 } = ctx.config.pricing || {};
+  if (!(min > 0) || !(perHourCents > 0)) return null;
+  const total = Math.round(min * 2 + (Number(loadMinutes) || 0));
+  return { cents: roundTo5((total / 60) * perHourCents), total, perHourCents, loadMinutes: Number(loadMinutes) || 0 };
+}
+
+const hoursText = (min) => `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`;
+
+// Devolve { cents, fonte: 'empresa' | 'historico' | 'tabela' | 'tempo', n, texto } ou null.
+// Com os minutos da rota, a sugestão é o maior entre o preço por milha e o preço pelo tempo.
+export function priceSuggestion(ctx, miles, { contactId = null, companyId = null, minutes = null } = {}) {
+  const byMiles = milesSuggestion(ctx, miles, { contactId, companyId });
+  const byTime = timePrice(ctx, minutes);
+  if (!byTime || (byMiles && byMiles.cents >= byTime.cents)) return byMiles;
+  const ida = Math.round(Number(minutes));
+  return {
+    cents: byTime.cents,
+    fonte: 'tempo',
+    n: byMiles?.n ?? 0,
+    base_cents: byMiles?.base_cents ?? null,
+    per_mile_cents: byMiles?.per_mile_cents ?? null,
+    minutos_total: byTime.total,
+    milhas_cents: byMiles?.cents ?? null,
+    texto: `Sugestão ${usd(byTime.cents)} pelo tempo: ${ida} min de ida + ${ida} de volta + ${byTime.loadMinutes} para pegar e entregar = ${hoursText(byTime.total)} a ${usd(byTime.perHourCents)} a hora.${byMiles ? ` (Só pelas milhas daria ${usd(byMiles.cents)}.)` : ''}`,
+  };
+}
+
+function milesSuggestion(ctx, miles, { contactId = null, companyId = null } = {}) {
   const m = Number(miles) > 0 ? Number(miles) : null;
   if (m != null) {
     const company = companyOf(ctx, { contactId, companyId });

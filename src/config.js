@@ -39,6 +39,9 @@ export function loadConfig(overrides = {}) {
       // Valor médio do serviço ($100, Caningado 23/10): é a sugestão quando não há milhas.
       baseCents: Math.round(Number(env.PRICE_BASE ?? 100) * 100),
       perMileCents: Math.round(Number(env.PRICE_PER_MILE || 0) * 100),
+      // Preço pelo tempo ($100 a hora, Caningado 15/11): ida + volta + 15 min para pegar + 15 para entregar.
+      perHourCents: Math.round(Number(env.PRICE_PER_HOUR ?? 100) * 100),
+      loadMinutes: Number(env.PRICE_LOAD_MINUTES ?? 30),
     },
     zelle: {
       name: env.ZELLE_NAME || '',

@@ -538,8 +538,9 @@ const flows = {
           if (r && r.miles > 0 && r.miles <= 1000) Object.assign(data, { miles: r.miles, _route: r });
         },
         ask(data, ctx) {
-          const s = priceSuggestion(ctx, data.miles, { contactId: data.client?.id });
           const r = data._route;
+          const minutes = data._sem_pedagio ? r?.sem_pedagio?.minutes : r?.minutes;
+          const s = priceSuggestion(ctx, data.miles, { contactId: data.client?.id, minutes });
           const which = r?.has_tolls && r.sem_pedagio ? (data._sem_pedagio ? '\nUsei as milhas da rota *sem pedágio* (mande *com pedágio* para trocar).' : '\nUsei as milhas da rota *com pedágio* (mande *sem pedágio* para trocar).') : '';
           const route = r ? routeLines(r, '*').join('\n') + which + '\n' : '';
           return s
@@ -1155,7 +1156,7 @@ function routes(api, ctx) {
       if (route && route.miles > 0 && route.miles <= 1000) miles = route.miles;
       else route = null;
     }
-    const suggestion = priceSuggestion(ctx, miles, { contactId: Number(q.contact_id) || null, companyId: Number(q.company_id) || null });
+    const suggestion = priceSuggestion(ctx, miles, { contactId: Number(q.contact_id) || null, companyId: Number(q.company_id) || null, minutes: route?.minutes ?? null });
     res.json({ maps: Boolean(ctx.rotas), miles, minutes: route?.minutes ?? null, from_maps: Boolean(route), route, suggestion });
   });
 
