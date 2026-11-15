@@ -133,6 +133,9 @@ test('mcp: PIN errado não entra, motorista não conecta, e tem limite de tentat
   const { body: client } = await register(base);
   const { html, pedido } = await openLogin(base, client.client_id);
   assert.match(html, /telefone e o PIN que você usa no painel/);
+  // O navegador confere o form-action também no redirecionamento de volta ao Claude.
+  const { res: page } = await openLogin(base, client.client_id);
+  assert.match(page.headers.get('content-security-policy'), /form-action 'self' https:\/\/claude\.ai;/);
 
   const wrong = await typePin(base, pedido, '9999');
   assert.equal(wrong.status, 401);
