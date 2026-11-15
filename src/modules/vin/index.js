@@ -55,15 +55,36 @@ export async function decodeVin(vin, fetchImpl = fetch) {
       model: row.Model || null,
       trim: row.Trim || null,
       body: row.BodyClass || null,
+      drive: row.DriveType || null,
     };
   } catch {
     return null;
   }
 }
 
+// A base do governo manda a marca toda em maiúsculas (HONDA, MERCEDES-BENZ). Siglas curtas (BMW, GMC, KIA) ficam.
+function niceMake(make) {
+  const m = String(make || '').trim();
+  if (!m || m !== m.toUpperCase()) return m || null;
+  return m.replace(/[A-Z]{4,}/g, (w) => w[0] + w.slice(1).toLowerCase());
+}
+
+// Tração em sigla: "AWD/All-Wheel Drive" → "AWD", "4WD/4-Wheel Drive/4x4" → "4WD".
+function shortDrive(drive) {
+  const d = String(drive || '').split('/')[0].trim();
+  return d || null;
+}
+
+// O dono pediu só ano, marca, modelo e tração no Veículo (15/11).
 export function describeVehicle(info) {
   if (!info) return null;
-  return [info.year, info.make, info.model].filter(Boolean).join(' ') || null;
+  return [info.year, niceMake(info.make), info.model, shortDrive(info.drive)].filter(Boolean).join(' ') || null;
+}
+
+// Com o carro do VIN, o Veículo fica só com ano, marca, modelo e tração. Sem informação do VIN, fica o que estava.
+export function mergeVehicle(current, info) {
+  const decoded = describeVehicle(info);
+  return decoded ? decoded.slice(0, 60) : current || null;
 }
 
 const VIN_PROMPT =
@@ -156,9 +177,10 @@ export async function readVinFromImage(ctx, buffer, mimeType) {
 
 // Grava o VIN no serviço e completa o veículo com marca/modelo/ano.
 async function saveVin(ctx, service, vin) {
-  const info = await decodeVin(vin);
+  const info = await (ctx.api.vin?.decode || decodeVin)(vin);
   const fields = { vin, vin_info: info ? JSON.stringify(info) : null };
-  if (info && !service.vehicle) fields.vehicle = describeVehicle(info);
+  // Veículo com ano, marca, modelo e tração do VIN (pedido do Caningado 15/11).
+  if (info) fields.vehicle = mergeVehicle(service.vehicle, info);
   return { service: ctx.data.services.update(service.id, fields), info };
 }
 
@@ -225,7 +247,8 @@ function routes(api, ctx) {
     const check = validateVin(req.params.vin);
     if (!/^[A-Z0-9]{17}$/.test(check.vin)) return res.json({ ...check, info: null, vehicle: null });
     const info = await ctx.api.vin.decode(check.vin);
-    res.json({ ...check, info, vehicle: describeVehicle(info) });
+    // ?veiculo=: o que já está digitado no campo, para devolver o veículo juntado com o do VIN.
+    res.json({ ...check, info, vehicle: describeVehicle(info), merged: info ? mergeVehicle(req.query.veiculo, info) : null });
   });
 
   // Recebe a foto (corpo da requisição é a imagem) e devolve o VIN lido.

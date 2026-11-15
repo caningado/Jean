@@ -881,7 +881,7 @@ screens.novo = async () => {
       vinInfo.textContent = 'Buscando o carro pelo VIN…';
       let r;
       try {
-        r = await api(`/vin/decode/${vin}`);
+        r = await api(`/vin/decode/${vin}?veiculo=${encodeURIComponent(form.vehicle.value.trim())}`);
       } catch {
         r = null;
       }
@@ -894,13 +894,10 @@ screens.novo = async () => {
         vinInfo.textContent = 'VIN certo, mas não achei as informações do carro. Digite o veículo.';
         return;
       }
-      const extra = [r.info.trim, r.info.body].filter(Boolean).join(' · ');
-      vinInfo.textContent = `🚗 ${r.vehicle}${extra ? ` · ${extra}` : ''}`;
+      vinInfo.textContent = `🚗 ${r.vehicle}`;
+      // Veículo: só ano, marca, modelo e tração do VIN.
       const veh = form.vehicle;
-      if (!veh.value.trim() || veh.value === veh.dataset.auto) {
-        veh.value = r.vehicle.slice(0, 60);
-        veh.dataset.auto = veh.value;
-      }
+      veh.value = (r.merged || r.vehicle).slice(0, 60);
     };
     form.vin.addEventListener('input', lookupVin);
     novoFoto.onclick = async () => {
@@ -979,7 +976,7 @@ screens.servico = async (params, id) => {
   const owner = state.me.role === 'dono';
   const drivers = owner && s.status === 'pendente' ? await api('/users') : [];
   const voice = has('voz') && ['pendente', 'aberto'].includes(s.status) && (s.driver_id === state.me.id || (owner && s.driver_id)) && (await voiceEnabled());
-  const vehicleInfo = s.vin_info ? [s.vin_info.year, s.vin_info.make, s.vin_info.model, s.vin_info.body].filter(Boolean).join(' · ') : '';
+  const vehicleInfo = s.vin_info ? [s.vin_info.year, s.vin_info.make, s.vin_info.model, String(s.vin_info.drive || '').split('/')[0]].filter(Boolean).join(' · ') : '';
   const b = s.balance;
 
   view.innerHTML = `
@@ -4143,8 +4140,9 @@ function fillNewService(form, r) {
   put('contact_name', r.contact_name, 'cliente');
   put('pickup', r.pickup, 'retirada');
   put('dropoff', r.dropoff, 'destino');
-  put('vin', r.vin, 'VIN');
+  // Veículo antes do VIN: se o VIN achar o carro, ele troca pelo ano, marca, modelo e tração.
   put('vehicle', r.vehicle, 'veículo');
+  put('vin', r.vin, 'VIN');
   put('plate', r.plate, 'placa');
   put('miles', r.miles, 'milhas');
   put('price', r.price, 'valor');
