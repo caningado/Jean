@@ -59,6 +59,7 @@ export function createBot(ctx) {
     if (!flow) throw new Error(`Fluxo desconhecido: ${name}`);
     const step = nextStep(flow, 0, data);
     if (step >= flow.steps.length) return finishFlow(user, flow, data);
+    await flow.steps[step].prepare?.(data, ctx);
     saveConversation(user.id, name, step, data);
     return flow.steps[step].ask(data, ctx);
   }
@@ -95,6 +96,8 @@ export function createBot(ctx) {
     }
     const next = nextStep(flow, conversation.step + 1, data);
     if (next >= flow.steps.length) return withNotice(await finishFlow(user, flow, data));
+    // Um passo pode buscar algo antes de perguntar (ex.: as milhas no Google Maps antes do valor).
+    await flow.steps[next].prepare?.(data, ctx);
     saveConversation(user.id, conversation.flow, next, data);
     return withNotice(flow.steps[next].ask(data, ctx));
   }

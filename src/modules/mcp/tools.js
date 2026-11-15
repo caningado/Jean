@@ -5,6 +5,7 @@
 import { z } from 'zod';
 import { formatMoney, formatPhone, normalizePhone, simplify, nowIso } from '../../lib/util.js';
 import { mapLink } from '../../lib/validate.js';
+import { routeLines } from '../../lib/rotas.js';
 import { zonedMidnight } from '../planilha/index.js';
 import { applyAction } from '../voz/index.js';
 
@@ -400,6 +401,43 @@ export function registerTools(server, ctx, user) {
       logAction(ctx, user, s.id, 'marcar_pago', { valor: cents / 100, forma: a.forma, pagador: payer, confirmado_por: a.confirmado_por || null }, 'pagamento');
       const fresh = data.services.get(s.id);
       return ok(`Pagamento de ${formatMoney(cents)} (${ctx.api.pagamentos.methods[method]}${payer ? `, ${payer}` : ''}) registrado no serviço #${s.id}${a.confirmado_por ? `, confirmado por ${a.confirmado_por}` : ''}. Situação do pagamento: ${payText(payInfo(ctx, fresh), fresh)}.`);
+    })
+  );
+
+  // Milhas pelo Google Maps e preço sugerido (pelo que o dono já cobrou). Não grava nada.
+  server.registerTool(
+    'calcular_preco',
+    {
+      title: 'Calcular milhas e preço',
+      description:
+        'Calcula as milhas de carro entre a retirada e o destino pelo Google Maps e sugere um preço, aprendido com os serviços que o dono já fez (da mesma empresa do cliente, quando tem). Não grava nada. Use antes de perguntar o preço ao dono e leia a sugestão para ele: quem decide o preço é sempre o dono. Se já souber as milhas, mande em milhas.',
+      inputSchema: {
+        retirada: z.string().optional().describe('Endereço, coordenadas ou link de mapa de onde pegar'),
+        destino: z.string().optional().describe('Endereço, coordenadas ou link de mapa de onde entregar'),
+        milhas: z.number().optional().describe('Milhas, se já souber (aí não usa o Google Maps)'),
+        cliente_id: z.number().int().optional().describe('Id do cliente (de buscar_cliente), para usar o preço da empresa dele'),
+      },
+      annotations: { ...read, openWorldHint: true },
+    },
+    safe(ctx, async (a) => {
+      const servicos = ctx.api.servicos;
+      let miles = Number(a.milhas) > 0 ? Number(a.milhas) : null;
+      const out = [];
+      if (miles == null && a.retirada && a.destino) {
+        if (!ctx.rotas) out.push('O Google Maps ainda não está ligado no sistema (falta a chave GOOGLE_MAPS_API_KEY no Render): pergunte as milhas ao dono.');
+        else {
+          const r = await servicos.route(a.retirada, a.destino);
+          if (r) {
+            miles = r.miles;
+            out.push(...routeLines(r));
+            if (r.has_tolls) out.push('O valor do pedágio é o de carro: o guincho com carro em cima pode pagar mais. A sugestão de preço usa as milhas da rota com pedágio; se o dono for pela rota sem pedágio, chame de novo com milhas.');
+          } else out.push('O Google Maps não achou a rota entre esses dois endereços. Confira os endereços ou pergunte as milhas ao dono.');
+        }
+      }
+      const sug = servicos.priceSuggestion(miles, { contactId: a.cliente_id || null });
+      out.push(sug ? sug.texto : 'Ainda não dá para sugerir preço: pergunte ao dono.');
+      out.push('Confirme o preço com o dono antes de criar o serviço.');
+      return ok(out.join('\n'));
     })
   );
 

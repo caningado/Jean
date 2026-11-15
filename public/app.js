@@ -698,6 +698,96 @@ async function useSharedPlace(form, text) {
   toast(choice === 0 ? 'Local colocado na retirada' : 'Local colocado no destino');
 }
 
+// Milhas (Google Maps) e valor sugerido na tela do serviço. Só preenche o que a pessoa não digitou;
+// na edição, o valor nunca muda sozinho: só aparece a sugestão para tocar e usar.
+function milesAndPrice(form, out, { editing = false, contactId = null } = {}) {
+  if (!out) return;
+  const typed = new Set(); // campos digitados à mão
+  form.miles.addEventListener('input', (e) => e.isTrusted !== false && typed.add('miles'));
+  form.price.addEventListener('input', () => typed.add('price'));
+  if (editing && form.price.value !== '') typed.add('price');
+  let lastPlaces = editing ? `${form.pickup.value}|${form.dropoff.value}` : '';
+  let seq = 0;
+  let timer;
+  let route = null; // última resposta do Google Maps (com e sem pedágio)
+  const run = async () => {
+    const pickup = form.pickup.value.trim();
+    const dropoff = form.dropoff.value.trim();
+    const places = `${pickup}|${dropoff}`;
+    const placesChanged = places !== lastPlaces;
+    lastPlaces = places;
+    // Endereço mudou: as milhas antigas (do mapa) não valem mais, a não ser que tenham sido digitadas.
+    const askMaps = pickup && dropoff && placesChanged && !typed.has('miles');
+    const q = new URLSearchParams();
+    if (askMaps) q.set('pickup', pickup), q.set('dropoff', dropoff);
+    else if (form.miles.value) q.set('miles', form.miles.value);
+    const cid = (form.contact_id && form.contact_id.value) || contactId;
+    if (cid) q.set('contact_id', cid);
+    if (form.company_id?.value) q.set('company_id', form.company_id.value);
+    const my = ++seq;
+    if (askMaps) out.textContent = '📍 Calculando as milhas no Google Maps…';
+    let r;
+    try {
+      r = await api(`/estimate?${q}`);
+    } catch {
+      return;
+    }
+    if (my !== seq) return;
+    const lines = [];
+    if (askMaps && r.from_maps) {
+      form.miles.value = r.miles;
+      route = r.route;
+    } else if (askMaps) {
+      route = null;
+      if (r.maps) lines.push('📍 O Google Maps não achou a rota: digite as milhas.');
+    }
+    // Rotas com e sem pedágio, com o tempo de cada uma; toque numa para usar as milhas dela.
+    if (route) {
+      const t = (min) => (!min ? '' : min < 60 ? `${min} min` : `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`);
+      const cur = Number(form.miles.value);
+      const opt = (key, label, x, extra) =>
+        `<button type="button" class="rota${cur === x.miles ? ' on' : ''}" data-mi="${x.miles}">${label}: <strong>${x.miles} mi</strong>${x.minutes ? ` · ${t(x.minutes)}` : ''}${extra}</button>`;
+      if (!route.has_tolls) lines.push(`📍 Google Maps: <strong>${route.miles} mi</strong>${route.minutes ? ` · ${t(route.minutes)}` : ''} (sem pedágio no caminho)`);
+      else {
+        const toll = route.toll_cents != null ? ` · pedágio ~${money(route.toll_cents)}*` : ' · tem pedágio';
+        lines.push(`<span class="rotas">${opt('com', '🛣️ Com pedágio', route, toll)}${route.sem_pedagio ? opt('sem', '🚫 Sem pedágio', route.sem_pedagio, '') : ''}</span>`);
+        if (route.toll_cents != null) lines.push('<small>* valor de carro; o guincho com carro em cima pode pagar mais.</small>');
+      }
+    }
+    const sug = r.suggestion;
+    if (sug) {
+      if (!typed.has('price')) form.price.value = (sug.cents / 100).toFixed(2);
+      lines.push(`💡 ${esc(sug.texto)}${typed.has('price') && form.price.value !== (sug.cents / 100).toFixed(2) ? ` <button type="button" class="link" id="usar-sugestao">Usar ${money(sug.cents)}</button>` : ''}`);
+    }
+    out.innerHTML = lines.join('<br>');
+    out.querySelectorAll('.rota').forEach((b) => {
+      b.onclick = () => {
+        form.miles.value = b.dataset.mi;
+        soon(0);
+      };
+    });
+    const use = out.querySelector('#usar-sugestao');
+    if (use) use.onclick = () => {
+      form.price.value = (sug.cents / 100).toFixed(2);
+      use.remove();
+    };
+  };
+  const soon = (ms) => {
+    clearTimeout(timer);
+    timer = setTimeout(run, ms);
+  };
+  form.pickup.addEventListener('change', () => soon(100));
+  form.dropoff.addEventListener('change', () => soon(100));
+  form.pickup.addEventListener('input', () => soon(1500));
+  form.dropoff.addEventListener('input', () => soon(1500));
+  form.miles.addEventListener('input', () => soon(400));
+  // Endereço que entrou sem digitar (localização compartilhada, voz): confere ao chegar nas milhas ou no valor.
+  form.miles.addEventListener('focus', () => soon(0));
+  form.price.addEventListener('focus', () => soon(0));
+  if (form.contact_name) form.contact_name.addEventListener('change', () => soon(600));
+  if (!editing) soon(0);
+}
+
 screens.novo = async () => {
   setScreen('Novo serviço', { tab: 'novo' });
   const drivers = state.me.role === 'dono' ? await api('/users') : [];
@@ -729,7 +819,7 @@ screens.novo = async () => {
         <div><label>Milhas</label><input name="miles" type="number" step="0.1" inputmode="decimal"></div>
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal" placeholder="0 = free"></div>
       </div>
-      ${priced ? `<p class="sub">Tabela: ${money(pricing.baseCents)} + ${money(pricing.perMileCents)} por milha.</p>` : ''}
+      <p class="sub" id="estimativa">${priced ? `Tabela: ${money(pricing.baseCents)} + ${money(pricing.perMileCents)} por milha.` : ''}</p>
       ${drivers.length ? `<label>Motorista</label><select name="driver_id"><option value="fila" selected>⏳ Ninguém ainda (Pendente)</option>${drivers.filter((d) => d.active && drives(d)).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select><p class="sub">O serviço entra como Pendente. Escolha o motorista agora ou depois, na tela do serviço.</p>` : ''}
       ${has('agenda') ? '<label>📅 Agendar para (só se precisar)</label><input type="datetime-local" name="scheduled_at">' : ''}
       <label>Observações</label><textarea name="notes" rows="2"></textarea>
@@ -856,12 +946,8 @@ screens.novo = async () => {
     }, 300);
   };
   form.contact_phone.onblur = () => setTimeout(() => (phoneBox.hidden = true), 200);
-  form.miles.oninput = () => {
-    if (!priced || form.price.dataset.touched) return;
-    const miles = Number(form.miles.value) || 0;
-    form.price.value = ((pricing.baseCents + miles * pricing.perMileCents) / 100).toFixed(2);
-  };
-  form.price.oninput = () => (form.price.dataset.touched = '1');
+  // Milhas pelo Google Maps e valor sugerido (aprendido dos serviços já feitos). O dono pode mudar.
+  milesAndPrice(form, view.querySelector('#estimativa'));
   // Trava o botão enquanto salva: dois toques (internet lenta) não criam dois serviços.
   const novoFoto = form.querySelector('#novo-foto');
   if (novoFoto) {
@@ -1428,6 +1514,7 @@ screens.editar = async (params, id) => {
         <div><label>Milhas</label><input name="miles" type="number" step="0.1" value="${s.miles ?? ''}"></div>
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal" placeholder="0 = free" value="${s.price_cents != null ? (s.price_cents / 100).toFixed(2) : ''}"></div>
       </div>
+      <p class="sub" id="estimativa"></p>
       ${drivers.length ? `<label>Motorista</label><select name="driver_id"><option value=""${s.driver_id ? '' : ' selected'}>${s.driver_id ? '🚫 Sem motorista' : 'Ninguém ainda (fila)'}</option>${drivers.filter((d) => d.id === s.driver_id || (d.active && drives(d))).map((d) => `<option value="${d.id}" ${d.id === s.driver_id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>` : ''}
       <label>Situação</label><select name="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === s.status ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <label>Observações</label><textarea name="notes" rows="3">${esc(s.notes)}</textarea>
@@ -1435,6 +1522,8 @@ screens.editar = async (params, id) => {
     </form>`;
   placeSuggestions(view.querySelector('#f').pickup);
   placeSuggestions(view.querySelector('#f').dropoff);
+  // Mudou o endereço: recalcula as milhas no Google Maps. O valor já gravado não muda sozinho (só mostra a sugestão).
+  milesAndPrice(view.querySelector('#f'), view.querySelector('#estimativa'), { editing: true, contactId: s.contact_id });
   // Trocar o cliente: janela com os 5 mais novos e busca; dá para cadastrar um novo ali mesmo.
   const contactSel = view.querySelector('#f').contact_id;
   const setContact = (c) => (contactSel.innerHTML = `<option value="${c.id}">${esc(c.name)}</option>`);
