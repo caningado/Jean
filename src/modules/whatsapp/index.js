@@ -195,6 +195,14 @@ export async function processMessage(ctx, client, msg) {
     return handleOutsider(ctx, client, msg);
   }
   ctx.log(`WhatsApp: mensagem de ${user.name} (${formatPhone(msg.from)}), tipo ${msg.type}.`);
+  // Localização 📍: as próximas fotos saem carimbadas com esse endereço (o WhatsApp tira o GPS das fotos).
+  if (msg.location) {
+    try {
+      ctx.api.fotos?.noteLocation(user.id, msg.location);
+    } catch (err) {
+      ctx.log('Fotos: não consegui guardar a localização', err.message);
+    }
+  }
   // Cópia na caixa de entrada do Jay (para o Claude ler depois). Nunca atrapalha o robô.
   // Dono mandou serviço/localização/recado (não comando): o Jay só guarda, quem cria é o Claude
   // (escolha do Caningado 14/11). Comandos e conversas em andamento continuam com o Jay.

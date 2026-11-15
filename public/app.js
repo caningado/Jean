@@ -238,6 +238,67 @@ async function shrinkImage(file, max = 1600) {
   }
 }
 
+// ---------- lugar e hora das fotos (carimbo) ----------
+// O painel diminui a foto antes de mandar, e isso apaga o GPS e a hora gravados nela.
+// Então lê esses dados antes e manda junto. Sem GPS na foto, usa o GPS do celular agora
+// (só se a foto acabou de ser tirada: foto antiga da galeria não é daqui).
+let exifrPromise = null;
+let lastFix = null;
+function hereNow() {
+  if (!navigator.geolocation) return Promise.resolve(null);
+  if (lastFix && Date.now() - lastFix.at < 2 * 60000) return Promise.resolve(lastFix);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), 8000);
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        clearTimeout(timer);
+        lastFix = { lat: p.coords.latitude, lng: p.coords.longitude, at: Date.now() };
+        resolve(lastFix);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(null);
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 2 * 60000 }
+    );
+  });
+}
+
+async function photoPlace(file) {
+  const q = new URLSearchParams();
+  // Foto sem data gravada: vale a hora do arquivo (a câmera acabou de criar). Print colado não é do lugar.
+  let fresh = !file || (/jpe?g|hei[cf]/i.test(file.type) && Math.abs(Date.now() - (file.lastModified || 0)) < 30 * 60000);
+  if (file) {
+    try {
+      const exifr = await (exifrPromise ??= import('/vendor/exifr.mjs'));
+      const gps = await exifr.gps(file).catch(() => null);
+      if (gps && Number.isFinite(gps.latitude) && Number.isFinite(gps.longitude) && (gps.latitude || gps.longitude)) {
+        q.set('lat', gps.latitude);
+        q.set('lng', gps.longitude);
+        q.set('origem', 'foto');
+      }
+      const raw = await exifr.parse(file, { reviveValues: false }).catch(() => null);
+      const m = String(raw?.DateTimeOriginal || '').match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+      if (m) {
+        q.set('tirada', m[0] + (/^[+-]\d{2}:\d{2}$/.test(raw.OffsetTimeOriginal) ? raw.OffsetTimeOriginal : ''));
+        fresh = Math.abs(Date.now() - new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime()) < 30 * 60000;
+      }
+    } catch {
+      /* sem leitor: segue só com o GPS do celular */
+    }
+  }
+  if (!q.has('lat') && fresh) {
+    const here = await hereNow();
+    if (here) {
+      q.set('lat', here.lat);
+      q.set('lng', here.lng);
+      q.set('origem', 'celular');
+    }
+  }
+  const text = q.toString();
+  return text ? '&' + text : '';
+}
+
 function pickPhoto() {
   return new Promise((resolve) => {
     const input = document.createElement('input');
@@ -3563,12 +3624,16 @@ function photoGroups(photos) {
 }
 
 // Foto em tela cheia, com Apagar (motorista só até entregar; o dono sempre). Devolve true se apagou.
+// De onde veio o lugar escrito na foto.
+const PLACE_SOURCE = { foto: 'GPS da foto', celular: 'GPS do celular', whatsapp: 'localização mandada no WhatsApp', servico: 'endereço do serviço' };
+
 function viewPhoto(photo, label, canDelete) {
   return new Promise((resolve) => {
     const back = document.createElement('div');
     back.className = 'photo-view';
     back.innerHTML = `<div class="photo-view-top"><span>${esc(label || '')}</span><button type="button" class="secondary" data-act="close">✕ Fechar</button></div>
       <img src="${photo.url}" alt="${esc(label || '')}">
+      ${photo.address || photo.lat != null ? `<p class="photo-view-place">📍 ${esc(photo.address || `${photo.lat}, ${photo.lng}`)}${PLACE_SOURCE[photo.place_source] ? ` <span>(${PLACE_SOURCE[photo.place_source]})</span>` : ''}</p>` : ''}
       ${canDelete ? '<div class="photo-view-actions"><button type="button" class="danger" data-act="delete">🗑 Apagar foto</button></div>' : ''}`;
     const done = (value) => {
       back.remove();
@@ -3688,7 +3753,7 @@ function pastePhotos(serviceId, kind, initial = []) {
       for (const f of files) {
         save.textContent = `Salvando ${saved + 1} de ${files.length}…`;
         try {
-          await api(`/services/${serviceId}/photos?kind=${chosen}`, { method: 'POST', raw: await shrinkImage(f), type: 'image/jpeg' });
+          await api(`/services/${serviceId}/photos?kind=${chosen}${await photoPlace(f)}`, { method: 'POST', raw: await shrinkImage(f), type: 'image/jpeg' });
           saved++;
         } catch (err) {
           toast(err.message);
@@ -3712,8 +3777,9 @@ async function guidedPhotos(serviceId, kind, doneAngles = [], onlyAngle = null) 
   const queue = onlyAngle ? [onlyAngle] : [...ANGLES.filter((a) => !doneAngles.includes(a)), ...(ANGLES.every((a) => doneAngles.includes(a)) ? ['detalhe'] : [])];
   let index = 0;
   let saved = 0;
-  const upload = async (blob, angle) => {
-    await api(`/services/${serviceId}/photos?kind=${kind}&angle=${angle}`, { method: 'POST', raw: blob, type: 'image/jpeg' });
+  hereNow(); // já pede o GPS (e a permissão) enquanto a câmera abre
+  const upload = async (blob, angle, file = null) => {
+    await api(`/services/${serviceId}/photos?kind=${kind}&angle=${angle}${await photoPlace(file)}`, { method: 'POST', raw: blob, type: 'image/jpeg' });
     saved++;
   };
 
@@ -3727,7 +3793,7 @@ async function guidedPhotos(serviceId, kind, doneAngles = [], onlyAngle = null) 
       const file = await pickPhoto();
       if (!file) break;
       try {
-        await upload(await shrinkImage(file), angle);
+        await upload(await shrinkImage(file), angle, file);
       } catch (err) {
         toast(err.message);
         break;

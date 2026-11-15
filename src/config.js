@@ -95,6 +95,8 @@ export function loadConfig(overrides = {}) {
     vinOcr: env.VIN_OCR !== 'off',
     // Conferir endereços no mapa (Census + OpenStreetMap, grátis). GEOCODER=off desliga.
     geocoder: env.GEOCODER !== 'off',
+    // Carimbo nas fotos do carro: data, hora e endereço escritos na foto. FOTO_CARIMBO=off desliga.
+    fotoCarimbo: env.FOTO_CARIMBO !== 'off',
     // Milhas de carro entre retirada e destino pelo Google Maps (Routes API). Sem chave, as milhas são à mão.
     googleMapsKey: (env.GOOGLE_MAPS_API_KEY || '').trim(),
     // Busca de endereço só neste estado (sigla). GEO_ESTADO=todos busca no país inteiro.
