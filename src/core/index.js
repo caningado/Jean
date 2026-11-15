@@ -5,6 +5,8 @@ import { FlowError } from './bot.js';
 import { repairEncodedNames } from './data.js';
 import { hashPin, verifyPin, signToken } from '../lib/auth.js';
 import { collectAlerts, servicesBlocked } from '../lib/daily.js';
+import { priceSuggestion } from './preco.js';
+import { routeMiles, routeLines } from '../lib/rotas.js';
 import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkServicePrice, FREE, isMapReference } from '../lib/validate.js';
 import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfWeekIso, startOfMonthIso, startOfYearIso, formatPhone, dayFormatter } from '../lib/util.js';
 import { speak, toWav, textoParaFala, MAX_FALA } from '../lib/tts.js';
@@ -528,14 +530,35 @@ const flows = {
       {
         key: 'price_cents',
         optional: true,
-        ask(data, ctx) {
-          const suggestion = suggestPrice(ctx, data.miles);
-          return suggestion != null
-            ? `Qual o *valor* do serviço? Pela tabela dá ${formatMoney(suggestion)}. Mande *ok* para aceitar, outro valor, ou *pular*.`
-            : 'Qual o *valor* do serviço em dólar? (*free* se não cobrar, ou *pular*)';
+        // Antes de perguntar o valor: milhas pelo Google Maps (quando tem a chave e os dois endereços).
+        async prepare(data, ctx) {
+          if (data.miles != null || data._route_done || !data.pickup || !data.dropoff) return;
+          data._route_done = true;
+          const r = await routeMiles(ctx, data.pickup, data.dropoff);
+          if (r && r.miles > 0 && r.miles <= 1000) Object.assign(data, { miles: r.miles, _route: r });
         },
+        ask(data, ctx) {
+          const s = priceSuggestion(ctx, data.miles, { contactId: data.client?.id });
+          const r = data._route;
+          const which = r?.has_tolls && r.sem_pedagio ? (data._sem_pedagio ? '\nUsei as milhas da rota *sem pedágio* (mande *com pedágio* para trocar).' : '\nUsei as milhas da rota *com pedágio* (mande *sem pedágio* para trocar).') : '';
+          const route = r ? routeLines(r, '*').join('\n') + which + '\n' : '';
+          return s
+            ? `${route}Qual o *valor* do serviço? ${s.texto.replace(/^Sugestão (\S+)/, 'Sugiro *$1*')} Mande *ok* para aceitar, outro valor, ou *pular*.`
+            : `${route}Qual o *valor* do serviço em dólar? (*free* se não cobrar, ou *pular*)`;
+        },
+        // Trocou de rota (com/sem pedágio): pergunta o valor de novo com as milhas da outra rota.
+        again: (data) => Boolean(data._switch),
         parse(text, { ctx, data }) {
-          const suggestion = suggestPrice(ctx, data.miles);
+          delete data._switch;
+          const r = data._route;
+          const t = simplify(text);
+          if (r?.sem_pedagio && /^(sem|com) pedagio$/.test(t)) {
+            data._sem_pedagio = t.startsWith('sem');
+            data.miles = data._sem_pedagio ? r.sem_pedagio.miles : r.miles;
+            data._switch = true;
+            return null;
+          }
+          const suggestion = suggestPrice(ctx, data.miles, { contactId: data.client?.id });
           if (simplify(text) === 'ok' && suggestion != null) return suggestion;
           if (!FREE.test(text) && !/^\$?\s*[\d.,]+\s*$/.test(text.trim())) throw new FlowError('Mande só o valor em dólar (Ex: 150 ou 150.50), ou *free* se não cobrar.');
           return checkServicePrice(text);
@@ -587,11 +610,15 @@ const flows = {
   },
 };
 
-export function suggestPrice(ctx, miles) {
-  const { baseCents, perMileCents } = ctx.config.pricing;
-  if (!baseCents && !perMileCents) return null;
-  if (miles == null && !baseCents) return null;
-  return baseCents + Math.round((miles || 0) * perMileCents);
+// Valor sugerido (aprende com os serviços já feitos; sem histórico, usa a tabela). Só sugestão.
+export function suggestPrice(ctx, miles, who = {}) {
+  return priceSuggestion(ctx, miles, who)?.cents ?? null;
+}
+
+// Milhas de carro pelo Google Maps, prontas para gravar no serviço (null quando não deu).
+export async function autoMiles(ctx, pickup, dropoff) {
+  const r = await routeMiles(ctx, pickup, dropoff);
+  return r && r.miles > 0 && r.miles <= 1000 ? r.miles : null;
 }
 
 // "Honda Civic ABC1234" -> veículo "Honda Civic", placa "ABC1234".
@@ -777,6 +804,8 @@ async function createService(ctx, user, rawBody) {
   // Confere tudo antes de criar qualquer coisa.
   const fields = serviceFields(body);
   await checkPlaces(ctx, fields, body);
+  // Sem milhas: calcula pelo Google Maps (quando tem a chave). O dono pode editar depois.
+  if (fields.miles == null) fields.miles = await autoMiles(ctx, fields.pickup, fields.dropoff);
   let contactName = optional(body.contact_name, (v) => checkName(v, 'O nome do cliente'));
   const contactPhone = optional(body.contact_phone, checkPhone);
   let contactId = Number(body.contact_id) || null;
@@ -840,6 +869,12 @@ async function editService(ctx, user, service, rawBody) {
   const body = serviceFields(raw, { partial: true });
   await checkPlaces(ctx, body, raw, service);
   if (body.pickup === null) delete body.pickup; // retirada não pode ficar vazia
+  // Mudou a retirada ou o destino e as milhas não foram mexidas: calcula de novo pelo Google Maps.
+  const moved = ['pickup', 'dropoff'].some((k) => body[k] !== undefined && body[k] !== service[k]);
+  if (moved && (body.miles === undefined || body.miles === service.miles)) {
+    const miles = await autoMiles(ctx, body.pickup ?? service.pickup, body.dropoff !== undefined ? body.dropoff : service.dropoff);
+    if (miles != null) body.miles = miles;
+  }
   // Trocar o cliente (quem pediu o serviço).
   if (raw.contact_id !== undefined) {
     const contactId = Number(raw.contact_id) || null;
@@ -1107,6 +1142,23 @@ function routes(api, ctx) {
       })
     );
   });
+  // Milhas (Google Maps) e valor sugerido para a tela do serviço. Só sugere: o dono confirma ou muda.
+  api.get('/estimate', async (req, res) => {
+    const q = req.query;
+    let miles = Number(q.miles) > 0 ? Math.round(Number(q.miles) * 10) / 10 : null;
+    let route = null;
+    const pickup = String(q.pickup || '').trim();
+    const dropoff = String(q.dropoff || '').trim();
+    if (miles == null && pickup && dropoff) {
+      const expand = (v) => savedPlace(ctx, v)?.address || v;
+      route = await routeMiles(ctx, expand(pickup), expand(dropoff));
+      if (route && route.miles > 0 && route.miles <= 1000) miles = route.miles;
+      else route = null;
+    }
+    const suggestion = priceSuggestion(ctx, miles, { contactId: Number(q.contact_id) || null, companyId: Number(q.company_id) || null });
+    res.json({ maps: Boolean(ctx.rotas), miles, minutes: route?.minutes ?? null, from_maps: Boolean(route), route, suggestion });
+  });
+
   // Sugestões de endereço enquanto digita no painel.
   api.get('/places', async (req, res) => {
     const q = String(req.query.q || '').trim();
@@ -1363,6 +1415,9 @@ export default {
       edit: (user, service, body) => editService(ctx, user, service, body),
       pass: (user, service, driverId) => passService(ctx, user, service, driverId),
       firmName: (id) => firmName(ctx, id),
+      // Milhas pelo Google Maps (aceita apelido de endereço) e preço sugerido.
+      route: (pickup, dropoff) => routeMiles(ctx, savedPlace(ctx, pickup)?.address || pickup, savedPlace(ctx, dropoff)?.address || dropoff),
+      priceSuggestion: (miles, who) => priceSuggestion(ctx, miles, who),
     };
     const fixed = repairEncodedNames(ctx.db);
     if (fixed) ctx.log?.(`Nomes de clientes corrigidos (importação antiga): ${fixed}`);

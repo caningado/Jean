@@ -557,3 +557,9 @@ button.chat-mic svg { width: 22px; height: 22px; }
 .toolbar .datas { flex: none; }
 .toolbar .datas input { flex: none; width: auto; padding: 8px 10px; }
 .toolbar .datas button { padding: 8px 16px; }
+
+/* Rotas do Google Maps (com e sem pedágio) na tela do serviço */
+.rotas { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+.rotas .rota { display: block; text-align: left; font-weight: normal; min-height: 0; background: var(--card, #fff); color: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 14px; width: auto; margin: 0; }
+.rotas .rota.on { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand) inset; }
+#estimativa button.link { background: none; border: none; color: var(--brand); text-decoration: underline; padding: 0; width: auto; margin: 0; font-size: 14px; }

@@ -10,6 +10,7 @@ Robô de WhatsApp para a equipe (dono + motoristas) e um painel que abre no celu
 - **Fotos (opcionais)**: antes (retirada), depois (entrega) e VIN, com data e hora.
 - **VIN**: confere o número, descobre marca/modelo/ano (base gratuita da NHTSA), escaneia o código de barras pela câmera (Android) e lê o número de uma foto (Android e iPhone; lê melhor com `GEMINI_API_KEY`, grátis, ou `ANTHROPIC_API_KEY`).
 - **Pagamentos**: Zelle, dinheiro, cartão, cheque, Brasil (cliente que paga no Brasil) e seguradora/motor club (AAA, Agero, Honk…). Mostra o que falta receber, quanto dinheiro está com cada motorista, e gera a mensagem de cobrança com o Zelle.
+- **Milhas e preço**: com `GOOGLE_MAPS_API_KEY`, calcula as milhas e o tempo entre a retirada e o destino (rota com pedágio, com o valor do pedágio de carro, e rota sem pedágio) no painel, no Jay e no Claude. O valor sugerido aprende com os serviços já feitos (da mesma empresa, quando tem; senão de todos; sem histórico, usa `PRICE_BASE` + `PRICE_PER_MILE`). O dono sempre confirma ou muda.
 - **Despesas**: combustível, pedágio, manutenção…
 - **Resumo** do dia e do mês: faturado, recebido, despesas e saldo.
 - **Cobrança atrasada**: avisa quem deve há mais de `COBRANCA_DIAS` dias (padrão 7).

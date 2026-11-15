@@ -11,6 +11,7 @@ import core from './core/index.js';
 import { verifyToken, readCookie } from './lib/auth.js';
 import { HttpError } from './lib/util.js';
 import { createGeocoder } from './lib/geo.js';
+import { createRouter } from './lib/rotas.js';
 
 import vin from './modules/vin/index.js';
 import fotos from './modules/fotos/index.js';
@@ -77,6 +78,8 @@ export function createContext(config) {
     has: (name) => loaded.some((m) => m.name === name),
     // Procura endereços no mapa (null = desligado).
     geo: config.geocoder ? createGeocoder({ state: config.geoEstado }) : null,
+    // Milhas pelo Google Maps (null = sem chave).
+    rotas: createRouter({ apiKey: config.googleMapsKey }),
   };
 
   for (const mod of loaded) migrate(db, mod.name, mod.migrations);
