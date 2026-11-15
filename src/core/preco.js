@@ -60,14 +60,18 @@ function companyName(ctx, id) {
   }
 }
 
-// Preço pelo tempo do caminhão: ida + volta (o mesmo tempo da rota) + carregar e descarregar,
-// vezes o valor da hora. null quando não tem os minutos ou o valor da hora.
+// Preço pelo tempo do caminhão: ida + volta (tempo da rota de carro + 10% por ser guincho)
+// + carregar e descarregar, vezes o valor da hora, arredondado de $10 em $10.
+// null quando não tem os minutos ou o valor da hora.
 export function timePrice(ctx, minutes) {
   const min = Number(minutes);
-  const { perHourCents = 0, loadMinutes = 30 } = ctx.config.pricing || {};
+  const { perHourCents = 0, loadMinutes = 30, truckFactor = 1 } = ctx.config.pricing || {};
   if (!(min > 0) || !(perHourCents > 0)) return null;
-  const total = Math.round(min * 2 + (Number(loadMinutes) || 0));
-  return { cents: roundTo5((total / 60) * perHourCents), total, perHourCents, loadMinutes: Number(loadMinutes) || 0 };
+  const ida = Math.round(min * (Number(truckFactor) > 0 ? Number(truckFactor) : 1));
+  const load = Number(loadMinutes) || 0;
+  const total = ida * 2 + load;
+  const cents = Math.max(1000, Math.round(((total / 60) * perHourCents) / 1000) * 1000);
+  return { cents, ida, total, perHourCents, loadMinutes: load };
 }
 
 const hoursText = (min) => `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`;
@@ -78,7 +82,7 @@ export function priceSuggestion(ctx, miles, { contactId = null, companyId = null
   const byMiles = milesSuggestion(ctx, miles, { contactId, companyId });
   const byTime = timePrice(ctx, minutes);
   if (!byTime || (byMiles && byMiles.cents >= byTime.cents)) return byMiles;
-  const ida = Math.round(Number(minutes));
+  const { ida } = byTime;
   return {
     cents: byTime.cents,
     fonte: 'tempo',
@@ -87,7 +91,7 @@ export function priceSuggestion(ctx, miles, { contactId = null, companyId = null
     per_mile_cents: byMiles?.per_mile_cents ?? null,
     minutos_total: byTime.total,
     milhas_cents: byMiles?.cents ?? null,
-    texto: `Sugestão ${usd(byTime.cents)} pelo tempo: ${ida} min de ida + ${ida} de volta + ${byTime.loadMinutes} para pegar e entregar = ${hoursText(byTime.total)} a ${usd(byTime.perHourCents)} a hora.${byMiles ? ` (Só pelas milhas daria ${usd(byMiles.cents)}.)` : ''}`,
+    texto: `Sugestão ${usd(byTime.cents)} pelo tempo do guincho: ${ida} min de ida + ${ida} de volta + ${byTime.loadMinutes} para pegar e entregar = ${hoursText(byTime.total)} a ${usd(byTime.perHourCents)} a hora.${byMiles ? ` (Só pelas milhas daria ${usd(byMiles.cents)}.)` : ''}`,
   };
 }
 

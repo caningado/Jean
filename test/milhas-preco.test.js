@@ -149,13 +149,13 @@ test('Jay: mostra as rotas antes do valor e troca para a sem pedágio', async ()
 
 test('sugestão pelo tempo: ida + volta + 30 min a $100 a hora, quando dá mais que as milhas', () => {
   const ctx = makeContext();
-  ctx.config.pricing = { baseCents: 10000, perMileCents: 0, perHourCents: 10000, loadMinutes: 30 };
-  // 40 min de ida + 40 de volta + 30 = 1h50 → $183,33 → $185
-  const s = priceSuggestion(ctx, 20, { minutes: 40 });
+  ctx.config.pricing = { baseCents: 10000, perMileCents: 0, perHourCents: 10000, loadMinutes: 30, truckFactor: 1.1 };
+  // Google: 36 min de carro → 40 de guincho; 40 + 40 + 30 = 1h50 → $183,33 → $180
+  const s = priceSuggestion(ctx, 20, { minutes: 36 });
   assert.equal(s.fonte, 'tempo');
-  assert.equal(s.cents, 18500);
+  assert.equal(s.cents, 18000);
   assert.equal(s.minutos_total, 110);
-  assert.match(s.texto, /Sugestão \$185 pelo tempo: 40 min de ida \+ 40 de volta \+ 30 para pegar e entregar = 1h50 a \$100 a hora\. \(Só pelas milhas daria \$100\.\)/);
+  assert.match(s.texto, /Sugestão \$180 pelo tempo do guincho: 40 min de ida \+ 40 de volta \+ 30 para pegar e entregar = 1h50 a \$100 a hora\. \(Só pelas milhas daria \$100\.\)/);
   // Corrida curta: as milhas (o mínimo de $100) ganham do tempo.
   assert.equal(priceSuggestion(ctx, 3, { minutes: 10 }).fonte, 'tabela');
   // Sem minutos: só milhas, como antes.

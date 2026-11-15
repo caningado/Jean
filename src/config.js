@@ -42,6 +42,8 @@ export function loadConfig(overrides = {}) {
       // Preço pelo tempo ($100 a hora, Caningado 15/11): ida + volta + 15 min para pegar + 15 para entregar.
       perHourCents: Math.round(Number(env.PRICE_PER_HOUR ?? 100) * 100),
       loadMinutes: Number(env.PRICE_LOAD_MINUTES ?? 30),
+      // Guincho anda mais devagar que carro: +10% no tempo do Google Maps.
+      truckFactor: Number(env.PRICE_TRUCK_FACTOR ?? 1.1),
     },
     zelle: {
       name: env.ZELLE_NAME || '',
