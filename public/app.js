@@ -336,6 +336,35 @@ function numTag(s) {
   return state.me?.role === 'dono' ? `#${typeof s === 'object' ? num(s) : s} ` : '';
 }
 
+// Caminho das telas abertas, para o "voltar" do app levar para onde a pessoa estava
+// (com a busca que ela tinha feito), e não sempre para a tela principal daquela parte.
+const trail = [];
+// Formulários (novo, editar, login) não são lugar para voltar: depois de salvar, o voltar pula eles.
+const notBack = (h) => /^#\/(novo|editar|login|sair)\b|\/(novo|nova)$/.test(h);
+function trackTrail() {
+  const h = location.hash || '#/servicos';
+  const i = trail.lastIndexOf(h);
+  if (i >= 0) trail.length = i + 1;
+  else trail.push(h);
+  if (trail.length > 50) trail.shift();
+}
+function backTarget(fallback) {
+  for (let i = trail.length - 2; i >= 0; i--) if (!notBack(trail[i])) return trail[i];
+  return fallback;
+}
+// Guarda o que foi digitado na busca no endereço da tela (sem criar passo novo no histórico):
+// ao voltar de um serviço aberto pela busca, a lista volta filtrada do mesmo jeito.
+function keepSearch(value) {
+  const [path, query] = location.hash.split('?');
+  const params = new URLSearchParams(query || '');
+  const q = String(value || '').trim();
+  if (q) params.set('q', q);
+  else params.delete('q');
+  const rest = params.toString();
+  history.replaceState(history.state, '', path + (rest ? '?' + rest : ''));
+  trail[trail.length - 1] = location.hash;
+}
+
 function setScreen(title, { tab = null, back = null } = {}) {
   titleEl.textContent = title;
   document.title = `${title} · ${state.company}`;
@@ -349,7 +378,7 @@ function setScreen(title, { tab = null, back = null } = {}) {
   if (isDesk() && state.me && sideEl.querySelector(`[data-side="${state.screen}"]`)) back = null;
   backBtn.classList.toggle('hidden', !back);
   document.getElementById('logo').classList.toggle('hidden', Boolean(back));
-  backBtn.onclick = back ? () => (location.hash = back) : null;
+  backBtn.onclick = back ? () => (location.hash = backTarget(back)) : null;
   window.scrollTo(0, 0);
 }
 
@@ -594,6 +623,11 @@ screens.servicos = async (params) => {
       view.querySelector('#conta').textContent = `${n} serviço(s)`;
       view.querySelector('#soma').textContent = money(cents);
     };
+    filtro.addEventListener('input', () => keepSearch(filtro.value));
+    if (params.get('q')) {
+      filtro.value = params.get('q');
+      filtro.oninput();
+    }
     return;
   }
   view.querySelector('#list').innerHTML = list.length
@@ -1896,7 +1930,7 @@ screens.agenda = async () => {
   }</ul></div>`;
 };
 
-screens.pendentes = async () => {
+screens.pendentes = async (params) => {
   setScreen(state.me.role === 'dono' ? 'Pendências' : 'Minhas pendências', { tab: 'resumo', back: '#/resumo' });
   const list = await api('/payments/pending');
   const late = list.filter((s) => s.overdue).length;
@@ -1941,7 +1975,12 @@ screens.pendentes = async () => {
       const firms = new Set(items.filter((li) => !li.hidden && li.dataset.co).map((li) => li.dataset.co));
       for (const li of items) if (firms.has(li.dataset.co)) li.hidden = false;
       refresh();
+      keepSearch(busca.value);
     };
+  if (busca && params.get('q')) {
+    busca.value = params.get('q');
+    busca.oninput();
+  }
   boxes().forEach((b) => (b.onchange = refresh));
   const pdf = view.querySelector('#pdf');
   if (pdf)
@@ -3866,6 +3905,7 @@ async function route() {
     await refreshMe();
     if (!state.me) return;
   }
+  trackTrail();
   const nav = (state.nav = (state.nav || 0) + 1);
   const screen = screens[name] || screens.servicos;
   state.screen = screens[name] ? name : 'servicos';
