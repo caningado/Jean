@@ -162,8 +162,16 @@ ${disabled
 </main></body></html>`;
 }
 
-function sendPage(res, status, html) {
-  res.status(status).set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'" }).send(html);
+// O formulário manda para o próprio sistema, que devolve (redireciona) para o Claude: o navegador
+// confere o form-action também no redirecionamento, então o endereço do Claude tem que estar nele.
+function sendPage(res, status, html, redirectUri = null) {
+  let back = '';
+  try {
+    if (redirectUri) back = ` ${new URL(redirectUri).origin}`;
+  } catch {
+    back = '';
+  }
+  res.status(status).set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self'${back}; frame-ancestors 'none'` }).send(html);
 }
 
 // O "provedor" que o SDK do MCP usa para o login.
@@ -208,7 +216,7 @@ export function createOAuthProvider(ctx, guard) {
       for (const [id, p] of pending) if (Date.now() - p.at > PENDING_TTL_MS) pending.delete(id);
       const id = randomToken();
       pending.set(id, { clientId: client.client_id, params, at: Date.now() });
-      sendPage(res, 200, loginPage({ pendingId: id, clientName: client.client_name }));
+      sendPage(res, 200, loginPage({ pendingId: id, clientName: client.client_name }), params.redirectUri);
     },
 
     // Recebe o telefone e o PIN digitados na página de login.
@@ -223,7 +231,7 @@ export function createOAuthProvider(ctx, guard) {
       const client = clientsStore.getClient(p.clientId);
       const phone = normalizePhone(req.body?.telefone);
       const pin = String(req.body?.pin || '').trim();
-      const page = (status, extra) => sendPage(res, status, loginPage({ pendingId: id, clientName: client?.client_name, phone: req.body?.telefone || '', ...extra }));
+      const page = (status, extra) => sendPage(res, status, loginPage({ pendingId: id, clientName: client?.client_name, phone: req.body?.telefone || '', ...extra }), p.params.redirectUri);
       const blocked = guard.blocked(ip, phone);
       if (blocked) return page(429, { disabled: blocked });
       const user = phone ? ctx.db.prepare('SELECT * FROM users WHERE phone = ? AND active = 1').get(phone) : null;
