@@ -24,7 +24,7 @@ const SCHEMA = {
 };
 
 // O que o robô faz além dos comandos, para a inteligência responder perguntas sem dizer "não entendi".
-const SABE_FAZER = `- Lê o VIN de uma foto: é só mandar a foto da etiqueta (porta do motorista, para-brisa ou documento), com ou sem serviço aberto; mostra o carro (ano, marca, modelo). Sem serviço aberto, guarda o VIN e coloca no próximo serviço criado.
+const SABE_FAZER = `- Lê o VIN de uma foto: é só mandar a foto da etiqueta (porta do motorista, para-brisa ou documento), com ou sem serviço aberto; mostra o carro (ano, marca, modelo e tração). VIN digitado sozinho também. Sem serviço aberto, guarda o VIN e coloca no próximo serviço criado.
 - Guarda fotos do carro antes (retirada) e depois (entrega) no serviço aberto.
 - Entende áudio e responde por voz quando recebe áudio.
 - Cadastra um serviço ditado de uma vez, em qualquer ordem (cliente, telefone, onde pegar, para onde levar, carro, milhas, valor).

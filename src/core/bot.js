@@ -431,6 +431,9 @@ export function createBot(ctx) {
       if (reply != null) reply = await autoAnswer(user, reply);
     }
 
+    // VIN mandado sozinho (17 caracteres): o Jay responde só com ano, marca, modelo e tração (pedido do dono 15/11).
+    if (reply == null && !media && ctx.api.vin?.fromText) reply = await ctx.api.vin.fromText(user, text);
+
     if (reply == null) {
       // Com o Gemini, frase comprida vai para ele mesmo começando com palavra de comando
       // ("abasteci oitenta de diesel agora", "serviço pro João na Alafaya...").

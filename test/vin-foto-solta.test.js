@@ -51,3 +51,27 @@ test('foto sem VIN e sem serviço: explica em vez de só recusar', async () => {
   const [reply] = await ctx.bot.handle({ phone: DRIVER_PHONE, text: '', media });
   assert.match(reply, /Não achei um VIN nessa foto/);
 });
+
+test('VIN mandado sozinho no texto: o Jay responde só ano, marca, modelo e tração', async (t) => {
+  const ctx = makeContext({ GEMINI_API_KEY: 'k' });
+  const realFetch = globalThis.fetch;
+  t.after(() => (globalThis.fetch = realFetch));
+  let gemini = 0;
+  globalThis.fetch = async (url, opts) => {
+    if (String(url).includes('vpic.nhtsa.dot.gov')) return Response.json({ Results: [{ ModelYear: '2014', Make: 'AUDI', Model: 'Q7', BodyClass: 'Sport Utility Vehicle (SUV)', DriveType: 'AWD/All-Wheel Drive' }] });
+    if (String(url).includes('generativelanguage.googleapis.com')) gemini++;
+    return realFetch(url, opts);
+  };
+  const [reply] = await chat(ctx, DRIVER_PHONE, 'WA1LGAFE3ED014891');
+  assert.match(reply, /^🚗 2014 Audi Q7 AWD/);
+  assert.doesNotMatch(reply, /Sport Utility/);
+  assert.equal(gemini, 0);
+
+  // Com serviço aberto sem VIN, salva no serviço e o veículo fica igual.
+  const s = ctx.data.services.create({ pickup: '1 Main St', vehicle: 'Q7', driver_id: ctx.data.users.byPhone?.(DRIVER_PHONE)?.id }, 1);
+  const driver = ctx.db.prepare('SELECT * FROM users WHERE id != 1 LIMIT 1').get();
+  if (driver) ctx.data.services.setActive(driver.id, s.id);
+  const [saved] = await chat(ctx, DRIVER_PHONE, 'WA1LGAFE3ED014891');
+  assert.match(saved, /Veículo: 2014 Audi Q7 AWD/);
+  assert.equal(ctx.data.services.get(s.id).vehicle, '2014 Audi Q7 AWD');
+});
