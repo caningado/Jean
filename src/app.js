@@ -48,6 +48,8 @@ const VENDOR = {
   // Leitor de PDF dentro do app (gate pass): o app instalado no iPhone não abre PDF em outra aba.
   '/vendor/pdf.mjs': pdfjsFile('pdf.min.mjs'),
   '/vendor/pdf.worker.mjs': pdfjsFile('pdf.worker.min.mjs'),
+  // Lê o GPS e a hora gravados na foto antes do painel diminuir a foto (que apaga esses dados).
+  '/vendor/exifr.mjs': path.join(path.dirname(createRequire(import.meta.url).resolve('exifr')), 'lite.esm.mjs'),
 };
 
 export function createContext(config) {

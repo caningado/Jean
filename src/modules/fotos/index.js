@@ -7,6 +7,8 @@ import express from 'express';
 import { FlowError } from '../../core/bot.js';
 import { simplify, nowIso, HttpError } from '../../lib/util.js';
 import { readVinBarcode } from '../../lib/barcode.js';
+import { coordsOf } from '../../lib/validate.js';
+import { readPhotoMeta, takenToIso, stampPhoto, stampDate, coordsText } from '../../lib/carimbo.js';
 
 const KINDS = { antes: 'antes', depois: 'depois', vin: 'vin', outro: 'outro' };
 const KIND_LABEL = { antes: 'antes', depois: 'depois', vin: 'VIN', outro: 'sem tipo' };
@@ -52,7 +54,25 @@ const migrations = [
      created_at TEXT NOT NULL
    );
    CREATE INDEX service_docs_service ON service_docs(service_id);`,
+  // Carimbo: onde e quando a foto foi tirada, e a cópia com isso escrito na foto.
+  // place_source: foto (GPS da própria foto), celular (GPS do painel), whatsapp (localização 📍
+  // que o motorista mandou), servico (endereço de retirada/entrega do serviço).
+  `ALTER TABLE photos ADD COLUMN stamped_file TEXT;
+   ALTER TABLE photos ADD COLUMN lat REAL;
+   ALTER TABLE photos ADD COLUMN lng REAL;
+   ALTER TABLE photos ADD COLUMN address TEXT;
+   ALTER TABLE photos ADD COLUMN taken_at TEXT;
+   ALTER TABLE photos ADD COLUMN place_source TEXT;
+   CREATE TABLE user_locations (
+     user_id INTEGER PRIMARY KEY REFERENCES users(id),
+     lat REAL NOT NULL,
+     lng REAL NOT NULL,
+     at TEXT NOT NULL
+   );`,
 ];
+
+// Localização 📍 do WhatsApp vale para as fotos dos próximos 60 minutos.
+const LOCATION_MINUTES = 60;
 
 const DOC_TYPES = { 'application/pdf': '.pdf', 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/heic': '.heic', 'image/heif': '.heic', 'image/gif': '.gif' };
 
@@ -129,7 +149,7 @@ const KIND_FILE = { antes: 'antes', depois: 'depois', vin: 'VIN', outro: 'outra'
 
 const EXTENSIONS = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/heic': '.heic' };
 
-function savePhoto(ctx, { serviceId, kind, angle = null, buffer, mime, userId }) {
+function savePhoto(ctx, { serviceId, kind, angle = null, buffer, mime, userId, place = null }) {
   const dir = path.join(ctx.config.uploadsDir, `servico-${serviceId}`);
   fs.mkdirSync(dir, { recursive: true });
   const name = `${Date.now()}-${kind}-${crypto.randomBytes(3).toString('hex')}${EXTENSIONS[mime] || '.jpg'}`;
@@ -137,7 +157,82 @@ function savePhoto(ctx, { serviceId, kind, angle = null, buffer, mime, userId })
   const info = ctx.db
     .prepare('INSERT INTO photos (service_id, kind, angle, file, mime, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run(serviceId, kind, angle, path.join(`servico-${serviceId}`, name), mime || 'image/jpeg', userId, nowIso());
-  return Number(info.lastInsertRowid);
+  const id = Number(info.lastInsertRowid);
+  // O carimbo demora 1 ou 2 segundos: é feito depois, sem segurar a resposta.
+  if (ctx.config.fotoCarimbo) queueStamp(ctx, id, buffer, place);
+  return id;
+}
+
+// ---------- carimbo (data, hora e endereço escritos na foto) ----------
+const stampQueues = new WeakMap();
+function queueStamp(ctx, id, buffer, place) {
+  const next = (stampQueues.get(ctx) || Promise.resolve()).then(() =>
+    stamp(ctx, id, buffer, place).catch((err) => ctx.log(`Fotos: não consegui carimbar a foto ${id}`, err.message))
+  );
+  stampQueues.set(ctx, next);
+}
+
+// Lugar da foto, do mais certo para o menos certo: GPS gravado na foto, GPS do celular no
+// painel, localização 📍 que o motorista mandou no WhatsApp há pouco, endereço do serviço.
+async function findPlace(ctx, photo, meta, given) {
+  if (meta.lat != null) return { lat: meta.lat, lng: meta.lng, source: 'foto' };
+  if (given?.lat != null) return { lat: given.lat, lng: given.lng, source: given.source || 'celular' };
+  const recent = ctx.db.prepare('SELECT * FROM user_locations WHERE user_id = ?').get(photo.uploaded_by);
+  if (recent && Date.parse(photo.created_at) - Date.parse(recent.at) < LOCATION_MINUTES * 60000) return { lat: recent.lat, lng: recent.lng, source: 'whatsapp' };
+  const service = ctx.db.prepare('SELECT pickup, dropoff FROM services WHERE id = ?').get(photo.service_id);
+  const where = photo.kind === 'depois' ? service?.dropoff || service?.pickup : service?.pickup || service?.dropoff;
+  if (!where) return null;
+  const coords = coordsOf(where);
+  if (coords) {
+    const [lat, lng] = coords.split(',').map(Number);
+    return { lat, lng, source: 'servico' };
+  }
+  return /https?:\/\//i.test(where) ? null : { address: where, source: 'servico' };
+}
+
+async function stamp(ctx, id, buffer, given) {
+  const photo = ctx.db.prepare('SELECT * FROM photos WHERE id = ?').get(id);
+  if (!photo) return;
+  const meta = await readPhotoMeta(buffer);
+  const takenAt = takenToIso(meta.taken, ctx.config.timeZone) || given?.takenAt || photo.created_at;
+  const place = await findPlace(ctx, photo, meta, given);
+  let address = place?.address || null;
+  if (!address && place && ctx.geo?.reverse) {
+    address = await ctx.geo.reverse(place.lat, place.lng).catch(() => null);
+  }
+  const lines = [stampDate(takenAt, ctx.config.timeZone), address, place?.lat != null ? coordsText(place.lat, place.lng) : null];
+  const out = await stampPhoto(buffer, lines);
+  let stamped = null;
+  if (out) {
+    stamped = photo.file.replace(/\.[a-z]+$/i, '') + '-carimbo.jpg';
+    fs.writeFileSync(path.join(ctx.config.uploadsDir, stamped), out);
+  }
+  // A foto pode ter sido apagada enquanto o carimbo era feito.
+  const still = ctx.db
+    .prepare('UPDATE photos SET stamped_file = ?, lat = ?, lng = ?, address = ?, taken_at = ?, place_source = ? WHERE id = ?')
+    .run(stamped, place?.lat ?? null, place?.lng ?? null, address, takenAt, place?.source || null, id);
+  if (!Number(still.changes) && stamped) fs.rmSync(path.join(ctx.config.uploadsDir, stamped), { force: true });
+}
+
+// Localização 📍 mandada no WhatsApp: guarda para carimbar as próximas fotos.
+function noteLocation(ctx, userId, { latitude, longitude }) {
+  if (!Number.isFinite(Number(latitude)) || !Number.isFinite(Number(longitude))) return;
+  ctx.db
+    .prepare('INSERT INTO user_locations (user_id, lat, lng, at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET lat = excluded.lat, lng = excluded.lng, at = excluded.at')
+    .run(userId, Number(latitude), Number(longitude), nowIso());
+}
+
+// Lugar e hora mandados pelo painel: ?lat=..&lng=..&origem=foto|celular&tirada=2026:11:15 14:20:33-05:00
+function placeFromQuery(ctx, q) {
+  const lat = Number(q.lat);
+  const lng = Number(q.lng);
+  const out = {};
+  if (q.lat != null && q.lng != null && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && (lat || lng)) {
+    Object.assign(out, { lat, lng, source: q.origem === 'foto' ? 'foto' : 'celular' });
+  }
+  const m = String(q.tirada || '').match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})([+-]\d{2}:\d{2})?$/);
+  if (m) out.takenAt = takenToIso({ y: +m[1], mo: +m[2], d: +m[3], h: +m[4], mi: +m[5], s: +m[6], offset: m[7] || null }, ctx.config.timeZone);
+  return Object.keys(out).length ? out : null;
 }
 
 function countPhotos(ctx, serviceId, kind) {
@@ -259,9 +354,10 @@ function findServiceFor(ctx, user, id) {
 
 function listPhotos(ctx, serviceId) {
   return ctx.db
-    .prepare('SELECT p.id, p.kind, p.angle, p.created_at, u.name AS uploaded_by_name FROM photos p LEFT JOIN users u ON u.id = p.uploaded_by WHERE service_id = ? ORDER BY p.id')
+    .prepare('SELECT p.id, p.kind, p.angle, p.created_at, p.taken_at, p.address, p.lat, p.lng, p.place_source, p.stamped_file IS NOT NULL AS stamped, u.name AS uploaded_by_name FROM photos p LEFT JOIN users u ON u.id = p.uploaded_by WHERE service_id = ? ORDER BY p.id')
     .all(serviceId)
-    .map((p) => ({ ...p, url: `/api/photos/${p.id}/file` }));
+    // ?c=1 depois do carimbo: o celular não fica mostrando a foto sem carimbo guardada.
+    .map(({ stamped, ...p }) => ({ ...p, url: `/api/photos/${p.id}/file${stamped ? '?c=1' : ''}` }));
 }
 
 function routes(api, ctx) {
@@ -279,7 +375,8 @@ function routes(api, ctx) {
       angle = req.query.angle ? (ANGLE_LABEL[req.query.angle] ? req.query.angle : null) : nextAngle(ctx, service.id, kind);
       if (req.query.angle && !angle) throw new HttpError(400, 'Ângulo inválido.');
     }
-    const id = savePhoto(ctx, { serviceId: service.id, kind, angle, buffer: req.body, mime: req.headers['content-type'], userId: req.user.id });
+    const place = placeFromQuery(ctx, req.query);
+    const id = savePhoto(ctx, { serviceId: service.id, kind, angle, buffer: req.body, mime: req.headers['content-type'], userId: req.user.id, place });
     res.status(201).json({ id, kind, angle, url: `/api/photos/${id}/file` });
   });
 
@@ -316,6 +413,11 @@ function routes(api, ctx) {
     const photo = ctx.db.prepare('SELECT * FROM photos WHERE id = ?').get(Number(req.params.id));
     if (!photo) throw new HttpError(404, 'Foto não encontrada.');
     findServiceFor(ctx, req.user, photo.service_id);
+    // Mostra a foto carimbada; ?original=1 abre a foto como chegou.
+    if (photo.stamped_file && req.query.original == null) {
+      res.type('image/jpeg');
+      return res.sendFile(path.join(ctx.config.uploadsDir, photo.stamped_file));
+    }
     res.type(photo.mime || 'image/jpeg');
     res.sendFile(path.join(ctx.config.uploadsDir, photo.file));
   });
@@ -340,6 +442,7 @@ function routes(api, ctx) {
     }
     ctx.db.prepare('DELETE FROM photos WHERE id = ?').run(photo.id);
     fs.rmSync(path.join(ctx.config.uploadsDir, photo.file), { force: true });
+    if (photo.stamped_file) fs.rmSync(path.join(ctx.config.uploadsDir, photo.stamped_file), { force: true });
     res.json({ ok: true });
   });
 }
@@ -373,11 +476,12 @@ export default {
     return [...docFiles, ...rows.map((p) => {
       const folder = clean(`Serviço ${p.service_id}${p.contact_name ? ' - ' + p.contact_name : ''}`);
       const label = clean([KIND_FILE[p.kind] || p.kind, p.angle ? ANGLE_LABEL[p.angle] || p.angle : ''].filter(Boolean).join(' - '));
-      const ext = path.extname(p.file) || '.jpg';
+      const file = p.stamped_file || p.file; // no .zip vai a foto carimbada
+      const ext = path.extname(file) || '.jpg';
       let name = `fotos/${folder}/${label}${ext}`;
       for (let n = 2; used.has(name); n++) name = `fotos/${folder}/${label} ${n}${ext}`;
       used.add(name);
-      return { name, path: path.join(ctx.config.uploadsDir, p.file) };
+      return { name, path: path.join(ctx.config.uploadsDir, file) };
     })];
   },
   exportColumns: (ctx) => {
@@ -397,6 +501,9 @@ export default {
       mode: (userId) => currentMode(ctx, userId),
       docTypes: DOC_TYPES,
       saveDoc: (doc) => saveDoc(ctx, doc),
+      noteLocation: (userId, location) => noteLocation(ctx, userId, location),
+      // Para os testes: espera os carimbos que estão na fila.
+      stamped: () => stampQueues.get(ctx) || Promise.resolve(),
     };
   },
   serviceHint: '📷 Fotos: mande *antes* ou *depois* e em seguida as fotos da volta no carro (frente, lateral esquerda, traseira, lateral direita).',

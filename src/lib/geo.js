@@ -5,6 +5,8 @@
 
 const CENSUS = 'https://geocoding.geo.census.gov/geocoder/locations/onelineaddress';
 const PHOTON = 'https://photon.komoot.io/api/';
+const PHOTON_REVERSE = 'https://photon.komoot.io/reverse';
+
 const KEEP_UPPER = /^(N|S|E|W|NE|NW|SE|SW|\d.*)$/;
 
 // "12 MAIN ST, FRAMINGHAM, MA, 01701" -> "12 Main St, Framingham, MA 01701"
@@ -102,5 +104,16 @@ export function createGeocoder({ fetchImpl = fetch, timeoutMs = 6000, userAgent 
     return result;
   }
 
-  return { lookup };
+  // Coordenadas -> endereço (carimbo das fotos). Devolve o texto ou null.
+  async function reverse(lat, lng) {
+    const key = `rev:${Number(lat).toFixed(4)},${Number(lng).toFixed(4)}`;
+    if (cache.has(key)) return cache.get(key);
+    const data = await get(`${PHOTON_REVERSE}?lat=${lat}&lon=${lng}&lang=en`);
+    const label = data?.features?.[0]?.properties ? photonLabel(data.features[0].properties) : null;
+    cache.set(key, label || null);
+    if (cache.size > 500) cache.delete(cache.keys().next().value);
+    return label || null;
+  }
+
+  return { lookup, reverse };
 }
