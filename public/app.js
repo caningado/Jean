@@ -2249,12 +2249,12 @@ screens.caminhoes = async () => {
       </div>`
     )
     .join('')}
-    ${!trucks.length ? `<div class="card empty">${owner ? 'Cadastre seu caminhão abaixo. Ele já vem com troca de óleo, pneus, freios, inspeção e registro.' : 'Nenhum caminhão cadastrado. Peça para o ADM cadastrar.'}</div>` : ''}
+    ${!trucks.length ? `<div class="card empty">${owner ? 'Cadastre seu caminhão abaixo. Ele já vem com troca de óleo, freios, inspeção e registro.' : 'Nenhum caminhão cadastrado. Peça para o ADM cadastrar.'}</div>` : ''}
     ${owner ? `<form class="card" id="novo"><h2>Cadastrar caminhão</h2>
       <div class="row2"><div><label>Nome</label><input name="name" placeholder="F-550" required></div><div><label>Placa</label><input name="plate"></div></div>
       <label>Milhas agora</label><input name="odometer" inputmode="numeric" required placeholder="123456">
       <label>Motorista</label>${driverSelect(null)}
-      <p class="sub">Óleo a cada 5.000 mi, rodízio de pneus a cada 6.000 mi, freios a cada 25.000 mi, inspeção e registro todo ano. Dá para mudar depois.</p>
+      <p class="sub">Óleo a cada 5.000 mi, freios a cada 25.000 mi, inspeção e registro todo ano. Dá para mudar depois.</p>
       <button class="block">Cadastrar</button></form>` : ''}
     <p class="sub">Pelo WhatsApp: <strong>odometro 123456</strong> para atualizar as milhas (se o motorista não mandar até sexta, recebe 3 avisos de hora em hora e depois a lista de serviços dele fica suspensa até mandar) e <strong>fiz oleo</strong> quando fizer a manutenção.</p>`;
 

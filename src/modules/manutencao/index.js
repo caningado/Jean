@@ -15,9 +15,9 @@ const NEAR_DAYS = 15;
 const STALE_DAYS = 7;
 
 // Itens que todo caminhão novo já ganha (o dono pode mudar os intervalos no painel).
+// Pneu não tem item com intervalo: na J&J não se faz rodízio, só troca (registrada na hora, com os pneus marcados).
 export const DEFAULT_ITEMS = [
   { name: 'Troca de óleo', every_miles: 5000, every_days: 180 },
-  { name: 'Rodízio dos pneus', every_miles: 6000, every_days: null },
   { name: 'Freios', every_miles: 25000, every_days: 365 },
   { name: 'Inspeção anual', every_miles: null, every_days: 365 },
   { name: 'Registro', every_miles: null, every_days: 365 },
@@ -84,6 +84,10 @@ const migrations = [
    );`,
   // Quais pneus foram trocados (posições do desenho do guincho, ex.: "de,tef").
   `ALTER TABLE maintenance_log ADD COLUMN tires TEXT;`,
+  // Não existe rodízio de pneus, só troca (Caningado, 15/11/2026): tira o item "Rodízio dos pneus"
+  // dos caminhões. O que já foi registrado continua no histórico com o nome antigo.
+  `UPDATE maintenance_log SET item_id = NULL WHERE item_id IN (SELECT id FROM maintenance_items WHERE lower(name) LIKE 'rod_zio%pneu%');
+   DELETE FROM maintenance_items WHERE lower(name) LIKE 'rod_zio%pneu%';`,
 ];
 
 // A semana vai de sábado a sexta (pedido do Caningado 25/10).
@@ -321,11 +325,16 @@ const commands = [
       if (!trucks.length) return NO_TRUCK;
       if (!truck) return `De qual caminhão? Ex: *fiz oleo ${simplify(trucks[0].name).split(' ')[0]}*\nCaminhões: ${truckNames(trucks)}`;
       const items = ctx.db.prepare('SELECT * FROM maintenance_items WHERE truck_id = ?').all(truck.id);
-      // "oleo" acha "Troca de óleo", "pneu" acha "Rodízio dos pneus".
+      // "oleo" acha "Troca de óleo", "freio" acha "Freios".
       const found = items.filter((i) => {
         const name = simplify(i.name).split(/\s+/);
         return rest.some((w) => w.length > 2 && name.some((n) => n.startsWith(w) || w.startsWith(n.replace(/s$/, ''))));
       });
+      if (!found.length && rest.some((w) => w.startsWith('pneu'))) {
+        // Pneu é só troca (sem intervalo): registra no histórico; quais pneus se marca no painel.
+        markDone(ctx, { truck, name: 'Troca de pneu', miles, userId: user.id });
+        return `🛞 Troca de pneu do ${truck.name} registrada${miles != null ? ` em ${fmtMiles(miles)}` : ''}.\nPara marcar quais pneus, use o painel (Caminhões).`;
+      }
       if (found.length !== 1) {
         return `O que foi feito no ${truck.name}? Ex: *fiz oleo*\nItens: ${items.map((i) => i.name).join(', ')}`;
       }
@@ -465,6 +474,8 @@ function routes(api, ctx) {
 
   api.delete('/maintenance/:id', (req, res) => {
     if (req.user.role !== 'dono') throw new HttpError(403, 'Só o ADM pode apagar itens.');
+    // O histórico continua (com o nome do item); só solta a ligação para poder apagar.
+    ctx.db.prepare('UPDATE maintenance_log SET item_id = NULL WHERE item_id = ?').run(Number(req.params.id));
     ctx.db.prepare('DELETE FROM maintenance_items WHERE id = ?').run(Number(req.params.id));
     res.json({ ok: true });
   });
