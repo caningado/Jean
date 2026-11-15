@@ -2,8 +2,8 @@
 // no pé da foto, como as câmeras com marca d'água (pedido do Caningado 15/11).
 // A foto original fica guardada sem mexer; o carimbo vai numa cópia.
 import exifr from 'exifr';
-import { Jimp, loadFont, measureTextHeight } from 'jimp';
-import { SANS_32_WHITE, SANS_64_WHITE } from 'jimp/fonts';
+import { Jimp, loadFont, measureText, measureTextHeight } from 'jimp';
+import { SANS_16_WHITE, SANS_32_WHITE } from 'jimp/fonts';
 
 const MAX_SIDE = 2048; // a cópia carimbada fica no máximo com 2048 px no lado maior
 const fonts = {};
@@ -57,7 +57,9 @@ const plain = (text) => String(text || '').normalize('NFD').replace(/[̀-ͯ]/g, 
 
 export const coordsText = (lat, lng) => `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
 
-// Devolve a foto carimbada (JPEG) com as linhas no pé, ou null se não der para abrir a foto.
+// Devolve a foto carimbada (JPEG) com as linhas num canto, ou null se não der para abrir a foto.
+// Discreto (pedido do Caningado 15/11): letra pequena, no canto de baixo à direita, num
+// quadradinho escuro meio transparente só do tamanho do texto.
 export async function stampPhoto(buffer, lines) {
   let image;
   try {
@@ -66,28 +68,29 @@ export async function stampPhoto(buffer, lines) {
     return null;
   }
   if (Math.max(image.width, image.height) > MAX_SIDE) image.scaleToFit({ w: MAX_SIDE, h: MAX_SIDE });
-  const big = image.width >= 1400;
-  const f = await font(big ? '64' : '32', big ? SANS_64_WHITE : SANS_32_WHITE);
-  const margin = Math.round(image.width * 0.02);
-  const maxWidth = image.width - margin * 4;
   const text = lines.map(plain).filter(Boolean);
   if (!text.length) return null;
-  const lineHeight = f.common.lineHeight;
-  // Mede quantas linhas cada texto ocupa (endereço comprido quebra em duas).
-  const heights = text.map((t) => measureTextHeight(f, t, maxWidth));
-  const band = heights.reduce((a, b) => a + b, 0) + margin * 2;
-  const top = Math.max(0, image.height - band);
-  // Faixa preta meio transparente para o texto aparecer em qualquer foto.
-  image.scan(0, top, image.width, image.height - top, (x, y, idx) => {
+  const big = image.width >= 1200;
+  const f = await font(big ? '32' : '16', big ? SANS_32_WHITE : SANS_16_WHITE);
+  const pad = Math.round(f.common.lineHeight * 0.35);
+  const margin = Math.round(image.width * 0.015);
+  const maxWidth = Math.round(image.width * 0.6); // endereço comprido quebra em duas linhas
+  const width = Math.min(maxWidth, Math.max(...text.map((t) => measureText(f, t))));
+  const heights = text.map((t) => measureTextHeight(f, t, width + 1));
+  const boxW = width + pad * 2;
+  const boxH = heights.reduce((a, b) => a + b, 0) + pad * 2;
+  const left = Math.max(0, image.width - margin - boxW);
+  const top = Math.max(0, image.height - margin - boxH);
+  image.scan(left, top, Math.min(boxW, image.width - left), Math.min(boxH, image.height - top), (x, y, idx) => {
     const data = image.bitmap.data;
-    data[idx] = data[idx] * 0.45;
-    data[idx + 1] = data[idx + 1] * 0.45;
-    data[idx + 2] = data[idx + 2] * 0.45;
+    data[idx] *= 0.5;
+    data[idx + 1] *= 0.5;
+    data[idx + 2] *= 0.5;
   });
-  let y = top + margin;
+  let y = top + pad;
   text.forEach((t, i) => {
-    image.print({ font: f, x: margin * 2, y, text: t, maxWidth });
-    y += heights[i] || lineHeight;
+    image.print({ font: f, x: left + pad, y, text: t, maxWidth: width + 1 });
+    y += heights[i];
   });
   return image.getBuffer('image/jpeg', { quality: 85 });
 }

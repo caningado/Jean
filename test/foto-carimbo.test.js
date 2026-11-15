@@ -64,11 +64,11 @@ test('painel: a foto sai carimbada com data, hora e endereço do GPS da foto; a 
   const original = Buffer.from(await (await call('GET', `/photos/${id}/file?original=1`)).arrayBuffer());
   assert.ok(original.equals(comGps));
   assert.ok(!shown.equals(comGps));
-  // A faixa escura fica no pé da foto.
+  // Quadradinho escuro discreto no canto de baixo à direita; o resto da foto não muda.
   const img = await Jimp.read(shown);
-  const bottom = img.getPixelColor(5, img.height - 3) >>> 24;
-  const topColor = img.getPixelColor(5, 3) >>> 24;
-  assert.ok(bottom < topColor, 'pé da foto mais escuro');
+  const corner = img.getPixelColor(img.width - 10, img.height - 10) >>> 24;
+  const otherCorner = img.getPixelColor(10, img.height - 10) >>> 24;
+  assert.ok(corner < otherCorner, 'canto de baixo à direita mais escuro');
 
   // Apagar a foto apaga as duas.
   assert.equal((await call('DELETE', `/photos/${id}`)).status, 200);

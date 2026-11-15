@@ -200,7 +200,8 @@ async function stamp(ctx, id, buffer, given) {
   if (!address && place && ctx.geo?.reverse) {
     address = await ctx.geo.reverse(place.lat, place.lng).catch(() => null);
   }
-  const lines = [stampDate(takenAt, ctx.config.timeZone), address, place?.lat != null ? coordsText(place.lat, place.lng) : null];
+  // Coordenadas só quando não achou o endereço (ficam guardadas e aparecem no painel).
+  const lines = [stampDate(takenAt, ctx.config.timeZone), address || (place?.lat != null ? coordsText(place.lat, place.lng) : null)];
   const out = await stampPhoto(buffer, lines);
   let stamped = null;
   if (out) {
