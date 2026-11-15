@@ -422,6 +422,7 @@ export function registerTools(server, ctx, user) {
     safe(ctx, async (a) => {
       const servicos = ctx.api.servicos;
       let miles = Number(a.milhas) > 0 ? Number(a.milhas) : null;
+      let minutes = null;
       const out = [];
       if (miles == null && a.retirada && a.destino) {
         if (!ctx.rotas) out.push('O Google Maps ainda não está ligado no sistema (falta a chave GOOGLE_MAPS_API_KEY no Render): pergunte as milhas ao dono.');
@@ -429,12 +430,13 @@ export function registerTools(server, ctx, user) {
           const r = await servicos.route(a.retirada, a.destino);
           if (r) {
             miles = r.miles;
+            minutes = r.minutes;
             out.push(...routeLines(r));
             if (r.has_tolls) out.push('O valor do pedágio é o de carro: o guincho com carro em cima pode pagar mais. A sugestão de preço usa as milhas da rota com pedágio; se o dono for pela rota sem pedágio, chame de novo com milhas.');
           } else out.push('O Google Maps não achou a rota entre esses dois endereços. Confira os endereços ou pergunte as milhas ao dono.');
         }
       }
-      const sug = servicos.priceSuggestion(miles, { contactId: a.cliente_id || null });
+      const sug = servicos.priceSuggestion(miles, { contactId: a.cliente_id || null, minutes });
       out.push(sug ? sug.texto : 'Ainda não dá para sugerir preço: pergunte ao dono.');
       out.push('Confirme o preço com o dono antes de criar o serviço.');
       return ok(out.join('\n'));
