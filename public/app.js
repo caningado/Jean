@@ -847,7 +847,7 @@ screens.novo = async () => {
       vinInfo.textContent = 'Buscando o carro pelo VIN…';
       let r;
       try {
-        r = await api(`/vin/decode/${vin}`);
+        r = await api(`/vin/decode/${vin}?veiculo=${encodeURIComponent(form.vehicle.value.trim())}`);
       } catch {
         r = null;
       }
@@ -862,11 +862,9 @@ screens.novo = async () => {
       }
       const extra = [r.info.trim, r.info.body].filter(Boolean).join(' · ');
       vinInfo.textContent = `🚗 ${r.vehicle}${extra ? ` · ${extra}` : ''}`;
+      // Marca/modelo/ano vêm do VIN; cor ou detalhe que a pessoa digitou ficam no fim.
       const veh = form.vehicle;
-      if (!veh.value.trim() || veh.value === veh.dataset.auto) {
-        veh.value = r.vehicle.slice(0, 60);
-        veh.dataset.auto = veh.value;
-      }
+      veh.value = (r.merged || r.vehicle).slice(0, 60);
     };
     form.vin.addEventListener('input', lookupVin);
     novoFoto.onclick = async () => {
@@ -4103,8 +4101,9 @@ function fillNewService(form, r) {
   put('contact_name', r.contact_name, 'cliente');
   put('pickup', r.pickup, 'retirada');
   put('dropoff', r.dropoff, 'destino');
-  put('vin', r.vin, 'VIN');
+  // Veículo antes do VIN: a busca do VIN junta marca/modelo com o que foi falado (ex.: a cor).
   put('vehicle', r.vehicle, 'veículo');
+  put('vin', r.vin, 'VIN');
   put('plate', r.plate, 'placa');
   put('miles', r.miles, 'milhas');
   put('price', r.price, 'valor');

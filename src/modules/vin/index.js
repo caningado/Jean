@@ -61,9 +61,41 @@ export async function decodeVin(vin, fetchImpl = fetch) {
   }
 }
 
+// A base do governo manda a marca toda em maiúsculas (HONDA, MERCEDES-BENZ). Siglas curtas (BMW, GMC, KIA) ficam.
+function niceMake(make) {
+  const m = String(make || '').trim();
+  if (!m || m !== m.toUpperCase()) return m || null;
+  return m.replace(/[A-Z]{4,}/g, (w) => w[0] + w.slice(1).toLowerCase());
+}
+
 export function describeVehicle(info) {
   if (!info) return null;
-  return [info.year, info.make, info.model].filter(Boolean).join(' ') || null;
+  return [info.year, niceMake(info.make), info.model].filter(Boolean).join(' ') || null;
+}
+
+// Apelidos comuns de marca que a pessoa digita.
+const MAKE_ALIASES = { chevy: 'chevrolet', vw: 'volkswagen', merc: 'mercedes', benz: 'mercedes' };
+const plainWord = (w) => w.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Junta o carro do VIN com o que já estava digitado: marca/modelo/ano vêm do VIN, e o resto que a pessoa
+// escreveu (cor, detalhe) continua no fim. Ex.: "Silverado Red" + VIN → "2019 Chevrolet Silverado Red".
+export function mergeVehicle(current, info) {
+  const decoded = describeVehicle(info);
+  if (!decoded) return current || null;
+  const known = decoded.split(/\s+/).map(plainWord).filter(Boolean);
+  const compact = plainWord(decoded);
+  const extra = String(current || '')
+    .split(/\s+/)
+    .filter((w) => {
+      const p = plainWord(w);
+      if (!p) return false;
+      if (/^(19|20)\d\d$/.test(p)) return false; // ano digitado: vale o do VIN
+      const alias = MAKE_ALIASES[p] || p;
+      if (known.some((k) => k === alias || (alias.length >= 3 && k.startsWith(alias)))) return false;
+      if (p.length >= 2 && compact.includes(p) && /\d/.test(p)) return false; // "CX9" × "CX-9"
+      return true;
+    });
+  return [decoded, ...extra].join(' ').slice(0, 60);
 }
 
 const VIN_PROMPT =
@@ -156,9 +188,10 @@ export async function readVinFromImage(ctx, buffer, mimeType) {
 
 // Grava o VIN no serviço e completa o veículo com marca/modelo/ano.
 async function saveVin(ctx, service, vin) {
-  const info = await decodeVin(vin);
+  const info = await (ctx.api.vin?.decode || decodeVin)(vin);
   const fields = { vin, vin_info: info ? JSON.stringify(info) : null };
-  if (info && !service.vehicle) fields.vehicle = describeVehicle(info);
+  // Veículo com marca/modelo/ano do VIN (pedido do Caningado 15/11), guardando cor ou detalhe digitado.
+  if (info) fields.vehicle = mergeVehicle(service.vehicle, info);
   return { service: ctx.data.services.update(service.id, fields), info };
 }
 
@@ -225,7 +258,8 @@ function routes(api, ctx) {
     const check = validateVin(req.params.vin);
     if (!/^[A-Z0-9]{17}$/.test(check.vin)) return res.json({ ...check, info: null, vehicle: null });
     const info = await ctx.api.vin.decode(check.vin);
-    res.json({ ...check, info, vehicle: describeVehicle(info) });
+    // ?veiculo=: o que já está digitado no campo, para devolver o veículo juntado com o do VIN.
+    res.json({ ...check, info, vehicle: describeVehicle(info), merged: info ? mergeVehicle(req.query.veiculo, info) : null });
   });
 
   // Recebe a foto (corpo da requisição é a imagem) e devolve o VIN lido.
