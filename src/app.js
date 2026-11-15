@@ -27,11 +27,12 @@ import notificacoes from './modules/notificacoes/index.js';
 import voz from './modules/voz/index.js';
 import ajuda from './modules/ajuda/index.js';
 import agenda from './modules/agenda/index.js';
+import sms from './modules/sms/index.js';
 import mcp from './modules/mcp/index.js';
 
 // Para criar um módulo novo: faça uma pasta em src/modules, exporte o objeto
 // do módulo (veja src/modules/README.md) e acrescente ele aqui.
-export const AVAILABLE_MODULES = { vin, fotos, pagamentos, despesas, whatsapp, planilha, manutencao, invoice, empresas, comissao, backup, notificacoes, voz, ajuda, agenda, mcp };
+export const AVAILABLE_MODULES = { vin, fotos, pagamentos, despesas, whatsapp, planilha, manutencao, invoice, empresas, comissao, backup, notificacoes, voz, ajuda, agenda, sms, mcp };
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
