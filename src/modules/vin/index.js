@@ -55,6 +55,7 @@ export async function decodeVin(vin, fetchImpl = fetch) {
       model: row.Model || null,
       trim: row.Trim || null,
       body: row.BodyClass || null,
+      drive: row.DriveType || null,
     };
   } catch {
     return null;
@@ -68,34 +69,22 @@ function niceMake(make) {
   return m.replace(/[A-Z]{4,}/g, (w) => w[0] + w.slice(1).toLowerCase());
 }
 
-export function describeVehicle(info) {
-  if (!info) return null;
-  return [info.year, niceMake(info.make), info.model].filter(Boolean).join(' ') || null;
+// Tração em sigla: "AWD/All-Wheel Drive" → "AWD", "4WD/4-Wheel Drive/4x4" → "4WD".
+function shortDrive(drive) {
+  const d = String(drive || '').split('/')[0].trim();
+  return d || null;
 }
 
-// Apelidos comuns de marca que a pessoa digita.
-const MAKE_ALIASES = { chevy: 'chevrolet', vw: 'volkswagen', merc: 'mercedes', benz: 'mercedes' };
-const plainWord = (w) => w.toLowerCase().replace(/[^a-z0-9]/g, '');
+// O dono pediu só ano, marca, modelo e tração no Veículo (15/11).
+export function describeVehicle(info) {
+  if (!info) return null;
+  return [info.year, niceMake(info.make), info.model, shortDrive(info.drive)].filter(Boolean).join(' ') || null;
+}
 
-// Junta o carro do VIN com o que já estava digitado: marca/modelo/ano vêm do VIN, e o resto que a pessoa
-// escreveu (cor, detalhe) continua no fim. Ex.: "Silverado Red" + VIN → "2019 Chevrolet Silverado Red".
+// Com o carro do VIN, o Veículo fica só com ano, marca, modelo e tração. Sem informação do VIN, fica o que estava.
 export function mergeVehicle(current, info) {
   const decoded = describeVehicle(info);
-  if (!decoded) return current || null;
-  const known = decoded.split(/\s+/).map(plainWord).filter(Boolean);
-  const compact = plainWord(decoded);
-  const extra = String(current || '')
-    .split(/\s+/)
-    .filter((w) => {
-      const p = plainWord(w);
-      if (!p) return false;
-      if (/^(19|20)\d\d$/.test(p)) return false; // ano digitado: vale o do VIN
-      const alias = MAKE_ALIASES[p] || p;
-      if (known.some((k) => k === alias || (alias.length >= 3 && k.startsWith(alias)))) return false;
-      if (p.length >= 2 && compact.includes(p) && /\d/.test(p)) return false; // "CX9" × "CX-9"
-      return true;
-    });
-  return [decoded, ...extra].join(' ').slice(0, 60);
+  return decoded ? decoded.slice(0, 60) : current || null;
 }
 
 const VIN_PROMPT =
@@ -190,7 +179,7 @@ export async function readVinFromImage(ctx, buffer, mimeType) {
 async function saveVin(ctx, service, vin) {
   const info = await (ctx.api.vin?.decode || decodeVin)(vin);
   const fields = { vin, vin_info: info ? JSON.stringify(info) : null };
-  // Veículo com marca/modelo/ano do VIN (pedido do Caningado 15/11), guardando cor ou detalhe digitado.
+  // Veículo com ano, marca, modelo e tração do VIN (pedido do Caningado 15/11).
   if (info) fields.vehicle = mergeVehicle(service.vehicle, info);
   return { service: ctx.data.services.update(service.id, fields), info };
 }

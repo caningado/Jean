@@ -860,9 +860,8 @@ screens.novo = async () => {
         vinInfo.textContent = 'VIN certo, mas não achei as informações do carro. Digite o veículo.';
         return;
       }
-      const extra = [r.info.trim, r.info.body].filter(Boolean).join(' · ');
-      vinInfo.textContent = `🚗 ${r.vehicle}${extra ? ` · ${extra}` : ''}`;
-      // Marca/modelo/ano vêm do VIN; cor ou detalhe que a pessoa digitou ficam no fim.
+      vinInfo.textContent = `🚗 ${r.vehicle}`;
+      // Veículo: só ano, marca, modelo e tração do VIN.
       const veh = form.vehicle;
       veh.value = (r.merged || r.vehicle).slice(0, 60);
     };
@@ -943,7 +942,7 @@ screens.servico = async (params, id) => {
   const owner = state.me.role === 'dono';
   const drivers = owner && s.status === 'pendente' ? await api('/users') : [];
   const voice = has('voz') && ['pendente', 'aberto'].includes(s.status) && (s.driver_id === state.me.id || (owner && s.driver_id)) && (await voiceEnabled());
-  const vehicleInfo = s.vin_info ? [s.vin_info.year, s.vin_info.make, s.vin_info.model, s.vin_info.body].filter(Boolean).join(' · ') : '';
+  const vehicleInfo = s.vin_info ? [s.vin_info.year, s.vin_info.make, s.vin_info.model, s.vin_info.drive].filter(Boolean).join(' · ') : '';
   const b = s.balance;
 
   view.innerHTML = `
@@ -4101,7 +4100,7 @@ function fillNewService(form, r) {
   put('contact_name', r.contact_name, 'cliente');
   put('pickup', r.pickup, 'retirada');
   put('dropoff', r.dropoff, 'destino');
-  // Veículo antes do VIN: a busca do VIN junta marca/modelo com o que foi falado (ex.: a cor).
+  // Veículo antes do VIN: se o VIN achar o carro, ele troca pelo ano, marca, modelo e tração.
   put('vehicle', r.vehicle, 'veículo');
   put('vin', r.vin, 'VIN');
   put('plate', r.plate, 'placa');

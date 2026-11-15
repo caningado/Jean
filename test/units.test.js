@@ -40,9 +40,9 @@ test('VIN', () => {
 test('decodificação do VIN usa a resposta da NHTSA', async () => {
   const fakeFetch = async (url) => {
     assert.match(url, /DecodeVinValues\/1HGCM82633A004352/);
-    return { ok: true, json: async () => ({ Results: [{ Make: 'HONDA', Model: 'Accord', ModelYear: '2003', BodyClass: 'Coupe' }] }) };
+    return { ok: true, json: async () => ({ Results: [{ Make: 'HONDA', Model: 'Accord', ModelYear: '2003', BodyClass: 'Coupe', DriveType: 'FWD/Front-Wheel Drive' }] }) };
   };
-  assert.deepEqual(await decodeVin('1HGCM82633A004352', fakeFetch), { year: '2003', make: 'HONDA', model: 'Accord', trim: null, body: 'Coupe' });
+  assert.deepEqual(await decodeVin('1HGCM82633A004352', fakeFetch), { year: '2003', make: 'HONDA', model: 'Accord', trim: null, body: 'Coupe', drive: 'FWD/Front-Wheel Drive' });
   assert.equal(await decodeVin('X', async () => { throw new Error('offline'); }), null);
 });
 
