@@ -194,4 +194,13 @@ export default {
   minuteTick,
   serviceHint: '📅 Para marcar dia e hora: *agendar amanhã 9h*.',
   serviceDetail: ({ service }) => ({ scheduled_at: service.scheduled_at || null }),
+  setup(ctx) {
+    // Usado pelo conector do Claude (MCP).
+    ctx.api.agenda = {
+      parse: (text) => parseWhen(text, ctx.config.timeZone),
+      set: (serviceId, iso) => setSchedule(ctx, serviceId, iso),
+      upcoming: (user) => upcoming(ctx, user),
+      format: (iso) => formatWhen(iso, ctx.config.timeZone),
+    };
+  },
 };

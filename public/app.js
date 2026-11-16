@@ -4086,6 +4086,7 @@ const VOICE_LABELS = {
   vin_salvo: '🔎 VIN salvo',
   pagamento: '💵 Pagamento registrado',
   motorista: '🚚 Motorista escolhido',
+  agendado: '📅 Agendado',
 };
 // Botões de áudio desligados no app (pedido do Caningado 27/10: não funcionavam bem).
 // O áudio pelo WhatsApp continua. Para voltar, troque VOICE_BUTTONS para true.

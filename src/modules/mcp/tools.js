@@ -76,6 +76,7 @@ function line(ctx, s) {
     s.price_cents != null ? (s.price_cents === 0 ? 'Free' : formatMoney(s.price_cents)) : null,
     payText(p, s),
     s.driver_name ? `motorista: ${s.driver_name}` : null,
+    s.scheduled_at && ctx.api.agenda ? `agendado: ${ctx.api.agenda.format(s.scheduled_at)}` : null,
     firmOf(ctx, s),
   ]
     .filter(Boolean)
@@ -144,6 +145,14 @@ function checkVinArg(ctx, vin, conferido) {
   return check.vin;
 }
 
+// "amanhã 9h" -> data/hora (precisa do módulo agenda).
+function parseWhenArg(ctx, text) {
+  if (!ctx.api.agenda) throw userError('O módulo de agenda está desligado.');
+  const iso = ctx.api.agenda.parse(text);
+  if (!iso) throw userError(`Não entendi o dia/hora "${text}". Exemplos: "amanhã 9h", "24/11 14:30", "sexta 8am".`);
+  return iso;
+}
+
 // Situação pedida -> filtro.
 const STATUS_FILTER = { pendente: 'pendente', em_andamento: 'aberto', entregue: 'concluido', cancelado: 'cancelado' };
 
@@ -196,6 +205,7 @@ export function registerTools(server, ctx, user) {
         forma_pagamento: z.string().optional().describe('Forma de pagamento combinada (Zelle, dinheiro, cartão, Square, cheque, Brasil, seguradora)'),
         observacoes: z.string().optional(),
         motorista: z.string().optional().describe('Nome de quem vai fazer, "eu" para o dono, ou "nenhum"'),
+        agendar_para: z.string().optional().describe('Dia e hora do serviço, se for agendado: "amanhã 9h", "24/11 14:30", "sexta 8am" ou AAAA-MM-DDTHH:MM'),
         mesmo_incompleto: z.boolean().optional().describe('true só se o dono mandou criar mesmo faltando dados'),
       },
       annotations: write,
@@ -211,6 +221,7 @@ export function registerTools(server, ctx, user) {
       if (!a.retirada) return ok(`Não criei. Falta: ${missing.join(', ')}. O endereço de retirada é obrigatório no sistema.`);
       if (missing.length && !a.mesmo_incompleto) return ok(`Não criei ainda. Falta: ${missing.join(', ')}. Pergunte ao dono, ou chame de novo com mesmo_incompleto = true se ele mandar criar assim.`);
       const vin = checkVinArg(ctx, a.vin, a.vin_conferido);
+      const when = a.agendar_para ? parseWhenArg(ctx, a.agendar_para) : null;
       let driverId = null;
       if (a.motorista && !NONE(a.motorista)) driverId = findDriver(ctx, user, a.motorista).id;
       const notes = [a.observacoes?.trim(), a.forma_pagamento ? `Pagamento combinado: ${a.forma_pagamento.trim()}` : null].filter(Boolean).join('\n') || null;
@@ -231,6 +242,7 @@ export function registerTools(server, ctx, user) {
       if (status === 200) return ok(`Esse serviço já tinha sido criado agora há pouco: ${line(ctx, service)}`);
       let s = service;
       if (vin) s = (await ctx.api.vin.save(s, vin)).service;
+      if (when) ctx.api.agenda.set(s.id, when);
       logAction(ctx, user, s.id, 'criar_servico', { args: a }, 'criado_servico');
       if (vin) logAction(ctx, user, s.id, 'vin', { vin }, 'vin_salvo');
       s = data.services.get(s.id);
@@ -314,6 +326,7 @@ export function registerTools(server, ctx, user) {
         }
       }
       if (s.driver_name) out.push(`Motorista: ${s.driver_name}`);
+      if (s.scheduled_at && ctx.api.agenda) out.push(`Agendado para: ${ctx.api.agenda.format(s.scheduled_at)}`);
       if (s.notes) out.push(`Observações: ${s.notes}`);
       out.push(`Aberto em: ${s.created_at}${s.completed_at ? ` · entregue em: ${s.completed_at}` : ''}`);
       if (hasTable(ctx, 'service_events')) {
@@ -566,6 +579,45 @@ export function registerTools(server, ctx, user) {
       logAction(ctx, user, s.id, 'atribuir_motorista', { motorista: driver?.name || null }, 'motorista');
       const fresh = data.services.get(s.id);
       return ok(`Serviço #${s.id}: ${statusText(fresh)}.`);
+    })
+  );
+
+  server.registerTool(
+    'agenda',
+    {
+      title: 'Ver a agenda',
+      description: 'Lista os serviços agendados (com dia e hora) que ainda não foram feitos, do mais próximo para o mais longe.',
+      inputSchema: {},
+      annotations: read,
+    },
+    safe(ctx, async () => {
+      if (!ctx.api.agenda) return fail('O módulo de agenda está desligado.');
+      const list = ctx.api.agenda.upcoming(user);
+      if (!list.length) return ok('Nenhum serviço agendado.');
+      return ok(['Agenda:', ...list.map((r) => `- ${ctx.api.agenda.format(r.scheduled_at)} · ${line(ctx, data.services.get(r.id))}`)].join('\n'));
+    })
+  );
+
+  server.registerTool(
+    'agendar_servico',
+    {
+      title: 'Agendar serviço',
+      description: `Marca o dia e a hora de um serviço (o motorista recebe aviso 1 hora antes). Para tirar o agendamento, mande quando = "tirar". ${CONFIRM}`,
+      inputSchema: {
+        numero: z.number().int(),
+        quando: z.string().describe('"amanhã 9h", "24/11 14:30", "sexta 8am", AAAA-MM-DDTHH:MM ou "tirar"'),
+      },
+      annotations: write,
+    },
+    safe(ctx, async ({ numero, quando }) => {
+      if (!ctx.api.agenda) return fail('O módulo de agenda está desligado.');
+      const s = getService(ctx, numero);
+      if (!['pendente', 'aberto'].includes(s.status)) return fail('Serviço entregue ou cancelado não pode ser agendado.');
+      const remove = ['tirar', 'remover', 'cancelar', 'sem', 'nenhum'].includes(simplify(quando));
+      const iso = remove ? null : parseWhenArg(ctx, quando);
+      ctx.api.agenda.set(s.id, iso);
+      logAction(ctx, user, s.id, 'agendar_servico', { quando: iso }, 'agendado');
+      return ok(iso ? `Serviço #${s.id} agendado para ${ctx.api.agenda.format(iso)}. ${line(ctx, data.services.get(s.id))}` : `Agendamento do serviço #${s.id} tirado.`);
     })
   );
 
