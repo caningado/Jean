@@ -229,6 +229,12 @@ export async function processMessage(ctx, client, msg) {
   // Foto ou áudio: antes, responde os textos que estavam esperando (a ordem importa).
   await flushTexts(ctx, client, msg.from);
   const file = await client.downloadMedia(msg.mediaId);
+  // Foto do dono: a caixa de entrada guarda a imagem para o Claude poder ver (ex.: qual é o carro).
+  try {
+    ctx.api.caixa?.attachMedia(user, msg, file);
+  } catch (err) {
+    ctx.log('Caixa de entrada: não consegui guardar a foto', err.message);
+  }
   if (msg.doc) {
     const mime = String(file?.mime || msg.doc.mime).split(';')[0].trim().toLowerCase();
     return answer(ctx, client, user, { phone: msg.from, doc: { buffer: file?.buffer, mime, name: msg.doc.name } });

@@ -1,6 +1,8 @@
 // Caixa de entrada do Jay: guarda uma CÓPIA do que o dono manda para o Jay no WhatsApp
 // (textos, localizações, contatos, legendas de foto), para o Claude ler depois e organizar
 // junto com o dono. O Jay continua respondendo igual; a caixa só observa.
+import fs from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
 import { nowIso } from '../../lib/util.js';
 import { mapLink } from '../../lib/validate.js';
@@ -20,7 +22,14 @@ export const caixaMigrations = [
      service_id INTEGER
    );
    CREATE INDEX jay_inbox_open ON jay_inbox(done_at, id);`,
+  // Foto que o dono mandou: o arquivo fica guardado para o Claude ver.
+  `ALTER TABLE jay_inbox ADD COLUMN file TEXT;
+   ALTER TABLE jay_inbox ADD COLUMN mime TEXT;`,
 ];
+
+const PHOTO_DIR = 'caixa';
+const IMAGE_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+const MAX_IMAGE = 8 * 1024 * 1024;
 
 const KIND = { image: 'foto', document: 'arquivo', audio: 'áudio', location: 'localização', contacts: 'contato', text: 'texto' };
 
@@ -46,6 +55,21 @@ export function createCaixa(ctx) {
       lastReceipt.set(user.id, now);
       if (now - last < RECEIPT_MS) return null;
       return '📥 Guardei na caixa de entrada. Quando quiser, peça ao Claude para organizar e criar o serviço.';
+    },
+    // Guarda o arquivo da foto na mensagem já salva (só imagem, só do dono).
+    attachMedia(user, msg, file) {
+      if (user.role !== 'dono' || !file?.buffer || !msg.id) return false;
+      const mime = String(file.mime || '').split(';')[0].trim().toLowerCase();
+      const ext = IMAGE_TYPES[mime];
+      if (!ext || file.buffer.length > MAX_IMAGE) return false;
+      const row = ctx.db.prepare('SELECT id FROM jay_inbox WHERE wa_id = ?').get(msg.id);
+      if (!row) return false;
+      const dir = path.join(ctx.config.uploadsDir, PHOTO_DIR);
+      fs.mkdirSync(dir, { recursive: true });
+      const name = `${PHOTO_DIR}/${row.id}.${ext}`;
+      fs.writeFileSync(path.join(ctx.config.uploadsDir, name), file.buffer);
+      ctx.db.prepare('UPDATE jay_inbox SET file = ?, mime = ? WHERE id = ?').run(name, mime, row.id);
+      return true;
     },
     // Só guarda o que vem do dono (ADM).
     save(user, msg) {
@@ -84,11 +108,37 @@ export function registerCaixaTools(server, ctx, user) {
       const out = [`${rows.length} mensagem(ns) na caixa de entrada do Jay:`];
       for (const r of rows) {
         const coords = r.latitude != null ? `${r.latitude}, ${r.longitude}` : null;
+        const photo = r.file ? `\n    Foto guardada: use ver_foto_caixa com id ${r.id} para ver a imagem.` : '';
         out.push(
-          `- [${r.id}] ${r.created_at} · ${KIND[r.type] || r.type}${r.done_at ? ` · já tratada${r.service_id ? ` (serviço #${r.service_id})` : ''}` : ''}: ${r.text || ''}${coords ? `\n    Mapa: ${mapLink(coords)}` : ''}`
+          `- [${r.id}] ${r.created_at} · ${KIND[r.type] || r.type}${r.done_at ? ` · já tratada${r.service_id ? ` (serviço #${r.service_id})` : ''}` : ''}: ${r.text || ''}${coords ? `\n    Mapa: ${mapLink(coords)}` : ''}${photo}`
         );
       }
       return ok(out.join('\n'));
+    }
+  );
+
+  server.registerTool(
+    'ver_foto_caixa',
+    {
+      title: 'Ver foto da caixa de entrada',
+      description:
+        'Mostra a foto que o dono mandou para o Jay (pelo id entre colchetes da caixa de entrada). Olhe a imagem para saber o carro (marca, modelo, cor, placa), ler o VIN da etiqueta, ou o que mais o dono pediu. Confirme com o dono o que você leu antes de salvar.',
+      inputSchema: { id: z.number().int().describe('O número entre colchetes da caixa de entrada') },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ id }) => {
+      const row = ctx.db.prepare('SELECT * FROM jay_inbox WHERE id = ?').get(id);
+      const file = row?.file && path.join(ctx.config.uploadsDir, row.file);
+      if (!file || !row.file.startsWith(`${PHOTO_DIR}/`) || !fs.existsSync(file)) {
+        return { content: [{ type: 'text', text: row ? 'Essa mensagem não tem foto guardada (fotos de antes desta atualização não foram guardadas).' : `Não achei a mensagem [${id}].` }], isError: true };
+      }
+      logAction(ctx, user, null, 'ver_foto_caixa', { id });
+      return {
+        content: [
+          { type: 'image', data: fs.readFileSync(file).toString('base64'), mimeType: row.mime },
+          { type: 'text', text: `Foto [${row.id}] mandada em ${row.created_at}${row.text ? ` · ${row.text}` : ''}.` },
+        ],
+      };
     }
   );
 

@@ -35,7 +35,7 @@ const events = (ctx, id) => ctx.db.prepare('SELECT action, source FROM service_e
 test('mcp ferramentas: lista tudo e não tem ferramenta de apagar', async (t) => {
   const { client } = await setup(t);
   const names = (await client.listTools()).tools.map((x) => x.name).sort();
-  assert.deepEqual(names, ['apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'caixa_de_entrada', 'calcular_preco', 'criar_servico', 'equipe', 'listar_servicos', 'marcar_caixa_lida', 'marcar_pago', 'teste', 'ver_servico']);
+  assert.deepEqual(names, ['agenda', 'agendar_servico', 'apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'caixa_de_entrada', 'calcular_preco', 'criar_servico', 'equipe', 'listar_servicos', 'marcar_caixa_lida', 'marcar_pago', 'teste', 'ver_foto_caixa', 'ver_servico']);
   assert.ok(!names.some((n) => /apagar|delete|excluir/.test(n)));
 });
 
@@ -193,4 +193,38 @@ test('mcp caixa de entrada: JAY_CAIXA=off deixa o Jay como antes', async () => {
   await processMessage(ctx, client, { id: 'x1', from: OWNER_PHONE, type: 'text', text: 'oi Jay', mediaId: null });
   assert.ok(!sent.some((m) => /Guardei na caixa/.test(m.text)));
   assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM jay_inbox').get().n, 1, 'a cópia continua sendo guardada');
+});
+
+test('mcp caixa de entrada: foto do dono fica guardada e o Claude vê a imagem', async (t) => {
+  const { processMessage } = await import('../src/modules/whatsapp/index.js');
+  const { ctx, call, client: mcpClient } = await setup(t);
+  const callRaw = (name, args) => mcpClient.callTool({ name, arguments: args });
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const client = { sendText: async () => true, downloadMedia: async () => ({ buffer: png, mime: 'image/png' }) };
+  await processMessage(ctx, client, { id: 'f1', from: OWNER_PHONE, type: 'image', text: 'carro do Luan', mediaId: 'm1' });
+  const row = ctx.db.prepare("SELECT * FROM jay_inbox WHERE wa_id = 'f1'").get();
+  assert.equal(row.mime, 'image/png');
+  assert.match((await call('caixa_de_entrada')).text, new RegExp(`\\[${row.id}\\] .* foto: \\[foto\\] carro do Luan\\n    Foto guardada: use ver_foto_caixa com id ${row.id}`));
+  const r = await call('ver_foto_caixa', { id: row.id });
+  assert.equal(r.error, false);
+  // O Claude recebe a imagem de verdade (não só o texto "[foto]").
+  const res = await callRaw('ver_foto_caixa', { id: row.id });
+  assert.deepEqual(res.content[0], { type: 'image', data: png.toString('base64'), mimeType: 'image/png' });
+  const raw = await (await import('node:fs')).promises.readFile(`${ctx.config.uploadsDir}/${row.file}`);
+  assert.deepEqual(raw, png);
+  assert.equal((await call('ver_foto_caixa', { id: 999 })).error, true);
+});
+
+test('mcp agenda: agendar ao criar, agendar depois, ver a agenda e tirar', async (t) => {
+  const { ctx, call } = await setup(t);
+  const r = await call('criar_servico', { cliente_nome: 'Rui', marca: 'Nissan', modelo: 'Altima', retirada: '9 Lake St, Orlando FL', destino: '10 Lake St, Orlando FL', preco: 120, motorista: 'Jorge', agendar_para: 'amanhã 9h' });
+  assert.equal(r.error, false, r.text);
+  assert.ok(ctx.data.services.get(1).scheduled_at);
+  assert.match((await call('agenda')).text, /Agenda:\n- .*Rui/);
+  assert.match((await call('agendar_servico', { numero: 1, quando: 'qualquer coisa' })).text, /Não entendi o dia\/hora/);
+  assert.match((await call('agendar_servico', { numero: 1, quando: 'tirar' })).text, /tirado/);
+  assert.equal(ctx.data.services.get(1).scheduled_at, null);
+  assert.match((await call('agendar_servico', { numero: 1, quando: 'sexta 8am' })).text, /agendado para/);
+  assert.match((await call('ver_servico', { numero: 1 })).text, /Agendado para: /);
+  assert.deepEqual(events(ctx, 1).map((e) => e.action), ['criado_servico', 'agendado', 'agendado']);
 });
