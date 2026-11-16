@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { nowIso } from '../../lib/util.js';
 import { mapLink } from '../../lib/validate.js';
 import { logAction } from './tools.js';
+import { describePhoto } from '../../lib/foto-descricao.js';
 
 export const caixaMigrations = [
   `CREATE TABLE jay_inbox (
@@ -25,6 +26,8 @@ export const caixaMigrations = [
   // Foto que o dono mandou: o arquivo fica guardado para o Claude ver.
   `ALTER TABLE jay_inbox ADD COLUMN file TEXT;
    ALTER TABLE jay_inbox ADD COLUMN mime TEXT;`,
+  // Descrição em texto da foto (carro, placa, VIN, danos, textos), para o modo de voz do Claude.
+  `ALTER TABLE jay_inbox ADD COLUMN description TEXT;`,
 ];
 
 const PHOTO_DIR = 'caixa';
@@ -37,6 +40,35 @@ const KIND = { image: 'foto', document: 'arquivo', audio: 'áudio', location: 'l
 // fora de uma conversa com o Jay e sem ser comando. JAY_CAIXA=off volta ao jeito antigo.
 const HOLD_TYPES = ['text', 'location', 'contacts'];
 const RECEIPT_MS = 60 * 1000;
+
+// Lê a foto guardada e grava a descrição. Devolve o texto (ou null sem chave/erro).
+export async function describeRow(ctx, row) {
+  if (!row?.file || row.description) return row?.description || null;
+  const describe = ctx.describePhoto || describePhoto;
+  try {
+    const buffer = fs.readFileSync(path.join(ctx.config.uploadsDir, row.file));
+    const text = await describe(ctx, buffer, row.mime);
+    if (text) ctx.db.prepare('UPDATE jay_inbox SET description = ? WHERE id = ?').run(text, row.id);
+    return text || null;
+  } catch (err) {
+    ctx.log('Caixa de entrada: não consegui descrever a foto', err.message);
+    return null;
+  }
+}
+
+// O VIN que a descrição achou confere com o dígito verificador?
+function vinNote(ctx, description) {
+  const found = String(description || '').toUpperCase().match(/\b[A-HJ-NPR-Z0-9]{17}\b/);
+  if (!found || !ctx.api.vin) return '';
+  const check = ctx.api.vin.validate(found[0]);
+  return check.valid ? `\n(VIN ${check.vin}: o dígito verificador confere.)` : `\n(VIN ${check.vin}: o dígito verificador NÃO confere; confira com o dono.)`;
+}
+
+export function describedText(ctx, row) {
+  if (!row.file) return '';
+  if (row.description) return `Descrição da foto:\n${row.description}${vinNote(ctx, row.description)}`;
+  return ctx.config.anthropicApiKey ? 'Descrição da foto: ainda não ficou pronta.' : 'Descrição da foto: indisponível (falta a chave ANTHROPIC_API_KEY no Render).';
+}
 
 export function createCaixa(ctx) {
   const lastReceipt = new Map();
@@ -69,6 +101,8 @@ export function createCaixa(ctx) {
       const name = `${PHOTO_DIR}/${row.id}.${ext}`;
       fs.writeFileSync(path.join(ctx.config.uploadsDir, name), file.buffer);
       ctx.db.prepare('UPDATE jay_inbox SET file = ?, mime = ? WHERE id = ?').run(name, mime, row.id);
+      // Descreve em segundo plano: o Jay não espera por isso.
+      this.pending = describeRow(ctx, { id: row.id, file: name, mime });
       return true;
     },
     // Só guarda o que vem do dono (ADM).
@@ -108,7 +142,9 @@ export function registerCaixaTools(server, ctx, user) {
       const out = [`${rows.length} mensagem(ns) na caixa de entrada do Jay:`];
       for (const r of rows) {
         const coords = r.latitude != null ? `${r.latitude}, ${r.longitude}` : null;
-        const photo = r.file ? `\n    Foto guardada: use ver_foto_caixa com id ${r.id} para ver a imagem.` : '';
+        const photo = r.file
+          ? `\n    ${describedText(ctx, r).replace(/\n/g, '\n    ')}\n    (Imagem guardada: ver_foto_caixa com id ${r.id}.)`
+          : '';
         out.push(
           `- [${r.id}] ${r.created_at} · ${KIND[r.type] || r.type}${r.done_at ? ` · já tratada${r.service_id ? ` (serviço #${r.service_id})` : ''}` : ''}: ${r.text || ''}${coords ? `\n    Mapa: ${mapLink(coords)}` : ''}${photo}`
         );
@@ -122,7 +158,7 @@ export function registerCaixaTools(server, ctx, user) {
     {
       title: 'Ver foto da caixa de entrada',
       description:
-        'Mostra a foto que o dono mandou para o Jay (pelo id entre colchetes da caixa de entrada). Olhe a imagem para saber o carro (marca, modelo, cor, placa), ler o VIN da etiqueta, ou o que mais o dono pediu. Confirme com o dono o que você leu antes de salvar.',
+        'Mostra a foto que o dono mandou para o Jay (pelo id entre colchetes da caixa de entrada), com uma descrição em texto (veículo, placa, VIN, danos, textos) feita quando a foto chegou; no modo de voz use a descrição. Olhe a imagem para saber o carro (marca, modelo, cor, placa), ler o VIN da etiqueta, ou o que mais o dono pediu. Confirme com o dono o que você leu antes de salvar.',
       inputSchema: { id: z.number().int().describe('O número entre colchetes da caixa de entrada') },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -133,10 +169,12 @@ export function registerCaixaTools(server, ctx, user) {
         return { content: [{ type: 'text', text: row ? 'Essa mensagem não tem foto guardada (fotos de antes desta atualização não foram guardadas).' : `Não achei a mensagem [${id}].` }], isError: true };
       }
       logAction(ctx, user, null, 'ver_foto_caixa', { id });
+      if (!row.description) row.description = await describeRow(ctx, row);
+      // O texto vem primeiro: no modo de voz do Claude só o texto chega até o modelo.
       return {
         content: [
+          { type: 'text', text: `Foto [${row.id}] mandada em ${row.created_at}${row.text ? ` · ${row.text}` : ''}.\n${describedText(ctx, row)}` },
           { type: 'image', data: fs.readFileSync(file).toString('base64'), mimeType: row.mime },
-          { type: 'text', text: `Foto [${row.id}] mandada em ${row.created_at}${row.text ? ` · ${row.text}` : ''}.` },
         ],
       };
     }

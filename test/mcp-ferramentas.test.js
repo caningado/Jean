@@ -204,12 +204,13 @@ test('mcp caixa de entrada: foto do dono fica guardada e o Claude vê a imagem',
   await processMessage(ctx, client, { id: 'f1', from: OWNER_PHONE, type: 'image', text: 'carro do Luan', mediaId: 'm1' });
   const row = ctx.db.prepare("SELECT * FROM jay_inbox WHERE wa_id = 'f1'").get();
   assert.equal(row.mime, 'image/png');
-  assert.match((await call('caixa_de_entrada')).text, new RegExp(`\\[${row.id}\\] .* foto: \\[foto\\] carro do Luan\\n    Foto guardada: use ver_foto_caixa com id ${row.id}`));
+  assert.match((await call('caixa_de_entrada')).text, new RegExp(`\\[${row.id}\\] .* foto: \\[foto\\] carro do Luan\\n    Descrição da foto: indisponível[^\\n]*\\n    \\(Imagem guardada: ver_foto_caixa com id ${row.id}\\.\\)`));
   const r = await call('ver_foto_caixa', { id: row.id });
   assert.equal(r.error, false);
   // O Claude recebe a imagem de verdade (não só o texto "[foto]").
   const res = await callRaw('ver_foto_caixa', { id: row.id });
-  assert.deepEqual(res.content[0], { type: 'image', data: png.toString('base64'), mimeType: 'image/png' });
+  assert.deepEqual(res.content[1], { type: 'image', data: png.toString('base64'), mimeType: 'image/png' });
+  assert.match(res.content[0].text, /indisponível \(falta a chave ANTHROPIC_API_KEY/);
   const raw = await (await import('node:fs')).promises.readFile(`${ctx.config.uploadsDir}/${row.file}`);
   assert.deepEqual(raw, png);
   assert.equal((await call('ver_foto_caixa', { id: 999 })).error, true);
@@ -227,4 +228,34 @@ test('mcp agenda: agendar ao criar, agendar depois, ver a agenda e tirar', async
   assert.match((await call('agendar_servico', { numero: 1, quando: 'sexta 8am' })).text, /agendado para/);
   assert.match((await call('ver_servico', { numero: 1 })).text, /Agendado para: /);
   assert.deepEqual(events(ctx, 1).map((e) => e.action), ['criado_servico', 'agendado', 'agendado']);
+});
+
+test('mcp caixa de entrada: a foto ganha uma descrição em texto (para o modo de voz)', async (t) => {
+  const { processMessage } = await import('../src/modules/whatsapp/index.js');
+  const { ctx, call } = await setup(t);
+  ctx.config.anthropicApiKey = 'chave-teste';
+  const seen = [];
+  ctx.describePhoto = async (c, buffer, mime) => {
+    seen.push(mime);
+    return 'Tipo de foto: carro inteiro\nVeículo: Honda Civic, 2016 a 2018, preto\nPlaca: ABC1234 – Flórida\nVIN: 1HGCM82633A004352\nDanos e observações: para-choque amassado\nTexto escrito na foto: não dá para ver';
+  };
+  const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+  const client = { sendText: async () => true, downloadMedia: async () => ({ buffer: jpg, mime: 'image/jpeg' }) };
+  await processMessage(ctx, client, { id: 'd1', from: OWNER_PHONE, type: 'image', text: '', mediaId: 'm1' });
+  await ctx.api.caixa.pending;
+  assert.deepEqual(seen, ['image/jpeg']);
+  const row = ctx.db.prepare("SELECT * FROM jay_inbox WHERE wa_id = 'd1'").get();
+  assert.match(row.description, /Honda Civic/);
+
+  const caixa = await call('caixa_de_entrada');
+  assert.match(caixa.text, /Descrição da foto:\n    Tipo de foto: carro inteiro\n    Veículo: Honda Civic, 2016 a 2018, preto\n    Placa: ABC1234 – Flórida/);
+  assert.match(caixa.text, /VIN 1HGCM82633A004352: o dígito verificador confere/);
+  const foto = await call('ver_foto_caixa', { id: row.id });
+  assert.match(foto.text, /^Foto \[\d+\] .*\nDescrição da foto:\n[\s\S]*Honda Civic[\s\S]*para-choque amassado/);
+  assert.equal(seen.length, 1, 'não descreve de novo');
+
+  // Foto sem descrição (ex.: falhou quando chegou): descreve na hora em que o Claude pede.
+  ctx.db.prepare('UPDATE jay_inbox SET description = NULL WHERE id = ?').run(row.id);
+  assert.match((await call('ver_foto_caixa', { id: row.id })).text, /Honda Civic/);
+  assert.equal(seen.length, 2);
 });
