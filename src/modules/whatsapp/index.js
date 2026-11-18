@@ -244,6 +244,14 @@ export async function processMessage(ctx, client, msg) {
   } catch (err) {
     ctx.log('Caixa de entrada: não consegui guardar a foto', err.message);
   }
+  // PDF do dono (pedido de serviço, gate pass): a caixa guarda o arquivo para o Claude ler.
+  if (msg.doc) {
+    try {
+      ctx.api.caixa?.attachDoc(user, msg, file);
+    } catch (err) {
+      ctx.log('Caixa de entrada: não consegui guardar o PDF', err.message);
+    }
+  }
   // Áudio do dono: o Jay escreve o que foi falado na caixa de entrada (o Claude não ouve áudio).
   // Roda junto com a resposta do Jay, sem atrasar.
   const transcribing = msg.audio ? Promise.resolve(ctx.api.caixa?.transcribe(user, msg, file)).catch((err) => ctx.log('Caixa de entrada: não consegui escrever o áudio', err.message)) : null;

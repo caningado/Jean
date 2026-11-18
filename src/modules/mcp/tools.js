@@ -272,6 +272,7 @@ export function registerTools(server, ctx, user) {
         dropoff: a.destino,
         vehicle: vehicle || undefined,
         plate: a.placa,
+        vin: vin || undefined,
         price: a.preco == null ? undefined : String(a.preco),
         notes,
         driver_id: driverId,

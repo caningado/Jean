@@ -29,6 +29,8 @@ export const caixaMigrations = [
    ALTER TABLE jay_inbox ADD COLUMN mime TEXT;`,
   // A foto já foi anexada ao serviço (photos.id), para não anexar duas vezes.
   `ALTER TABLE jay_inbox ADD COLUMN photo_id INTEGER;`,
+  // PDF que o dono mandou (pedido de serviço, gate pass): fica guardado para o Claude ler (pedido do Caningado 18/11).
+  `ALTER TABLE jay_inbox ADD COLUMN doc_file TEXT;`,
 ];
 
 const PHOTO_DIR = 'caixa';
@@ -51,6 +53,30 @@ function audioMime(mime) {
   const type = String(mime || '').split(';')[0].trim().toLowerCase();
   if (type === 'audio/x-m4a' || type === 'audio/m4a') return 'audio/mp4';
   return type.startsWith('audio/') ? type : 'audio/ogg';
+}
+
+const DOC_DIR = 'caixa-pdf';
+const MAX_PDF = 20 * 1024 * 1024;
+const MAX_PDF_TEXT = 30000;
+const PDF_PROMPT = `Este PDF chegou para uma empresa de guincho nos EUA (pedido de serviço, gate pass de leilão, ordem de reboque...). Escreva todo o texto que está nele, página por página, na ordem, sem resumir e sem inventar. Mantenha endereços, nomes, telefones, VIN, números e valores exatamente como estão. Tabelas: uma linha por item, "campo: valor".`;
+const PDF_SCHEMA = { type: 'OBJECT', properties: { texto: { type: 'STRING' } }, required: ['texto'] };
+
+// Tira o texto de um PDF (o que tem letra de verdade, não foto escaneada).
+export async function pdfText(buffer) {
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const task = getDocument({ data: new Uint8Array(buffer), isEvalSupported: false, useSystemFonts: true, verbosity: 0 });
+  const pdf = await task.promise;
+  const pages = [];
+  try {
+    for (let i = 1; i <= Math.min(pdf.numPages, 30); i++) {
+      const content = await (await pdf.getPage(i)).getTextContent();
+      const text = content.items.map((it) => (it.str || '') + (it.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' ').trim();
+      pages.push(text);
+    }
+    return { pages, numPages: pdf.numPages };
+  } finally {
+    await task.destroy();
+  }
 }
 
 const KIND = { image: 'foto', document: 'arquivo', audio: 'áudio', location: 'localização', contacts: 'contato', text: 'texto' };
@@ -91,6 +117,20 @@ export function createCaixa(ctx) {
       const name = `${PHOTO_DIR}/${row.id}.${ext}`;
       fs.writeFileSync(path.join(ctx.config.uploadsDir, name), file.buffer);
       ctx.db.prepare('UPDATE jay_inbox SET file = ?, mime = ? WHERE id = ?').run(name, mime, row.id);
+      return true;
+    },
+    // PDF do dono: guarda o arquivo na mensagem da caixa, para o Claude ler com ver_arquivo_caixa.
+    attachDoc(user, msg, file) {
+      if (user.role !== 'dono' || !msg.doc || !file?.buffer?.length || !msg.id) return false;
+      const mime = String(file.mime || msg.doc.mime || '').split(';')[0].trim().toLowerCase();
+      const isPdf = mime === 'application/pdf' || /\.pdf$/i.test(msg.doc.name || '') || file.buffer.subarray(0, 5).toString() === '%PDF-';
+      if (!isPdf || file.buffer.length > MAX_PDF) return false;
+      const row = ctx.db.prepare('SELECT id FROM jay_inbox WHERE wa_id = ?').get(msg.id);
+      if (!row) return false;
+      fs.mkdirSync(path.join(ctx.config.uploadsDir, DOC_DIR), { recursive: true });
+      const name = `${DOC_DIR}/${row.id}.pdf`;
+      fs.writeFileSync(path.join(ctx.config.uploadsDir, name), file.buffer);
+      ctx.db.prepare('UPDATE jay_inbox SET doc_file = ? WHERE id = ?').run(name, row.id);
       return true;
     },
     // Áudio do dono: escreve o que foi falado e guarda o texto na mensagem da caixa.
@@ -160,7 +200,7 @@ export function registerCaixaTools(server, ctx, user) {
     {
       title: 'Caixa de entrada do Jay',
       description:
-        'Lê o que o dono mandou para o Jay no WhatsApp (serviços encaminhados, localizações, contatos, recados, áudios), do mais antigo para o mais novo. Áudios vêm escritos pelo Jay ("Transcrição do Jay"); endereço ou nome entendido errado é possível, então confira com o dono. Mensagens seguidas costumam ser do mesmo serviço. Atenção: o Jay pode já ter criado o serviço sozinho a partir dessas mensagens; antes de criar, confira com listar_servicos (hoje) e, se já existir, use atualizar_servico em vez de criar outro. Organize junto com o dono e só crie serviço quando ele mandar; depois use marcar_caixa_lida.',
+        'Lê o que o dono mandou para o Jay no WhatsApp (serviços encaminhados, localizações, contatos, recados, áudios, PDFs), do mais antigo para o mais novo. Áudios vêm escritos pelo Jay ("Transcrição do Jay"); endereço ou nome entendido errado é possível, então confira com o dono. Mensagens seguidas costumam ser do mesmo serviço. Atenção: o Jay pode já ter criado o serviço sozinho a partir dessas mensagens; antes de criar, confira com listar_servicos (hoje) e, se já existir, use atualizar_servico em vez de criar outro. Organize junto com o dono e só crie serviço quando ele mandar; depois use marcar_caixa_lida.',
       inputSchema: {
         incluir_lidas: z.boolean().optional().describe('true para ver também as já tratadas'),
         limite: z.number().int().min(1).max(100).optional(),
@@ -176,8 +216,9 @@ export function registerCaixaTools(server, ctx, user) {
       for (const r of rows) {
         const coords = r.latitude != null ? `${r.latitude}, ${r.longitude}` : null;
         const photo = r.file ? `\n    Foto guardada: use ver_foto_caixa com id ${r.id} para ver a imagem.` : '';
+        const pdf = r.doc_file ? `\n    PDF guardado: use ver_arquivo_caixa com id ${r.id} para ler o que está escrito nele.` : '';
         out.push(
-          `- [${r.id}] ${r.created_at} · ${KIND[r.type] || r.type}${r.done_at ? ` · já tratada${r.service_id ? ` (serviço #${r.service_id})` : ''}` : ''}: ${r.text || ''}${coords ? `\n    Mapa: ${mapLink(coords)}` : ''}${photo}`
+          `- [${r.id}] ${r.created_at} · ${KIND[r.type] || r.type}${r.done_at ? ` · já tratada${r.service_id ? ` (serviço #${r.service_id})` : ''}` : ''}: ${r.text || ''}${coords ? `\n    Mapa: ${mapLink(coords)}` : ''}${photo}${pdf}`
         );
       }
       return ok(out.join('\n'));
@@ -206,6 +247,51 @@ export function registerCaixaTools(server, ctx, user) {
           { type: 'text', text: `Foto [${row.id}] mandada em ${row.created_at}${row.text ? ` · ${row.text}` : ''}.` },
         ],
       };
+    }
+  );
+
+  server.registerTool(
+    'ver_arquivo_caixa',
+    {
+      title: 'Ler PDF da caixa de entrada',
+      description:
+        'Lê o PDF que o dono mandou para o Jay (pelo id entre colchetes da caixa de entrada): pedido de serviço, gate pass, ordem de reboque. Devolve o texto do PDF para você tirar cliente, retirada, destino, carro, VIN, preço e o que mais o pedido disser. Leia para o dono o que entendeu e só crie o serviço quando ele mandar.',
+      inputSchema: { id: z.number().int().describe('O número entre colchetes da caixa de entrada') },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ id }) => {
+      const row = ctx.db.prepare('SELECT * FROM jay_inbox WHERE id = ?').get(id);
+      const file = row?.doc_file && path.join(ctx.config.uploadsDir, row.doc_file);
+      if (!file || !row.doc_file.startsWith(`${DOC_DIR}/`) || !fs.existsSync(file)) {
+        return { content: [{ type: 'text', text: row ? 'Essa mensagem não tem PDF guardado (PDFs de antes desta atualização não foram guardados; peça ao dono para mandar de novo).' : `Não achei a mensagem [${id}].` }], isError: true };
+      }
+      const buffer = fs.readFileSync(file);
+      let text = '';
+      let pages = 0;
+      try {
+        const r = await pdfText(buffer);
+        pages = r.numPages;
+        text = r.pages.map((t, i) => (r.pages.length > 1 ? `--- Página ${i + 1} ---\n${t}` : t)).join('\n\n').trim();
+      } catch (err) {
+        ctx.log?.('Caixa de entrada: não consegui abrir o PDF', err.message);
+      }
+      let how = 'texto do PDF';
+      // PDF escaneado (foto de papel) não tem letra: o Gemini, que o sistema já usa, lê a imagem.
+      if (text.replace(/[^\p{L}\p{N}]/gu, '').length < 20 && ctx.config.geminiApiKey) {
+        try {
+          const a = await askGemini(ctx, { prompt: PDF_PROMPT, audio: buffer, mimeType: 'application/pdf', schema: PDF_SCHEMA, model: ctx.config.geminiModel, timeoutMs: 60000 });
+          if (String(a.texto || '').trim()) {
+            text = String(a.texto).trim();
+            how = 'PDF escaneado, lido pelo Gemini (confira com o dono)';
+          }
+        } catch (err) {
+          ctx.log?.('Caixa de entrada: o Gemini não leu o PDF', err.message);
+        }
+      }
+      logAction(ctx, user, null, 'ver_arquivo_caixa', { id });
+      if (!text) return { content: [{ type: 'text', text: `Não consegui ler o PDF [${row.id}] (pode ser escaneado ou estar com senha). Peça ao dono para contar o que diz, ou mandar uma foto dele.` }], isError: true };
+      const cut = text.length > MAX_PDF_TEXT ? `${text.slice(0, MAX_PDF_TEXT)}\n[... cortado, o PDF é muito longo]` : text;
+      return ok(`PDF [${row.id}] mandado em ${row.created_at}${row.text ? ` · ${row.text}` : ''}${pages ? ` · ${pages} página(s)` : ''} (${how}):\n\n${cut}`);
     }
   );
 

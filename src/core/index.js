@@ -889,11 +889,17 @@ async function createService(ctx, user, rawBody) {
   if (companyId && contactId && ctx.has('empresas') && ctx.db.prepare('SELECT 1 FROM companies WHERE id = ?').get(companyId)) {
     ctx.db.prepare('UPDATE contacts SET company_id = ? WHERE id = ? AND company_id IS NULL').run(companyId, contactId);
   }
-  // Toque duplo no "Criar serviço": o mesmo pedido em menos de 30 s devolve o serviço já criado.
+  // Toque duplo no "Criar serviço": o MESMO pedido em menos de 30 s devolve o serviço já criado.
+  // Só é o mesmo se tudo bate: cliente, retirada, destino, carro, placa e VIN. Vários carros no mesmo
+  // lugar (ex.: 4 carros do leilão, 4 VINs) são serviços diferentes (Caningado 18/11).
   const since = new Date(Date.now() - 30 * 1000).toISOString();
+  const vin = String(body.vin || '').trim().toUpperCase();
   const twinService = ctx.db
-    .prepare("SELECT id FROM services WHERE created_at >= ? AND IFNULL(contact_id, 0) = ? AND IFNULL(pickup, '') = ? AND status IN ('aberto', 'pendente') ORDER BY id DESC")
-    .get(since, contactId || 0, fields.pickup || '');
+    .prepare(
+      `SELECT id FROM services WHERE created_at >= ? AND IFNULL(contact_id, 0) = ? AND IFNULL(pickup, '') = ? AND IFNULL(dropoff, '') = ?
+         AND IFNULL(vehicle, '') = ? AND IFNULL(plate, '') = ? AND (? = '' OR IFNULL(vin, '') IN ('', ?)) AND status IN ('aberto', 'pendente') ORDER BY id DESC`
+    )
+    .get(since, contactId || 0, fields.pickup || '', fields.dropoff || '', fields.vehicle || '', fields.plate || '', vin, vin);
   if (twinService) return { status: 200, service: data.services.get(twinService.id) };
   // "fila": entra como pendente, sem motorista, até o dono escolher quem vai. Só o dono.
   // Sem motorista escolhido, o serviço do dono também começa Pendente.
