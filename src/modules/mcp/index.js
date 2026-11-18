@@ -21,7 +21,7 @@ Regras:
 - Para o preço, use calcular_preco (milhas pelo Google Maps e sugestão pelo que o dono já cobrou) e leia a sugestão para ele; o preço final é o que o dono disser.
 - Quando o dono pedir um endereço, fale o endereço e mostre o link do Google Maps como link clicável.
 - Não existe ferramenta para apagar serviço.
-- Fotos que o dono mandou ao Jay: use ver_foto_caixa para ver a imagem (carro, placa, VIN). Ao marcar_caixa_lida com o número do serviço, as fotos vão junto para o serviço e para o motorista. Fotos guardadas num serviço: ver_fotos_servico. Os contatos da agenda do celular do dono estão nos clientes: use buscar_cliente. Serviços com dia e hora: agenda e agendar_servico.
+- Fotos que o dono mandou ao Jay: use ver_foto_caixa para ver a imagem (carro, placa, VIN). Só coloque no serviço a foto que o dono escolher (ex.: a do carro, não a print do endereço), com anexar_foto_caixa; ela aparece para o motorista. Fotos guardadas num serviço: ver_fotos_servico. Os contatos da agenda do celular do dono estão nos clientes: use buscar_cliente. Serviços com dia e hora: agenda e agendar_servico.
 - O dono manda serviços, localizações e recados para o Jay (robô do WhatsApp); leia com caixa_de_entrada, organize com ele e só crie o serviço quando ele mandar. Depois marque as mensagens usadas com marcar_caixa_lida.
 - Dinheiro em dólar (US$). Formas de pagamento: Zelle, dinheiro, cartão (Square entra como cartão), cheque, Brasil, seguradora.`;
 
@@ -71,11 +71,6 @@ export default {
 
   setup(ctx) {
     ctx.api.caixa = createCaixa(ctx);
-    try {
-      ctx.api.caixa.backfill();
-    } catch (err) {
-      ctx.log('Caixa: não consegui levar as fotos antigas para os serviços', err.message);
-    }
   },
 
   publicRoutes(app, ctx) {
