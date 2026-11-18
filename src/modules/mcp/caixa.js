@@ -6,6 +6,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { nowIso } from '../../lib/util.js';
 import { mapLink } from '../../lib/validate.js';
+import { imageForClaude } from '../../lib/imagem.js';
 import { logAction } from './tools.js';
 
 export const caixaMigrations = [
@@ -25,6 +26,8 @@ export const caixaMigrations = [
   // Foto que o dono mandou: o arquivo fica guardado para o Claude ver.
   `ALTER TABLE jay_inbox ADD COLUMN file TEXT;
    ALTER TABLE jay_inbox ADD COLUMN mime TEXT;`,
+  // A foto já foi anexada ao serviço (photos.id), para não anexar duas vezes.
+  `ALTER TABLE jay_inbox ADD COLUMN photo_id INTEGER;`,
 ];
 
 const PHOTO_DIR = 'caixa';
@@ -70,6 +73,24 @@ export function createCaixa(ctx) {
       fs.writeFileSync(path.join(ctx.config.uploadsDir, name), file.buffer);
       ctx.db.prepare('UPDATE jay_inbox SET file = ?, mime = ? WHERE id = ?').run(name, mime, row.id);
       return true;
+    },
+    // Leva SÓ as fotos que o dono escolheu para o serviço (ex.: a do carro, não a print do
+    // endereço). O motorista vê no serviço, no painel. Cada foto vai uma vez só.
+    // O Jay não manda nada aos motoristas (decisão do dono 18/11).
+    attachToService(ids, serviceId, user) {
+      if (!ctx.api.fotos?.attachInboxPhoto) return [];
+      const rows = ids.length
+        ? ctx.db.prepare(`SELECT * FROM jay_inbox WHERE id IN (${ids.map(() => '?').join(',')}) AND file IS NOT NULL AND photo_id IS NULL ORDER BY id`).all(...ids)
+        : [];
+      const added = [];
+      for (const r of rows) {
+        const file = path.join(ctx.config.uploadsDir, r.file);
+        if (!r.file.startsWith(`${PHOTO_DIR}/`) || !fs.existsSync(file)) continue;
+        const photoId = ctx.api.fotos.attachInboxPhoto({ serviceId, file, mime: r.mime, userId: user.id });
+        ctx.db.prepare('UPDATE jay_inbox SET photo_id = ?, service_id = COALESCE(service_id, ?) WHERE id = ?').run(photoId, serviceId, r.id);
+        added.push(photoId);
+      }
+      return added;
     },
     // Só guarda o que vem do dono (ADM).
     save(user, msg) {
@@ -135,7 +156,7 @@ export function registerCaixaTools(server, ctx, user) {
       logAction(ctx, user, null, 'ver_foto_caixa', { id });
       return {
         content: [
-          { type: 'image', data: fs.readFileSync(file).toString('base64'), mimeType: row.mime },
+          { type: 'image', ...(await imageForClaude(fs.readFileSync(file), row.mime)) },
           { type: 'text', text: `Foto [${row.id}] mandada em ${row.created_at}${row.text ? ` · ${row.text}` : ''}.` },
         ],
       };
@@ -146,7 +167,7 @@ export function registerCaixaTools(server, ctx, user) {
     'marcar_caixa_lida',
     {
       title: 'Marcar mensagens como tratadas',
-      description: 'Marca mensagens da caixa de entrada do Jay como tratadas (não apaga nada). Informe o serviço criado com elas, se houver.',
+      description: 'Marca mensagens da caixa de entrada do Jay como tratadas (não apaga nada). Informe o serviço criado com elas, se houver. Não leva fotos para o serviço: para isso use anexar_foto_caixa com a foto que o dono escolher.',
       inputSchema: {
         ids: z.array(z.number().int()).min(1).describe('Os números entre colchetes da caixa de entrada'),
         numero_servico: z.number().int().optional(),
@@ -159,7 +180,37 @@ export function registerCaixaTools(server, ctx, user) {
       let n = 0;
       for (const id of ids) n += Number(mark.run(nowIso(), numero_servico ?? null, id).changes);
       logAction(ctx, user, numero_servico ?? null, 'marcar_caixa_lida', { ids, numero_servico: numero_servico ?? null });
-      return ok(`${n} mensagem(ns) marcada(s) como tratada(s)${numero_servico ? ` no serviço #${numero_servico}` : ''}.`);
+      const withPhoto = ctx.db.prepare(`SELECT COUNT(*) AS n FROM jay_inbox WHERE id IN (${ids.map(() => '?').join(',')}) AND file IS NOT NULL AND photo_id IS NULL`).get(...ids).n;
+      const tip = numero_servico && withPhoto ? ` Tem ${withPhoto} foto(s) nessas mensagens: pergunte ao dono se alguma (ex.: a do carro) vai para o serviço e use anexar_foto_caixa só com as que ele escolher.` : '';
+      return ok(`${n} mensagem(ns) marcada(s) como tratada(s)${numero_servico ? ` no serviço #${numero_servico}` : ''}.${tip}`);
+    }
+  );
+
+  server.registerTool(
+    'anexar_foto_caixa',
+    {
+      title: 'Anexar foto escolhida ao serviço',
+      description:
+        'Coloca no serviço SÓ a(s) foto(s) da caixa de entrada que o dono escolheu (normalmente a foto do carro, para o motorista saber qual é). Não anexe print de endereço nem foto que o dono não pediu. Antes, olhe as fotos com ver_foto_caixa, diga ao dono o que cada uma mostra e pergunte quais vão. O motorista vê a foto no serviço, no painel (nada é mandado a ele no WhatsApp).',
+      inputSchema: {
+        ids: z.array(z.number().int()).min(1).describe('Os números entre colchetes das fotos escolhidas pelo dono'),
+        numero_servico: z.number().int(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ ids, numero_servico }) => {
+      const s = ctx.data.services.get(numero_servico);
+      if (!s) return { content: [{ type: 'text', text: `Não achei o serviço #${numero_servico}.` }], isError: true };
+      const found = ctx.db.prepare(`SELECT id, file, photo_id FROM jay_inbox WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
+      const noPhoto = ids.filter((id) => !found.some((r) => r.id === id && r.file));
+      const already = found.filter((r) => r.photo_id).map((r) => r.id);
+      const photos = ctx.api.caixa.attachToService(ids, s.id, user);
+      if (photos.length) logAction(ctx, user, s.id, 'anexar_foto_caixa', { ids, fotos: photos.length }, 'fotos_anexadas');
+      const out = [];
+      if (photos.length) out.push(`${photos.length} foto(s) colocada(s) no serviço #${s.id}. O motorista vê no serviço, no painel.`);
+      if (already.length) out.push(`Já estava(m) num serviço: ${already.map((id) => `[${id}]`).join(', ')}.`);
+      if (noPhoto.length) out.push(`Sem foto guardada: ${noPhoto.map((id) => `[${id}]`).join(', ')}.`);
+      return { content: [{ type: 'text', text: out.join(' ') || 'Nenhuma foto anexada.' }], isError: !photos.length && !already.length };
     }
   );
 }

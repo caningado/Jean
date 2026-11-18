@@ -2,12 +2,14 @@
 // (ctx.api.servicos, pagamentos, VIN) e cada ação fica registrada como feita pelo Claude:
 // no histórico do serviço (service_events, source 'claude') e no registro mcp_actions.
 // Não existe ferramenta de apagar.
+import fs from 'node:fs';
 import { z } from 'zod';
 import { formatMoney, formatPhone, normalizePhone, simplify, nowIso } from '../../lib/util.js';
 import { mapLink } from '../../lib/validate.js';
 import { routeLines } from '../../lib/rotas.js';
 import { zonedMidnight } from '../planilha/index.js';
 import { applyAction } from '../voz/index.js';
+import { imageForClaude } from '../../lib/imagem.js';
 
 export const SOURCE = 'claude';
 
@@ -84,6 +86,25 @@ function line(ctx, s) {
 }
 
 const ok = (text) => ({ content: [{ type: 'text', text }] });
+
+// Nome da foto para o Claude: "do ADM (caixa do Jay)", "antes · frente", "VIN"...
+function photoLabel(ctx, p) {
+  if (p.origin === 'caixa') return 'do ADM (caixa do Jay)';
+  const { kindLabel = {}, angleLabel = {} } = ctx.api.fotos || {};
+  return [kindLabel[p.kind] || p.kind, p.angle ? angleLabel[p.angle] || p.angle : null].filter(Boolean).join(' · ');
+}
+
+function photoSummary(ctx, photos) {
+  const count = {};
+  for (const p of photos) {
+    const key = p.origin === 'caixa' ? 'do ADM (caixa do Jay)' : (ctx.api.fotos?.kindLabel || {})[p.kind] || p.kind;
+    count[key] = (count[key] || 0) + 1;
+  }
+  return Object.entries(count).map(([k, n]) => `${n} ${k}`).join(', ');
+}
+
+const PHOTO_FILTER = { do_adm: (p) => p.origin === 'caixa', antes: (p) => p.kind === 'antes', depois: (p) => p.kind === 'depois', vin: (p) => p.kind === 'vin' };
+const MAX_PHOTOS = 6;
 const fail = (text) => ({ content: [{ type: 'text', text }], isError: true });
 
 // Erros das regras (400, 404, 409...) voltam como texto para o Claude explicar ao dono.
@@ -347,6 +368,8 @@ export function registerTools(server, ctx, user) {
       if (s.scheduled_at && ctx.api.agenda) out.push(`Agendado para: ${ctx.api.agenda.format(s.scheduled_at)}`);
       if (s.notes) out.push(`Observações: ${s.notes}`);
       out.push(`Aberto em: ${s.created_at}${s.completed_at ? ` · entregue em: ${s.completed_at}` : ''}`);
+      const photos = ctx.api.fotos?.list(s.id) || [];
+      if (photos.length) out.push(`Fotos: ${photoSummary(ctx, photos)}. Use ver_fotos_servico para ver as imagens.`);
       if (hasTable(ctx, 'service_events')) {
         const events = ctx.db
           .prepare('SELECT e.action, e.source, e.created_at, u.name FROM service_events e LEFT JOIN users u ON u.id = e.user_id WHERE e.service_id = ? ORDER BY e.id')
@@ -359,6 +382,42 @@ export function registerTools(server, ctx, user) {
       return ok(out.join('\n'));
     })
   );
+
+  // 3b. Ver as fotos de um serviço
+  if (ctx.api.fotos) {
+    server.registerTool(
+      'ver_fotos_servico',
+      {
+        title: 'Ver fotos do serviço',
+        description: `Mostra as fotos guardadas no serviço (as que o dono mandou ao Jay para achar o carro, e as de antes, depois e VIN tiradas pelo motorista). Olhe as imagens para saber o carro, a placa, o VIN ou o estado do carro. Mostra no máximo ${MAX_PHOTOS} de cada vez, das mais novas para as mais antigas; use "tipo" ou "pular" para ver outras.`,
+        inputSchema: {
+          numero: z.number().int().describe('Número do serviço (#)'),
+          tipo: z.enum(['todas', 'do_adm', 'antes', 'depois', 'vin']).optional().describe('do_adm = fotos que o dono mandou ao Jay'),
+          pular: z.number().int().min(0).optional().describe('Quantas das mais novas pular (para ver as mais antigas)'),
+        },
+        annotations: read,
+      },
+      safe(ctx, async ({ numero, tipo, pular = 0 }) => {
+        const s = getService(ctx, numero);
+        const all = ctx.api.fotos.list(s.id);
+        const list = all.filter(PHOTO_FILTER[tipo] || (() => true)).reverse();
+        if (!list.length) return ok(all.length ? `O serviço #${s.id} não tem fotos desse tipo. Tem: ${photoSummary(ctx, all)}.` : `O serviço #${s.id} não tem fotos.`);
+        const page = list.slice(pular, pular + MAX_PHOTOS);
+        if (!page.length) return ok(`Não há mais fotos. O serviço #${s.id} tem ${list.length} foto(s) desse tipo.`);
+        const content = [];
+        for (const p of page) {
+          const file = ctx.api.fotos.fileOf(p);
+          if (!fs.existsSync(file)) continue;
+          content.push({ type: 'text', text: `Foto ${p.id} · ${photoLabel(ctx, p)} · ${p.taken_at || p.created_at}${p.address ? ` · ${p.address}` : ''}` });
+          content.push({ type: 'image', ...(await imageForClaude(fs.readFileSync(file), p.stamped_file ? 'image/jpeg' : p.mime || 'image/jpeg')) });
+        }
+        logAction(ctx, user, s.id, 'ver_fotos_servico', { tipo: tipo || 'todas', pular });
+        const rest = list.length - pular - page.length;
+        content.push({ type: 'text', text: `Serviço #${s.id}: mostrando ${page.length} de ${list.length} foto(s).${rest > 0 ? ` Para ver as outras ${rest}, chame de novo com pular = ${pular + page.length}.` : ''}` });
+        return { content };
+      })
+    );
+  }
 
   // 4. Atualizar status
   server.registerTool(

@@ -35,7 +35,7 @@ const events = (ctx, id) => ctx.db.prepare('SELECT action, source FROM service_e
 test('mcp ferramentas: lista tudo e não tem ferramenta de apagar', async (t) => {
   const { client } = await setup(t);
   const names = (await client.listTools()).tools.map((x) => x.name).sort();
-  assert.deepEqual(names, ['agenda', 'agendar_servico', 'apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'caixa_de_entrada', 'calcular_preco', 'criar_servico', 'enderecos_com_apelido', 'equipe', 'listar_servicos', 'marcar_caixa_lida', 'marcar_pago', 'salvar_endereco_apelido', 'teste', 'ver_foto_caixa', 'ver_servico']);
+  assert.deepEqual(names, ['agenda', 'agendar_servico', 'anexar_foto_caixa', 'apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'caixa_de_entrada', 'calcular_preco', 'criar_servico', 'enderecos_com_apelido', 'equipe', 'listar_servicos', 'marcar_caixa_lida', 'marcar_pago', 'salvar_endereco_apelido', 'teste', 'ver_foto_caixa', 'ver_fotos_servico', 'ver_servico']);
   assert.ok(!names.some((n) => /apagar|delete|excluir/.test(n)));
 });
 
@@ -213,6 +213,52 @@ test('mcp caixa de entrada: foto do dono fica guardada e o Claude vê a imagem',
   const raw = await (await import('node:fs')).promises.readFile(`${ctx.config.uploadsDir}/${row.file}`);
   assert.deepEqual(raw, png);
   assert.equal((await call('ver_foto_caixa', { id: 999 })).error, true);
+});
+
+test('mcp caixa de entrada: só a foto escolhida vai para o serviço e para o motorista', async (t) => {
+  const { processMessage } = await import('../src/modules/whatsapp/index.js');
+  const { ctx, call, client: mcpClient, driver } = await setup(t);
+  const sentImages = [];
+  ctx.sendImage = async (to, buffer, mime, caption) => sentImages.push({ to, buffer, mime, caption });
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const wa = { sendText: async () => true, downloadMedia: async () => ({ buffer: png, mime: 'image/png' }) };
+  await processMessage(ctx, wa, { id: 'f1', from: OWNER_PHONE, type: 'image', text: '', mediaId: 'm1' });
+  await processMessage(ctx, wa, { id: 'f2', from: OWNER_PHONE, type: 'image', text: 'placa', mediaId: 'm2' });
+  const ids = ctx.db.prepare('SELECT id FROM jay_inbox ORDER BY id').all().map((r) => r.id);
+  const r = await call('criar_servico', { cliente_nome: 'Marcos', marca: 'Honda', modelo: 'Civic', retirada: '12 Main St, Orlando FL', destino: '40 Oak Ave, Kissimmee FL', preco: 150, motorista: 'Jorge' });
+  assert.equal(r.error, false, r.text);
+  const id = ctx.db.prepare('SELECT MAX(id) AS id FROM services').get().id;
+
+  // Marcar como tratada NÃO leva foto nenhuma: só lembra o Claude de perguntar.
+  const marked = await call('marcar_caixa_lida', { ids, numero_servico: id });
+  assert.match(marked.text, /Tem 2 foto\(s\).*anexar_foto_caixa/);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM photos').get().n, 0);
+
+  // O dono escolhe só a foto do carro (a 2ª era a print do endereço).
+  const chosen = await call('anexar_foto_caixa', { ids: [ids[0]], numero_servico: id });
+  assert.match(chosen.text, /1 foto\(s\) colocada\(s\) no serviço #\d+\. O motorista vê no serviço, no painel/);
+  const photos = ctx.db.prepare('SELECT * FROM photos WHERE service_id = ?').all(id);
+  assert.equal(photos.length, 1);
+  assert.ok(photos.every((p) => p.origin === 'caixa' && p.kind === 'outro' && !p.stamped_file));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(sentImages.length, 0, 'o Jay não manda nada ao motorista');
+
+  // Anexar de novo não duplica nem manda de novo.
+  assert.match((await call('anexar_foto_caixa', { ids: [ids[0]], numero_servico: id })).text, /Já estava/);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM photos WHERE service_id = ?').get(id).n, 1);
+  assert.equal(sentImages.length, 0);
+
+  // O motorista vê a foto no painel (detalhe do serviço).
+  const detail = ctx.loaded.find((m) => m.name === 'fotos').serviceDetail({ ctx, service: ctx.data.services.get(id) });
+  assert.equal(detail.photos.filter((p) => p.origin === 'caixa').length, 1);
+
+  // O Claude vê as fotos do serviço.
+  assert.match((await call('ver_servico', { numero: id })).text, /Fotos: 1 do ADM \(caixa do Jay\)/);
+  const res = await mcpClient.callTool({ name: 'ver_fotos_servico', arguments: { numero: id } });
+  assert.equal(res.content.filter((c) => c.type === 'image').length, 1);
+  assert.match(res.content.at(-1).text, /mostrando 1 de 1/);
+  assert.match((await call('ver_fotos_servico', { numero: id, tipo: 'antes' })).text, /não tem fotos desse tipo/);
+  assert.ok(driver);
 });
 
 test('mcp agenda: agendar ao criar, agendar depois, ver a agenda e tirar', async (t) => {

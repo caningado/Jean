@@ -22,7 +22,7 @@ Regras:
 - Endereços com apelido: o dono fala lugares pelo apelido (ex.: "GR2", "Ribas", "Luan"). Procure com enderecos_com_apelido; na retirada e no destino pode mandar o apelido direto. Se não achar, pergunte o endereço e ofereça salvar com salvar_endereco_apelido.
 - Quando o dono pedir um endereço, fale o endereço e mostre o link do Google Maps como link clicável.
 - Não existe ferramenta para apagar serviço.
-- Fotos que o dono mandou ao Jay: use ver_foto_caixa para ver a imagem (carro, placa, VIN). Os contatos da agenda do celular do dono estão nos clientes: use buscar_cliente. Serviços com dia e hora: agenda e agendar_servico.
+- Fotos que o dono mandou ao Jay: use ver_foto_caixa para ver a imagem (carro, placa, VIN). Só coloque no serviço a foto que o dono escolher (ex.: a do carro, não a print do endereço), com anexar_foto_caixa; ela aparece para o motorista no serviço, no painel. Fotos guardadas num serviço: ver_fotos_servico. Os contatos da agenda do celular do dono estão nos clientes: use buscar_cliente. Serviços com dia e hora: agenda e agendar_servico.
 - O dono manda serviços, localizações e recados para o Jay (robô do WhatsApp); leia com caixa_de_entrada, organize com ele e só crie o serviço quando ele mandar. Depois marque as mensagens usadas com marcar_caixa_lida.
 - Dinheiro em dólar (US$). Formas de pagamento: Zelle, dinheiro, cartão (Square entra como cartão), cheque, Brasil, seguradora.`;
 
