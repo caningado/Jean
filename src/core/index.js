@@ -321,6 +321,55 @@ function placesWithNames(ctx) {
     .all();
 }
 
+// Lista de endereços com apelido para o Claude: busca pelo apelido, nome da empresa ou parte do endereço.
+function findPlaces(ctx, query) {
+  const key = simplify(query || '').replace(/\s+/g, ' ').trim();
+  const all = placesWithNames(ctx);
+  if (!key) return all;
+  const norm = (v) => simplify(v || '').replace(/\s+/g, ' ').trim();
+  const exact = all.filter((p) => p.key === key || norm(p.company_name) === key);
+  const rest = all.filter((p) => !exact.includes(p) && [p.nickname, p.company_name, p.address].some((v) => norm(v).includes(key)));
+  return [...exact, ...rest];
+}
+
+// Cadastra um apelido novo ou muda o endereço de um que já existe (mesmas regras do painel).
+// Endereço de oficina/dealer (vem da empresa): muda o endereço da empresa, que atualiza o apelido.
+async function savePlace(ctx, { nickname: rawNick, address: rawAddress, addressOk = false }) {
+  const nickname = checkName(rawNick, 'O apelido');
+  const key = simplify(nickname).replace(/\s+/g, ' ').trim();
+  let address = checkLocation(rawAddress, 'O endereço');
+  const saved = savedPlace(ctx, address);
+  if (saved && saved.key !== key) address = saved.address;
+  else if (!addressOk) {
+    const place = await resolvePlace(ctx, address);
+    if (place.value) address = place.value;
+    else {
+      const { options } = place.check;
+      if (!options.some((o) => o.toLowerCase() === address.toLowerCase())) {
+        const err = new HttpError(
+          400,
+          options.length
+            ? `Achei mais de um endereço no mapa para "${address}". Pergunte ao dono qual é e mande de novo o escolhido.`
+            : `Não achei "${address}" no mapa. Confira com o dono; se ele confirmar que está certo, mande de novo com endereco_conferido = true.`
+        );
+        err.options = options;
+        throw err;
+      }
+    }
+  }
+  const existing = ctx.db.prepare('SELECT * FROM saved_places WHERE key = ?').get(key);
+  const company = existing && ctx.has('empresas') ? ctx.db.prepare('SELECT * FROM companies WHERE place_id = ?').get(existing.id) : null;
+  if (company && ctx.api.empresas?.setAddress) {
+    ctx.api.empresas.setAddress(company.id, address);
+  } else if (existing) {
+    ctx.db.prepare('UPDATE saved_places SET address = ? WHERE id = ?').run(address, existing.id);
+  } else {
+    ctx.db.prepare('INSERT INTO saved_places (nickname, key, address, created_at) VALUES (?, ?, ?, ?)').run(nickname, key, address, new Date().toISOString());
+  }
+  const place = placesWithNames(ctx).find((p) => p.key === key) || ctx.db.prepare('SELECT * FROM saved_places WHERE key = ?').get(key);
+  return { place, created: !existing, before: existing?.address || null };
+}
+
 async function resolvePlace(ctx, location) {
   const saved = savedPlace(ctx, location);
   if (saved) return { value: saved.address, notice: saved.address === String(location).trim() ? undefined : `📍 ${saved.nickname}: *${saved.address}*` };
@@ -1419,6 +1468,12 @@ export default {
       // Milhas pelo Google Maps (aceita apelido de endereço) e preço sugerido.
       route: (pickup, dropoff) => routeMiles(ctx, savedPlace(ctx, pickup)?.address || pickup, savedPlace(ctx, dropoff)?.address || dropoff),
       priceSuggestion: (miles, who) => priceSuggestion(ctx, miles, who),
+    };
+    // Endereços com apelido ("GR2" = endereço da oficina). Usado pelo Claude (MCP).
+    ctx.api.enderecos = {
+      find: (query) => findPlaces(ctx, query),
+      get: (text) => savedPlace(ctx, text),
+      save: (args) => savePlace(ctx, args),
     };
     const fixed = repairEncodedNames(ctx.db);
     if (fixed) ctx.log?.(`Nomes de clientes corrigidos (importação antiga): ${fixed}`);
