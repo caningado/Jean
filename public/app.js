@@ -3606,6 +3606,10 @@ function photoGroups(photos) {
   if (!photos.length) return '<p class="sub">Nenhuma foto. São opcionais.</p>';
   const figure = (p, label) =>
     `<figure><button type="button" class="photo-open" data-view="${p.id}" data-label="${esc(label)}"><img src="${p.url}" loading="lazy" alt="${esc(label)}"></button><figcaption>${esc(label)}</figcaption></figure>`;
+  // Fotos que o ADM mandou ao Jay e anexou ao serviço: vêm primeiro, para o motorista achar o carro.
+  const fromAdm = photos.filter((p) => p.origin === 'caixa');
+  photos = photos.filter((p) => p.origin !== 'caixa');
+  const top = fromAdm.length ? `<h3>📥 Do ADM (para achar o carro)</h3><div class="photos">${fromAdm.map((p) => figure(p, 'Do ADM')).join('')}</div>` : '';
   const groups = ['antes', 'depois'].map((kind) => {
     const list = photos.filter((p) => p.kind === kind);
     if (!list.length) return '';
@@ -3620,7 +3624,7 @@ function photoGroups(photos) {
   });
   const others = photos.filter((p) => p.kind !== 'antes' && p.kind !== 'depois');
   if (others.length) groups.push(`<h3>Outras</h3><div class="photos">${others.map((p) => figure(p, PHOTO_KINDS[p.kind])).join('')}</div>`);
-  return groups.join('');
+  return top + groups.join('');
 }
 
 // Foto em tela cheia, com Apagar (motorista só até entregar; o dono sempre). Devolve true se apagou.
@@ -4087,6 +4091,7 @@ const VOICE_LABELS = {
   pagamento: '💵 Pagamento registrado',
   motorista: '🚚 Motorista escolhido',
   agendado: '📅 Agendado',
+  fotos_anexadas: '📷 Fotos do carro anexadas',
 };
 // Botões de áudio desligados no app (pedido do Caningado 27/10: não funcionavam bem).
 // O áudio pelo WhatsApp continua. Para voltar, troque VOICE_BUTTONS para true.

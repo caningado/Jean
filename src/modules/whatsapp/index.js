@@ -28,6 +28,12 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
   const headers = { Authorization: `Bearer ${token}` };
   const recent = new Map(); // telefone → horários das últimas mensagens mandadas
   const warned = new Map(); // telefone → quando avisou no log que travou
+  // Jay em silêncio (JAY_WHATSAPP desligado): nada sai pelo WhatsApp, para ninguém.
+  const silent = (to, what) => {
+    if (config.whatsapp.conversar !== false) return false;
+    log(`WhatsApp: Jay em silêncio (JAY_WHATSAPP desligado), não mandei ${what} para ${formatPhone(to)}.`);
+    return true;
+  };
   const guard = (to) => {
     const phone = normalizePhone(to);
     const t = now();
@@ -48,6 +54,7 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
     configured: Boolean(token && phoneNumberId),
 
     async sendText(to, body) {
+      if (silent(to, 'texto')) return false;
       // Trava: nunca fala com cliente nem com ninguém de fora da equipe.
       if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
       guard(to);
@@ -62,6 +69,7 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
 
     // Foto (ex.: a que o Jay não entendeu, para a pessoa de apoio ver).
     async sendImage(to, buffer, mime = 'image/jpeg', caption = '') {
+      if (silent(to, 'foto')) return false;
       if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
       guard(to);
       const form = new FormData();
@@ -82,6 +90,7 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
 
     // Mensagem de voz (.ogg Opus): sobe o arquivo na Meta e manda como áudio.
     async sendAudio(to, ogg) {
+      if (silent(to, 'áudio')) return false;
       if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
       guard(to);
       const form = new FormData();
@@ -250,6 +259,12 @@ export async function processMessage(ctx, client, msg) {
 }
 
 async function answer(ctx, client, user, input) {
+  // Jay em silêncio: não executa comando nenhum (o dono não veria a resposta). As mensagens do
+  // dono já ficaram na caixa de entrada para o Claude.
+  if (ctx.config.whatsapp.conversar === false) {
+    ctx.log(`WhatsApp: Jay em silêncio, mensagem de ${user.name} não foi executada${user.role === 'dono' ? ' (ficou na caixa de entrada)' : ''}.`);
+    return;
+  }
   const replies = await ctx.bot.handle(input);
   for (const reply of replies) await client.sendText(input.phone, reply);
   ctx.log(`WhatsApp: ${replies.length} resposta(s) enviada(s) para ${user.name}.`);

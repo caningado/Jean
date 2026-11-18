@@ -24,6 +24,7 @@ export function makeContext(overrides = {}) {
     GEOCODER: 'off',
     WHATSAPP_JUNTAR_MS: '0',
     VIN_OCR: 'off',
+    JAY_WHATSAPP: 'on',
     ...overrides,
   });
   const ctx = createContext(config);

@@ -69,6 +69,9 @@ const migrations = [
      lng REAL NOT NULL,
      at TEXT NOT NULL
    );`,
+  // De onde veio a foto: 'caixa' = o dono mandou ao Jay e foi anexada ao serviço (para o
+  // motorista saber qual é o carro). Essas não levam carimbo (não são a prova da retirada).
+  `ALTER TABLE photos ADD COLUMN origin TEXT;`,
 ];
 
 // Localização 📍 do WhatsApp vale para as fotos dos próximos 60 minutos.
@@ -147,19 +150,27 @@ export function kindFromText(text) {
 // Nome das fotos dentro do .zip.
 const KIND_FILE = { antes: 'antes', depois: 'depois', vin: 'VIN', outro: 'outra' };
 
-const EXTENSIONS = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/heic': '.heic' };
+const EXTENSIONS = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/heic': '.heic', 'image/gif': '.gif' };
 
-function savePhoto(ctx, { serviceId, kind, angle = null, buffer, mime, userId, place = null }) {
+// ---------- fotos que o dono mandou ao Jay (caixa de entrada) ----------
+
+// Anexa ao serviço uma foto da caixa de entrada (uma cópia: a da caixa continua lá).
+function attachInboxPhoto(ctx, { serviceId, file, mime, userId }) {
+  const buffer = fs.readFileSync(file);
+  return savePhoto(ctx, { serviceId, kind: 'outro', buffer, mime, userId, origin: 'caixa' });
+}
+
+function savePhoto(ctx, { serviceId, kind, angle = null, buffer, mime, userId, place = null, origin = null }) {
   const dir = path.join(ctx.config.uploadsDir, `servico-${serviceId}`);
   fs.mkdirSync(dir, { recursive: true });
   const name = `${Date.now()}-${kind}-${crypto.randomBytes(3).toString('hex')}${EXTENSIONS[mime] || '.jpg'}`;
   fs.writeFileSync(path.join(dir, name), buffer);
   const info = ctx.db
-    .prepare('INSERT INTO photos (service_id, kind, angle, file, mime, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(serviceId, kind, angle, path.join(`servico-${serviceId}`, name), mime || 'image/jpeg', userId, nowIso());
+    .prepare('INSERT INTO photos (service_id, kind, angle, file, mime, uploaded_by, created_at, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(serviceId, kind, angle, path.join(`servico-${serviceId}`, name), mime || 'image/jpeg', userId, nowIso(), origin);
   const id = Number(info.lastInsertRowid);
   // O carimbo demora 1 ou 2 segundos: é feito depois, sem segurar a resposta.
-  if (ctx.config.fotoCarimbo) queueStamp(ctx, id, buffer, place);
+  if (ctx.config.fotoCarimbo && !origin) queueStamp(ctx, id, buffer, place);
   return id;
 }
 
@@ -312,7 +323,7 @@ const flows = {
     finish({ ctx, user, data }) {
       // Ajusta todas as fotos sem tipo que acabaram de chegar (o motorista pode ter mandado várias de uma vez).
       const fresh = ctx.db
-        .prepare("SELECT id FROM photos WHERE service_id = ? AND uploaded_by = ? AND kind = 'outro' AND created_at >= ? ORDER BY id")
+        .prepare("SELECT id FROM photos WHERE service_id = ? AND uploaded_by = ? AND kind = 'outro' AND origin IS NULL AND created_at >= ? ORDER BY id")
         .all(data.serviceId, user.id, data.since);
       const update = ctx.db.prepare('UPDATE photos SET kind = ?, angle = ? WHERE id = ?');
       for (const photo of fresh) {
@@ -355,7 +366,7 @@ function findServiceFor(ctx, user, id) {
 
 function listPhotos(ctx, serviceId) {
   return ctx.db
-    .prepare('SELECT p.id, p.kind, p.angle, p.created_at, p.taken_at, p.address, p.lat, p.lng, p.place_source, p.stamped_file IS NOT NULL AS stamped, u.name AS uploaded_by_name FROM photos p LEFT JOIN users u ON u.id = p.uploaded_by WHERE service_id = ? ORDER BY p.id')
+    .prepare('SELECT p.id, p.kind, p.angle, p.origin, p.created_at, p.taken_at, p.address, p.lat, p.lng, p.place_source, p.stamped_file IS NOT NULL AS stamped, u.name AS uploaded_by_name FROM photos p LEFT JOIN users u ON u.id = p.uploaded_by WHERE service_id = ? ORDER BY p.id')
     .all(serviceId)
     // ?c=1 depois do carimbo: o celular não fica mostrando a foto sem carimbo guardada.
     .map(({ stamped, ...p }) => ({ ...p, url: `/api/photos/${p.id}/file${stamped ? '?c=1' : ''}` }));
@@ -476,7 +487,7 @@ export default {
     });
     return [...docFiles, ...rows.map((p) => {
       const folder = clean(`Serviço ${p.service_id}${p.contact_name ? ' - ' + p.contact_name : ''}`);
-      const label = clean([KIND_FILE[p.kind] || p.kind, p.angle ? ANGLE_LABEL[p.angle] || p.angle : ''].filter(Boolean).join(' - '));
+      const label = clean([p.origin === 'caixa' ? 'do ADM' : KIND_FILE[p.kind] || p.kind, p.angle ? ANGLE_LABEL[p.angle] || p.angle : ''].filter(Boolean).join(' - '));
       const file = p.stamped_file || p.file; // no .zip vai a foto carimbada
       const ext = path.extname(file) || '.jpg';
       let name = `fotos/${folder}/${label}${ext}`;
@@ -503,6 +514,11 @@ export default {
       docTypes: DOC_TYPES,
       saveDoc: (doc) => saveDoc(ctx, doc),
       noteLocation: (userId, location) => noteLocation(ctx, userId, location),
+      attachInboxPhoto: (photo) => attachInboxPhoto(ctx, photo),
+      list: (serviceId) => ctx.db.prepare('SELECT * FROM photos WHERE service_id = ? ORDER BY id').all(serviceId),
+      fileOf: (photo) => path.join(ctx.config.uploadsDir, photo.stamped_file || photo.file),
+      kindLabel: KIND_LABEL,
+      angleLabel: ANGLE_LABEL,
       // Para os testes: espera os carimbos que estão na fila.
       stamped: () => stampQueues.get(ctx) || Promise.resolve(),
     };
