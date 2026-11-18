@@ -351,6 +351,15 @@ export default {
           ].join('\n'),
         ];
       },
+      // Jay em silêncio no WhatsApp: só lê o VIN da foto do dono e devolve para copiar (sem
+      // guardar nada nem falar de serviço). null se não achou VIN.
+      async readForOwner(buffer, mime) {
+        const result = await readVinFromImage(ctx, buffer, mime);
+        if (!result.vin) return null;
+        const check = validateVin(result.vin);
+        const vehicle = describeVehicle(await decodeVin(check.vin).catch(() => null));
+        return [check.vin, `☝️ Li esse VIN${check.valid ? '' : ' (o dígito verificador não bateu, confira)'}.${vehicle ? `\nVeículo: ${vehicle}` : ''}`];
+      },
       // Usado pelo módulo de fotos: lê a foto e pede confirmação ao motorista.
       async askConfirmation(user, service, buffer, mime) {
         let result;
