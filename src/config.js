@@ -57,6 +57,11 @@ export function loadConfig(overrides = {}) {
       apiVersion: env.WHATSAPP_API_VERSION || 'v21.0',
       // Só para trocar a foto do robô; sem ele, o sistema descobre pelo token.
       appId: env.WHATSAPP_APP_ID || '',
+      // O Jay conversa pelo WhatsApp? Desligado por ordem do dono (18/11): o Jay não manda NADA
+      // pelo WhatsApp para ninguém (respostas, avisos, fotos, áudios) e não executa comandos.
+      // As mensagens do dono continuam chegando na caixa de entrada (para o Claude).
+      // JAY_WHATSAPP=on volta ao normal.
+      conversar: env.JAY_WHATSAPP === 'on',
       // Mensagens de texto que chegam juntas (encaminhadas, cartão de contato) esperam este tempo
       // e viram uma só, para o robô entender o serviço inteiro.
       juntarMs: env.WHATSAPP_JUNTAR_MS != null && env.WHATSAPP_JUNTAR_MS !== '' ? Number(env.WHATSAPP_JUNTAR_MS) : 3000,
