@@ -22,7 +22,7 @@ export async function askGemini(ctx, opts, fetchImpl = globalThis.fetch) {
   throw last;
 }
 
-async function callGemini(ctx, { prompt, audio = null, mimeType = '', schema, model }, fetchImpl) {
+async function callGemini(ctx, { prompt, audio = null, mimeType = '', schema, model, timeoutMs }, fetchImpl) {
   const parts = audio ? [{ inline_data: { mime_type: mimeType, data: audio.toString('base64') } }, { text: prompt }] : [{ text: prompt }];
   const res = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: 'POST',
@@ -31,7 +31,7 @@ async function callGemini(ctx, { prompt, audio = null, mimeType = '', schema, mo
       contents: [{ parts }],
       generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: schema },
     }),
-    signal: AbortSignal.timeout(ctx.config.geminiTimeoutMs ?? 15000),
+    signal: AbortSignal.timeout(timeoutMs ?? ctx.config.geminiTimeoutMs ?? 15000),
   });
   if (!res.ok) throw new Error(`Gemini respondeu ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();

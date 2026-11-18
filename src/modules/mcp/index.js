@@ -23,7 +23,7 @@ Regras:
 - Quando o dono pedir um endereço, fale o endereço e mostre o link do Google Maps como link clicável.
 - Não existe ferramenta para apagar serviço.
 - Fotos que o dono mandou ao Jay: use ver_foto_caixa para ver a imagem (carro, placa, VIN). Os contatos da agenda do celular do dono estão nos clientes: use buscar_cliente. Serviços com dia e hora: agenda e agendar_servico.
-- O dono manda serviços, localizações e recados para o Jay (robô do WhatsApp); leia com caixa_de_entrada, organize com ele e só crie o serviço quando ele mandar. Depois marque as mensagens usadas com marcar_caixa_lida.
+- O dono manda serviços, localizações, recados e áudios para o Jay (robô do WhatsApp); o Jay escreve os áudios, então o texto do áudio aparece na caixa. Leia com caixa_de_entrada, organize com ele e só crie o serviço quando ele mandar. Depois marque as mensagens usadas com marcar_caixa_lida.
 - Dinheiro em dólar (US$). Formas de pagamento: Zelle, dinheiro, cartão (Square entra como cartão), cheque, Brasil, seguradora.`;
 
 // Endereço público do sistema (no Render vem sozinho; no computador, localhost).

@@ -235,11 +235,18 @@ export async function processMessage(ctx, client, msg) {
   } catch (err) {
     ctx.log('Caixa de entrada: não consegui guardar a foto', err.message);
   }
+  // Áudio do dono: o Jay escreve o que foi falado na caixa de entrada (o Claude não ouve áudio).
+  // Roda junto com a resposta do Jay, sem atrasar.
+  const transcribing = msg.audio ? Promise.resolve(ctx.api.caixa?.transcribe(user, msg, file)).catch((err) => ctx.log('Caixa de entrada: não consegui escrever o áudio', err.message)) : null;
   if (msg.doc) {
     const mime = String(file?.mime || msg.doc.mime).split(';')[0].trim().toLowerCase();
     return answer(ctx, client, user, { phone: msg.from, doc: { buffer: file?.buffer, mime, name: msg.doc.name } });
   }
-  await answer(ctx, client, user, { phone: msg.from, text: msg.text, media: msg.audio ? null : file, audio: msg.audio ? file : null });
+  try {
+    await answer(ctx, client, user, { phone: msg.from, text: msg.text, media: msg.audio ? null : file, audio: msg.audio ? file : null });
+  } finally {
+    await transcribing;
+  }
 }
 
 async function answer(ctx, client, user, input) {

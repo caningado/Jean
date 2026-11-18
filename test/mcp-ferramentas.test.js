@@ -215,6 +215,42 @@ test('mcp caixa de entrada: foto do dono fica guardada e o Claude vê a imagem',
   assert.equal((await call('ver_foto_caixa', { id: 999 })).error, true);
 });
 
+test('mcp caixa de entrada: áudio do dono vem escrito pelo Jay para o Claude ler', async (t) => {
+  const { processMessage } = await import('../src/modules/whatsapp/index.js');
+  const { ctx, call } = await setup(t);
+  ctx.config.geminiApiKey = 'k';
+  ctx.config.roboVoz = false;
+  const real = globalThis.fetch;
+  t.after(() => (globalThis.fetch = real));
+  const asked = [];
+  globalThis.fetch = async (url, opts) => {
+    if (!String(url).includes('generativelanguage.googleapis.com')) return real(url, opts);
+    const body = JSON.parse(opts.body);
+    asked.push(body.contents[0].parts);
+    const said = 'Pega o Civic no 1200 Alafaya Trail, Oviedo, e leva pro GR2. Cobra $150.';
+    return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ transcricao: said }) }] } }] });
+  };
+  const client = { sendText: async () => true, downloadMedia: async () => ({ buffer: Buffer.from('OggS-fake-audio'), mime: 'audio/ogg; codecs=opus' }) };
+  await processMessage(ctx, client, { id: 'a1', from: OWNER_PHONE, type: 'audio', text: '', mediaId: 'm1', audio: true });
+  const row = ctx.db.prepare("SELECT * FROM jay_inbox WHERE wa_id = 'a1'").get();
+  assert.match(row.text, /^\[mensagem de voz\] Transcrição do Jay: "Pega o Civic no 1200 Alafaya Trail, Oviedo/);
+  const sentAudio = asked.find((parts) => /Transcreva este áudio/.test(parts[1]?.text || ''));
+  assert.ok(sentAudio, 'pediu a transcrição ao Gemini');
+  assert.equal(sentAudio[0].inline_data.mime_type, 'audio/ogg');
+  assert.equal(Buffer.from(sentAudio[0].inline_data.data, 'base64').toString(), 'OggS-fake-audio');
+  const caixa = await call('caixa_de_entrada');
+  assert.match(caixa.text, new RegExp(`\\[${row.id}\\] .* áudio: \\[mensagem de voz\\] Transcrição do Jay: ".*GR2. Cobra \\$150\\."`));
+
+  // Gemini fora do ar: a mensagem avisa o Claude que não deu para escrever.
+  globalThis.fetch = async (url, opts) => (String(url).includes('generativelanguage') ? new Response('erro', { status: 400 }) : real(url, opts));
+  await processMessage(ctx, client, { id: 'a2', from: OWNER_PHONE, type: 'audio', text: '', mediaId: 'm2', audio: true });
+  assert.match(ctx.db.prepare("SELECT text FROM jay_inbox WHERE wa_id = 'a2'").get().text, /não consegui escrever o áudio/);
+
+  // Áudio do motorista não entra na caixa.
+  await processMessage(ctx, client, { id: 'a3', from: DRIVER_PHONE, type: 'audio', text: '', mediaId: 'm3', audio: true });
+  assert.equal(ctx.db.prepare("SELECT COUNT(*) AS n FROM jay_inbox WHERE wa_id = 'a3'").get().n, 0);
+});
+
 test('mcp agenda: agendar ao criar, agendar depois, ver a agenda e tirar', async (t) => {
   const { ctx, call } = await setup(t);
   const r = await call('criar_servico', { cliente_nome: 'Rui', marca: 'Nissan', modelo: 'Altima', retirada: '9 Lake St, Orlando FL', destino: '10 Lake St, Orlando FL', preco: 120, motorista: 'Jorge', agendar_para: 'amanhã 9h' });
