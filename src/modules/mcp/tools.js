@@ -194,6 +194,23 @@ function shift(day, n) {
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
+// Apelido de endereço na retirada/destino ("GR2"): troca pelo endereço salvo e diz qual foi.
+function usePlaceNicknames(ctx, a) {
+  const lines = [];
+  if (!ctx.api.enderecos) return lines;
+  for (const [field, label] of [['retirada', 'Retirada'], ['destino', 'Destino']]) {
+    const p = typeof a[field] === 'string' && a[field].trim() ? ctx.api.enderecos.get(a[field]) : null;
+    if (!p || p.address === a[field].trim()) continue;
+    a[field] = p.address;
+    lines.push(`${label}: apelido "${p.nickname}" = ${p.address}`);
+  }
+  return lines;
+}
+
+function placeLine(p) {
+  return `- ${p.nickname}${p.company_name && simplify(p.company_name) !== simplify(p.nickname) ? ` (empresa ${p.company_name})` : ''}: ${p.address} · mapa: ${mapLink(p.address)}`;
+}
+
 // ---------- ferramentas ----------
 
 export function registerTools(server, ctx, user) {
@@ -219,8 +236,8 @@ export function registerTools(server, ctx, user) {
         placa: z.string().optional(),
         vin: z.string().optional().describe('VIN de 17 caracteres (ex.: lido da foto que o dono mandou)'),
         vin_conferido: z.boolean().optional().describe('true só se o dono confirmou um VIN cujo dígito verificador não bateu'),
-        retirada: z.string().optional().describe('Endereço, coordenadas ou link de mapa de onde pegar o carro'),
-        destino: z.string().optional().describe('Endereço de entrega'),
+        retirada: z.string().optional().describe('Endereço, coordenadas, link de mapa ou apelido de endereço (ex.: "GR2") de onde pegar o carro'),
+        destino: z.string().optional().describe('Endereço de entrega, ou apelido de endereço (ex.: "GR2")'),
         endereco_conferido: z.boolean().optional().describe('true se o dono confirmou o endereço do jeito que está, quando o mapa não achou'),
         preco: z.union([z.number(), z.string()]).optional().describe('Preço em dólares, ex.: 180, ou "free"'),
         forma_pagamento: z.string().optional().describe('Forma de pagamento combinada (Zelle, dinheiro, cartão, Square, cheque, Brasil, seguradora)'),
@@ -232,6 +249,7 @@ export function registerTools(server, ctx, user) {
       annotations: write,
     },
     safe(ctx, async (a) => {
+      const nickLines = usePlaceNicknames(ctx, a);
       const vehicle = [a.ano, a.marca, a.modelo, a.cor].map((v) => (v == null ? '' : String(v).trim())).filter(Boolean).join(' ');
       const missing = [];
       if (!a.cliente_id && !a.cliente_nome && !a.cliente_telefone) missing.push('cliente (nome ou telefone)');
@@ -267,7 +285,7 @@ export function registerTools(server, ctx, user) {
       logAction(ctx, user, s.id, 'criar_servico', { args: a }, 'criado_servico');
       if (vin) logAction(ctx, user, s.id, 'vin', { vin }, 'vin_salvo');
       s = data.services.get(s.id);
-      const lines = [`Serviço #${s.id} criado.`, line(ctx, s)];
+      const lines = [`Serviço #${s.id} criado.`, line(ctx, s), ...nickLines];
       if (s.contact_phone && a.cliente_nome && simplify(s.contact_name) !== simplify(a.cliente_nome)) lines.push(`Atenção: esse telefone já era do cliente "${s.contact_name}"; o serviço ficou no nome dele.`);
       if (s.pickup) lines.push(`Retirada no mapa: ${mapLink(s.pickup)}`);
       if (s.dropoff) lines.push(`Entrega no mapa: ${mapLink(s.dropoff)}`);
@@ -484,8 +502,8 @@ export function registerTools(server, ctx, user) {
       description:
         'Calcula as milhas de carro entre a retirada e o destino pelo Google Maps e sugere um preço, aprendido com os serviços que o dono já fez (da mesma empresa do cliente, quando tem). Não grava nada. Use antes de perguntar o preço ao dono e leia a sugestão para ele: quem decide o preço é sempre o dono. Se já souber as milhas, mande em milhas.',
       inputSchema: {
-        retirada: z.string().optional().describe('Endereço, coordenadas ou link de mapa de onde pegar'),
-        destino: z.string().optional().describe('Endereço, coordenadas ou link de mapa de onde entregar'),
+        retirada: z.string().optional().describe('Endereço, coordenadas, link de mapa ou apelido de endereço (ex.: "GR2") de onde pegar'),
+        destino: z.string().optional().describe('Endereço, coordenadas, link de mapa ou apelido de endereço de onde entregar'),
         milhas: z.number().optional().describe('Milhas, se já souber (aí não usa o Google Maps)'),
         cliente_id: z.number().int().optional().describe('Id do cliente (de buscar_cliente), para usar o preço da empresa dele'),
       },
@@ -493,9 +511,10 @@ export function registerTools(server, ctx, user) {
     },
     safe(ctx, async (a) => {
       const servicos = ctx.api.servicos;
+      const nickLines = usePlaceNicknames(ctx, a);
       let miles = Number(a.milhas) > 0 ? Number(a.milhas) : null;
       let minutes = null;
-      const out = [];
+      const out = [...nickLines];
       if (miles == null && a.retirada && a.destino) {
         if (!ctx.rotas) out.push('O Google Maps ainda não está ligado no sistema (falta a chave GOOGLE_MAPS_API_KEY no Render): pergunte as milhas ao dono.');
         else {
@@ -568,6 +587,49 @@ export function registerTools(server, ctx, user) {
       ctx.db.prepare('UPDATE contacts SET nickname = ? WHERE id = ?').run(value, c.id);
       logAction(ctx, user, null, 'apelido_cliente', { cliente_id: c.id, apelido: value });
       return ok(value ? `Apelido "${value}" gravado para ${c.name}.` : `Apelido de ${c.name} apagado.`);
+    })
+  );
+
+  // Endereços com apelido: a lista do painel (Menu › Endereços com apelido). Oficina, loja,
+  // mecânico, casa de alguém ("Luan"). Os endereços das empresas entram aqui sozinhos.
+  server.registerTool(
+    'enderecos_com_apelido',
+    {
+      title: 'Endereços com apelido',
+      description:
+        'Procura nos endereços com apelido do dono (ex.: "GR2", "Ribas", "Luan"): oficinas, lojas, mecânicos, casa de alguém, e as empresas com endereço. Use sempre que o dono falar um lugar pelo nome ou apelido em vez do endereço. Acha pelo apelido, pelo nome da empresa ou por parte do endereço. Sem busca, lista todos. Na retirada e no destino de criar_servico e calcular_preco, o apelido já vira o endereço sozinho.',
+      inputSchema: { busca: z.string().optional().describe('Apelido, nome ou parte do endereço; vazio = todos') },
+      annotations: read,
+    },
+    safe(ctx, async ({ busca }) => {
+      if (!ctx.api.enderecos) return fail('Os endereços com apelido não estão disponíveis.');
+      const list = ctx.api.enderecos.find(busca);
+      if (!list.length) {
+        return ok(busca ? `Nenhum endereço com o apelido "${busca}". Pergunte ao dono o endereço e se quer salvar com esse apelido (salvar_endereco_apelido).` : 'Ainda não tem nenhum endereço com apelido.');
+      }
+      const shown = list.slice(0, 50);
+      return ok([`${list.length} endereço(s) com apelido${busca ? ` para "${busca}"` : ''}:`, ...shown.map(placeLine), list.length > shown.length ? `(mostrando ${shown.length}; refine a busca)` : null].filter(Boolean).join('\n'));
+    })
+  );
+
+  server.registerTool(
+    'salvar_endereco_apelido',
+    {
+      title: 'Salvar endereço com apelido',
+      description: `Cadastra um apelido novo para um endereço (ex.: GR2 = 4912 Old Winter Garden Rd, Orlando, FL 32811) ou muda o endereço de um apelido que já existe. Depois o dono pode falar só o apelido na retirada ou no destino. Se o apelido for de uma empresa, muda o endereço da empresa também. ${CONFIRM}`,
+      inputSchema: {
+        apelido: z.string().min(1).describe('Como o dono chama o lugar, ex.: "GR2", "Luan"'),
+        endereco: z.string().min(1).describe('Endereço completo (rua, número, cidade, estado, CEP), coordenadas ou link de mapa'),
+        endereco_conferido: z.boolean().optional().describe('true se o dono confirmou o endereço do jeito que está, quando o mapa não achou'),
+      },
+      annotations: write,
+    },
+    safe(ctx, async (a) => {
+      if (!ctx.api.enderecos) return fail('Os endereços com apelido não estão disponíveis.');
+      const { place, created, before } = await ctx.api.enderecos.save({ nickname: a.apelido, address: a.endereco, addressOk: a.endereco_conferido });
+      logAction(ctx, user, null, 'salvar_endereco_apelido', { apelido: place.nickname, endereco: place.address, antes: before });
+      const head = created ? `Apelido "${place.nickname}" salvo.` : before === place.address ? `O apelido "${place.nickname}" já estava com esse endereço.` : `Endereço do apelido "${place.nickname}" mudado (antes: ${before}).`;
+      return ok([head, placeLine(place)].join('\n'));
     })
   );
 

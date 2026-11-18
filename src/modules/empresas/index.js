@@ -365,6 +365,11 @@ function setup(ctx) {
     forContact(contactId) {
       return ctx.db.prepare('SELECT co.* FROM contacts c JOIN companies co ON co.id = c.company_id WHERE c.id = ?').get(contactId) || null;
     },
+    // Muda o endereço da empresa (e o do apelido dela junto).
+    setAddress(companyId, address) {
+      ctx.db.prepare('UPDATE companies SET address = ? WHERE id = ?').run(address, companyId);
+      syncCompanyPlace(ctx, getCompany(ctx, companyId));
+    },
   };
 }
 

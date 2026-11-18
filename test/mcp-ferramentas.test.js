@@ -35,7 +35,7 @@ const events = (ctx, id) => ctx.db.prepare('SELECT action, source FROM service_e
 test('mcp ferramentas: lista tudo e não tem ferramenta de apagar', async (t) => {
   const { client } = await setup(t);
   const names = (await client.listTools()).tools.map((x) => x.name).sort();
-  assert.deepEqual(names, ['agenda', 'agendar_servico', 'anexar_foto_caixa', 'apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'caixa_de_entrada', 'calcular_preco', 'criar_servico', 'equipe', 'listar_servicos', 'marcar_caixa_lida', 'marcar_pago', 'teste', 'ver_foto_caixa', 'ver_fotos_servico', 'ver_servico']);
+  assert.deepEqual(names, ['agenda', 'agendar_servico', 'anexar_foto_caixa', 'apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'caixa_de_entrada', 'calcular_preco', 'criar_servico', 'enderecos_com_apelido', 'equipe', 'listar_servicos', 'marcar_caixa_lida', 'marcar_pago', 'salvar_endereco_apelido', 'teste', 'ver_foto_caixa', 'ver_fotos_servico', 'ver_servico']);
   assert.ok(!names.some((n) => /apagar|delete|excluir/.test(n)));
 });
 
@@ -273,4 +273,47 @@ test('mcp agenda: agendar ao criar, agendar depois, ver a agenda e tirar', async
   assert.match((await call('agendar_servico', { numero: 1, quando: 'sexta 8am' })).text, /agendado para/);
   assert.match((await call('ver_servico', { numero: 1 })).text, /Agendado para: /);
   assert.deepEqual(events(ctx, 1).map((e) => e.action), ['criado_servico', 'agendado', 'agendado']);
+});
+
+test('mcp endereços com apelido: buscar, salvar, mudar e usar na retirada/destino e no preço', async (t) => {
+  const { ctx, call } = await setup(t);
+  const vazio = await call('enderecos_com_apelido', { busca: 'GR2' });
+  assert.match(vazio.text, /Nenhum endereço com o apelido "GR2"/);
+
+  const novo = await call('salvar_endereco_apelido', { apelido: 'GR2', endereco: 'GR2 Auto Mechanic, 4912 Old Winter Garden Rd, Orlando, FL 32811' });
+  assert.equal(novo.error, false, novo.text);
+  assert.match(novo.text, /Apelido "GR2" salvo/);
+  assert.equal(ctx.db.prepare("SELECT address FROM saved_places WHERE key = 'gr2'").get().address, 'GR2 Auto Mechanic, 4912 Old Winter Garden Rd, Orlando, FL 32811');
+  await call('salvar_endereco_apelido', { apelido: 'Luan', endereco: '10 Oak Ave, Oviedo FL' });
+
+  // Acha pelo apelido (sem diferença de maiúscula), por parte do endereço, e lista todos.
+  assert.match((await call('enderecos_com_apelido', { busca: 'gr2' })).text, /GR2: GR2 Auto Mechanic, 4912 Old Winter Garden Rd.*google\.com\/maps/);
+  assert.match((await call('enderecos_com_apelido', { busca: 'oviedo' })).text, /Luan: 10 Oak Ave/);
+  assert.match((await call('enderecos_com_apelido', {})).text, /2 endereço\(s\)/);
+
+  // Mudar o endereço de um apelido que já existe.
+  const muda = await call('salvar_endereco_apelido', { apelido: 'luan', endereco: '20 Pine St, Oviedo FL' });
+  assert.match(muda.text, /mudado \(antes: 10 Oak Ave, Oviedo FL\)/);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM saved_places').get().n, 2);
+  assert.equal(ctx.db.prepare("SELECT COUNT(*) AS n FROM mcp_actions WHERE tool = 'salvar_endereco_apelido'").get().n, 3);
+
+  // Apelido na retirada e no destino vira o endereço salvo.
+  const r = await call('criar_servico', { cliente_nome: 'Ana', cliente_telefone: '407 555 0144', marca: 'Toyota', modelo: 'Camry', retirada: 'gr2', destino: 'Luan', preco: 120, motorista: 'Jorge' });
+  assert.equal(r.error, false, r.text);
+  assert.match(r.text, /Retirada: apelido "GR2" = GR2 Auto Mechanic/);
+  const s = ctx.db.prepare('SELECT pickup, dropoff FROM services').get();
+  assert.equal(s.pickup, 'GR2 Auto Mechanic, 4912 Old Winter Garden Rd, Orlando, FL 32811');
+  assert.equal(s.dropoff, '20 Pine St, Oviedo FL');
+
+  const preco = await call('calcular_preco', { retirada: 'GR2', destino: 'luan', milhas: 12 });
+  assert.match(preco.text, /Retirada: apelido "GR2" = GR2 Auto Mechanic/);
+  assert.match(preco.text, /Destino: apelido "Luan" = 20 Pine St/);
+
+  // Apelido que é de uma empresa: muda o endereço da empresa também.
+  const c = ctx.db.prepare("INSERT INTO companies (name, nickname, address, token, created_at) VALUES ('SUPER SPEED', 'SS', '1 Main St, Orlando FL', 'tk', ?)").run(new Date().toISOString());
+  ctx.api.empresas.setAddress(Number(c.lastInsertRowid), '1 Main St, Orlando FL');
+  assert.match((await call('enderecos_com_apelido', { busca: 'super speed' })).text, /SS \(empresa SUPER SPEED\): 1 Main St/);
+  await call('salvar_endereco_apelido', { apelido: 'ss', endereco: '9 Elm St, Orlando FL' });
+  assert.equal(ctx.db.prepare('SELECT address FROM companies WHERE id = ?').get(Number(c.lastInsertRowid)).address, '9 Elm St, Orlando FL');
+  assert.equal(ctx.db.prepare("SELECT address FROM saved_places WHERE key = 'ss'").get().address, '9 Elm St, Orlando FL');
 });
