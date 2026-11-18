@@ -236,19 +236,17 @@ test('mcp caixa de entrada: só a foto escolhida vai para o serviço e para o mo
 
   // O dono escolhe só a foto do carro (a 2ª era a print do endereço).
   const chosen = await call('anexar_foto_caixa', { ids: [ids[0]], numero_servico: id });
-  assert.match(chosen.text, /1 foto\(s\) colocada\(s\) no serviço #\d+ e mandada\(s\) para Jorge/);
+  assert.match(chosen.text, /1 foto\(s\) colocada\(s\) no serviço #\d+\. O motorista vê no serviço, no painel/);
   const photos = ctx.db.prepare('SELECT * FROM photos WHERE service_id = ?').all(id);
   assert.equal(photos.length, 1);
   assert.ok(photos.every((p) => p.origin === 'caixa' && p.kind === 'outro' && !p.stamped_file));
   await new Promise((r) => setImmediate(r));
-  assert.equal(sentImages.length, 1);
-  assert.equal(sentImages[0].to, DRIVER_PHONE);
-  assert.match(sentImages[0].caption, /Foto do carro do serviço/);
+  assert.equal(sentImages.length, 0, 'o Jay não manda nada ao motorista');
 
   // Anexar de novo não duplica nem manda de novo.
   assert.match((await call('anexar_foto_caixa', { ids: [ids[0]], numero_servico: id })).text, /Já estava/);
   assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM photos WHERE service_id = ?').get(id).n, 1);
-  assert.equal(sentImages.length, 1);
+  assert.equal(sentImages.length, 0);
 
   // O motorista vê a foto no painel (detalhe do serviço).
   const detail = ctx.loaded.find((m) => m.name === 'fotos').serviceDetail({ ctx, service: ctx.data.services.get(id) });
@@ -261,25 +259,6 @@ test('mcp caixa de entrada: só a foto escolhida vai para o serviço e para o mo
   assert.match(res.content.at(-1).text, /mostrando 1 de 1/);
   assert.match((await call('ver_fotos_servico', { numero: id, tipo: 'antes' })).text, /não tem fotos desse tipo/);
   assert.ok(driver);
-});
-
-test('mcp caixa de entrada: serviço passado depois ao motorista leva as fotos junto', async (t) => {
-  const { processMessage } = await import('../src/modules/whatsapp/index.js');
-  const { ctx, call } = await setup(t);
-  const sentImages = [];
-  ctx.sendImage = async (to) => sentImages.push(to);
-  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
-  const wa = { sendText: async () => true, downloadMedia: async () => ({ buffer: png, mime: 'image/png' }) };
-  await processMessage(ctx, wa, { id: 'f1', from: OWNER_PHONE, type: 'image', text: '', mediaId: 'm1' });
-  const [row] = ctx.db.prepare('SELECT id FROM jay_inbox').all();
-  const r = await call('criar_servico', { cliente_nome: 'Ana', marca: 'Kia', modelo: 'Soul', retirada: '12 Main St, Orlando FL', destino: '40 Oak Ave, Kissimmee FL', preco: 150, motorista: 'nenhum' });
-  assert.equal(r.error, false, r.text);
-  const id = ctx.db.prepare('SELECT MAX(id) AS id FROM services').get().id;
-  assert.match((await call('anexar_foto_caixa', { ids: [row.id], numero_servico: id })).text, /quando o serviço for passado para ele/);
-  assert.equal(sentImages.length, 0, 'sem motorista ainda');
-  await call('atribuir_motorista', { numero: id, motorista: 'Jorge' });
-  await new Promise((r) => setTimeout(r, 20));
-  assert.deepEqual(sentImages, [DRIVER_PHONE]);
 });
 
 test('mcp agenda: agendar ao criar, agendar depois, ver a agenda e tirar', async (t) => {

@@ -160,26 +160,6 @@ function attachInboxPhoto(ctx, { serviceId, file, mime, userId }) {
   return savePhoto(ctx, { serviceId, kind: 'outro', buffer, mime, userId, origin: 'caixa' });
 }
 
-// Manda ao motorista, no WhatsApp, as fotos do carro que o dono anexou (só as da caixa).
-async function sendCarPhotos(ctx, service, driver, ids = null) {
-  if (!ctx.sendImage || !driver?.phone) return 0;
-  const rows = ctx.db
-    .prepare("SELECT * FROM photos WHERE service_id = ? AND origin = 'caixa' ORDER BY id")
-    .all(service.id)
-    .filter((p) => !ids || ids.includes(p.id));
-  let n = 0;
-  for (const p of rows) {
-    try {
-      const buffer = fs.readFileSync(path.join(ctx.config.uploadsDir, p.file));
-      await ctx.sendImage(driver.phone, buffer, p.mime || 'image/jpeg', `📷 Foto do carro do serviço #${ctx.data.services.ref(service, driver)} (mandada pelo ADM)`);
-      n++;
-    } catch (err) {
-      ctx.log(`Fotos: não consegui mandar a foto ${p.id} para ${driver.name}`, err.message);
-    }
-  }
-  return n;
-}
-
 function savePhoto(ctx, { serviceId, kind, angle = null, buffer, mime, userId, place = null, origin = null }) {
   const dir = path.join(ctx.config.uploadsDir, `servico-${serviceId}`);
   fs.mkdirSync(dir, { recursive: true });
@@ -535,7 +515,6 @@ export default {
       saveDoc: (doc) => saveDoc(ctx, doc),
       noteLocation: (userId, location) => noteLocation(ctx, userId, location),
       attachInboxPhoto: (photo) => attachInboxPhoto(ctx, photo),
-      sendCarPhotos: (service, driver, ids) => sendCarPhotos(ctx, service, driver, ids),
       list: (serviceId) => ctx.db.prepare('SELECT * FROM photos WHERE service_id = ? ORDER BY id').all(serviceId),
       fileOf: (photo) => path.join(ctx.config.uploadsDir, photo.stamped_file || photo.file),
       kindLabel: KIND_LABEL,

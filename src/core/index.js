@@ -237,8 +237,6 @@ async function notifyAssigned(ctx, service, byUser) {
   if (!driver) return;
   try {
     await ctx.send(driver.phone, [`🚚 ${byUser.name} passou um serviço para a sua fila.`, ctx.data.services.describe(service, driver), `Para começar, mande *abrir ${ctx.data.services.ref(service, driver)}* (ou toque em Começar no painel).`].join('\n\n'));
-    // Fotos do carro que o dono anexou (vindas da caixa do Jay): para o motorista achar o carro.
-    await ctx.api.fotos?.sendCarPhotos?.(service, driver);
   } catch (err) {
     ctx.log(`Não consegui avisar ${driver.name} do serviço #${service.id}`, err);
   }
