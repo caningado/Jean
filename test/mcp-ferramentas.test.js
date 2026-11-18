@@ -408,7 +408,11 @@ test('mcp caixa de entrada: PDF do dono fica guardado e o Claude lê o texto', a
   const row = ctx.db.prepare("SELECT * FROM jay_inbox WHERE wa_id = 'p1'").get();
   assert.ok(row.doc_file, 'guardou o PDF');
   assert.equal(row.file, null, 'PDF não vira foto');
-  assert.match((await call('caixa_de_entrada')).text, new RegExp(`\\[${row.id}\\] .* arquivo: \\[arquivo gatepass.pdf\\]\\n    PDF guardado: use ver_arquivo_caixa com id ${row.id}`));
+  assert.ok(row.doc_text, 'o texto já foi tirado quando o PDF chegou');
+  // O texto vem direto na caixa de entrada (o Claude por voz não abre arquivo).
+  const listed = (await call('caixa_de_entrada')).text;
+  assert.match(listed, new RegExp(`\\[${row.id}\\] .* arquivo: \\[arquivo gatepass.pdf\\]\\n    Texto do PDF \\(2 página\\(s\\)\\), texto do PDF:\\n      --- Página 1 ---\\n      Gate Pass - CarMax Clermont\\n      Pickup: 16731 State Road 50`));
+  assert.match(listed, /      VIN 1HGCM82633A004352/);
   const r = await call('ver_arquivo_caixa', { id: row.id });
   assert.equal(r.error, false, r.text);
   assert.match(r.text, /2 página\(s\)/);
@@ -416,6 +420,9 @@ test('mcp caixa de entrada: PDF do dono fica guardado e o Claude lê o texto', a
   assert.match(r.text, /--- Página 2 ---\nVIN 1HGCM82633A004352/);
   assert.equal((await call('ver_foto_caixa', { id: row.id })).error, true, 'não é foto');
   assert.equal((await call('ver_arquivo_caixa', { id: 999 })).error, true);
+  // PDF antigo, de antes de guardar o arquivo: a caixa avisa para mandar de novo.
+  ctx.db.prepare("INSERT INTO jay_inbox (user_id, wa_id, type, text, created_at) VALUES (?, 'old', 'document', '[arquivo velho.pdf]', ?)").run(row.user_id, new Date().toISOString());
+  assert.match((await call('caixa_de_entrada')).text, /velho\.pdf\]\n    \(O arquivo não ficou guardado/);
 
   // PDF escaneado (sem letra): o Gemini lê.
   ctx.config.geminiApiKey = 'k';
@@ -430,6 +437,7 @@ test('mcp caixa de entrada: PDF do dono fica guardado e o Claude lê o texto', a
   const wa2 = { sendText: async () => true, downloadMedia: async () => ({ buffer: scanned, mime: 'application/pdf' }) };
   await processMessage(ctx, wa2, { id: 'p2', from: OWNER_PHONE, type: 'document', text: '', mediaId: 'm2', doc: { name: 'scan.pdf', mime: 'application/pdf' } });
   const id2 = ctx.db.prepare("SELECT id FROM jay_inbox WHERE wa_id = 'p2'").get().id;
+  assert.match((await call('caixa_de_entrada')).text, /Texto do PDF \(1 página\(s\)\), PDF escaneado, lido pelo Gemini.*\n      Tow order: 12 Main St, Orlando/);
   const r2 = await call('ver_arquivo_caixa', { id: id2 });
   assert.match(r2.text, /lido pelo Gemini/);
   assert.match(r2.text, /Tow order: 12 Main St, Orlando/);
