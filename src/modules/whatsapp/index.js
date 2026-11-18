@@ -53,8 +53,9 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
   return {
     configured: Boolean(token && phoneNumberId),
 
-    async sendText(to, body) {
-      if (silent(to, 'texto')) return false;
+    // { exceção: true } passa pelo silêncio: só o VIN lido da foto do dono (pedido do dono 18/11).
+    async sendText(to, body, { excecao = false } = {}) {
+      if (!excecao && silent(to, 'texto')) return false;
       // Trava: nunca fala com cliente nem com ninguém de fora da equipe.
       if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
       guard(to);
@@ -270,6 +271,16 @@ async function answer(ctx, client, user, input) {
   // Jay em silêncio: não executa comando nenhum (o dono não veria a resposta). As mensagens do
   // dono já ficaram na caixa de entrada para o Claude.
   if (ctx.config.whatsapp.conversar === false) {
+    // Única exceção: foto do dono com VIN. O Jay lê e manda o VIN sozinho numa mensagem, fácil
+    // de copiar, como antes (pedido do dono 18/11). Foto sem VIN: continua em silêncio.
+    if (user.role === 'dono' && input.media?.buffer && ctx.api.vin?.readForOwner) {
+      const vin = await ctx.api.vin.readForOwner(input.media.buffer, input.media.mime).catch((err) => (ctx.log('Falha ao ler VIN da foto', err), null));
+      if (vin) {
+        for (const reply of vin) await client.sendText(input.phone, reply, { excecao: true });
+        ctx.log(`WhatsApp: Jay em silêncio, mas mandou o VIN lido da foto para ${user.name}.`);
+        return;
+      }
+    }
     ctx.log(`WhatsApp: Jay em silêncio, mensagem de ${user.name} não foi executada${user.role === 'dono' ? ' (ficou na caixa de entrada)' : ''}.`);
     return;
   }

@@ -33,3 +33,40 @@ test('Jay em silêncio: o cliente do WhatsApp não manda texto, foto nem áudio'
   assert.equal(await on.sendText(OWNER_PHONE, 'oi'), true);
   assert.equal(calls.length, 1);
 });
+
+test('Jay em silêncio: foto do dono com VIN volta com o VIN para copiar (só isso)', async (t) => {
+  const ctx = makeContext({ JAY_WHATSAPP: '', GEMINI_API_KEY: 'k' });
+  const realFetch = globalThis.fetch;
+  t.after(() => (globalThis.fetch = realFetch));
+  let temVin = true;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('vpic.nhtsa.dot.gov')) return Response.json({ Results: [{ ModelYear: '2018', Make: 'RAM', Model: '2500' }] });
+    if (String(url).includes('generativelanguage.googleapis.com')) return Response.json({ candidates: [{ content: { parts: [{ text: temVin ? '3C6URVJG2JE139479' : 'nenhum' }] } }] });
+    return realFetch(url);
+  };
+  const sent = [];
+  const jpg = Buffer.from([0xff, 0xd8, 0xff]);
+  const client = { sendText: async (to, text, opts) => sent.push({ to, text, excecao: !!opts?.excecao }), downloadMedia: async () => ({ buffer: jpg, mime: 'image/jpeg' }) };
+  await processMessage(ctx, client, { id: 'v1', from: OWNER_PHONE, type: 'image', text: '', mediaId: 'm1' });
+  assert.deepEqual(sent.map((m) => m.to), [OWNER_PHONE, OWNER_PHONE]);
+  assert.equal(sent[0].text, '3C6URVJG2JE139479'); // sozinho, para copiar
+  assert.match(sent[1].text, /Li esse VIN.*\nVeículo: 2018 RAM 2500/);
+  assert.ok(sent.every((m) => m.excecao));
+  assert.ok(ctx.db.prepare("SELECT file FROM jay_inbox WHERE wa_id = 'v1'").get().file, 'a foto continua na caixa');
+
+  // Foto sem VIN e foto do motorista: nada.
+  temVin = false;
+  await processMessage(ctx, client, { id: 'v2', from: OWNER_PHONE, type: 'image', text: '', mediaId: 'm2' });
+  temVin = true;
+  await processMessage(ctx, client, { id: 'v3', from: DRIVER_PHONE, type: 'image', text: '', mediaId: 'm3' });
+  assert.equal(sent.length, 2);
+});
+
+test('Jay em silêncio: só a exceção do VIN passa pelo cliente do WhatsApp', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => (calls.push(url), { ok: true, json: async () => ({ id: 'x' }), text: async () => '' });
+  const client = createWhatsAppClient({ whatsapp: { token: 't', phoneNumberId: 'p', apiVersion: 'v21.0', conversar: false } }, fetchImpl, { isTeam: () => true });
+  assert.equal(await client.sendText(OWNER_PHONE, 'oi'), false);
+  assert.equal(await client.sendText(OWNER_PHONE, '3C6URVJG2JE139479', { excecao: true }), true);
+  assert.equal(calls.length, 1);
+});
