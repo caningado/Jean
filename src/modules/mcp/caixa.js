@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { nowIso } from '../../lib/util.js';
+import { askGemini } from '../../lib/gemini.js';
 import { mapLink } from '../../lib/validate.js';
 import { imageForClaude } from '../../lib/imagem.js';
 import { logAction } from './tools.js';
@@ -33,6 +34,24 @@ export const caixaMigrations = [
 const PHOTO_DIR = 'caixa';
 const IMAGE_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
 const MAX_IMAGE = 8 * 1024 * 1024;
+
+// Áudio do dono: o Jay escreve o que foi falado (o Claude não ouve áudio). Pedido do Caningado 18/11.
+const MAX_AUDIO = 15 * 1024 * 1024;
+const VOICE_TAG = '[mensagem de voz]';
+const TRANSCRIBE_PROMPT = `Transcreva este áudio de WhatsApp palavra por palavra. Quem fala é o dono de uma empresa de guincho nos EUA (Flórida), em português do Brasil, às vezes informal e misturando inglês. Pode ter barulho de rua ou de motor.
+- Escreva exatamente o que foi falado, sem resumir, sem corrigir e sem inventar.
+- Endereços, nomes de rua, cidades, nomes de lugar e de empresa em inglês: escreva em inglês do jeito americano (ex.: "1200 Alafaya Trail, Oviedo", "Home Depot").
+- Números, telefones, valores, anos e milhas: escreva com algarismos (ex.: "407 555 0102", "$150", "2015").
+- Placa e VIN soletrados: junte as letras e números (ex.: "ABC1234").
+- Se não der para entender um trecho, escreva [inaudível]. Se o áudio estiver mudo, deixe vazio.`;
+const TRANSCRIBE_SCHEMA = { type: 'OBJECT', properties: { transcricao: { type: 'STRING' } }, required: ['transcricao'] };
+
+// O WhatsApp manda "audio/ogg; codecs=opus": o Gemini quer só "audio/ogg".
+function audioMime(mime) {
+  const type = String(mime || '').split(';')[0].trim().toLowerCase();
+  if (type === 'audio/x-m4a' || type === 'audio/m4a') return 'audio/mp4';
+  return type.startsWith('audio/') ? type : 'audio/ogg';
+}
 
 const KIND = { image: 'foto', document: 'arquivo', audio: 'áudio', location: 'localização', contacts: 'contato', text: 'texto' };
 
@@ -74,6 +93,33 @@ export function createCaixa(ctx) {
       ctx.db.prepare('UPDATE jay_inbox SET file = ?, mime = ? WHERE id = ?').run(name, mime, row.id);
       return true;
     },
+    // Áudio do dono: escreve o que foi falado e guarda o texto na mensagem da caixa.
+    // Usa o Gemini que o sistema já tem (GEMINI_API_KEY). Se falhar, a mensagem fica marcada.
+    async transcribe(user, msg, file, fetchImpl = globalThis.fetch) {
+      if (user.role !== 'dono' || !msg.audio || !msg.id) return null;
+      const row = ctx.db.prepare('SELECT id, text FROM jay_inbox WHERE wa_id = ?').get(msg.id);
+      if (!row) return null;
+      const put = (text) => ctx.db.prepare('UPDATE jay_inbox SET text = ? WHERE id = ?').run(text.slice(0, 4000), row.id);
+      if (!ctx.config.geminiApiKey) return null;
+      if (!file?.buffer?.length || file.buffer.length > MAX_AUDIO) {
+        put(`${VOICE_TAG} (não consegui escrever: ${file?.buffer?.length ? 'áudio grande demais' : 'não baixou o áudio'}; peça ao dono para contar ou escrever)`);
+        return null;
+      }
+      try {
+        const a = await askGemini(
+          ctx,
+          { prompt: TRANSCRIBE_PROMPT, audio: file.buffer, mimeType: audioMime(file.mime), schema: TRANSCRIBE_SCHEMA, model: ctx.config.geminiModel, timeoutMs: 60000 },
+          fetchImpl
+        );
+        const said = String(a.transcricao || '').trim();
+        put(said ? `${VOICE_TAG} Transcrição do Jay: "${said}"` : `${VOICE_TAG} (áudio sem fala que deu para entender)`);
+        return said;
+      } catch (err) {
+        ctx.log?.('Caixa de entrada: não consegui escrever o áudio', err.message);
+        put(`${VOICE_TAG} (não consegui escrever o áudio agora; peça ao dono para contar ou escrever)`);
+        return null;
+      }
+    },
     // Leva SÓ as fotos que o dono escolheu para o serviço (ex.: a do carro, não a print do
     // endereço). O motorista vê no serviço, no painel. Cada foto vai uma vez só.
     // O Jay não manda nada aos motoristas (decisão do dono 18/11).
@@ -95,7 +141,7 @@ export function createCaixa(ctx) {
     // Só guarda o que vem do dono (ADM).
     save(user, msg) {
       if (user.role !== 'dono') return null;
-      const extra = msg.audio ? '[mensagem de voz]' : msg.doc ? `[arquivo${msg.doc.name ? ` ${msg.doc.name}` : ''}]` : msg.mediaId ? '[foto]' : '';
+      const extra = msg.audio ? VOICE_TAG : msg.doc ? `[arquivo${msg.doc.name ? ` ${msg.doc.name}` : ''}]` : msg.mediaId ? '[foto]' : '';
       const text = [extra, msg.text].filter(Boolean).join(' ').slice(0, 4000);
       if (!text && !msg.location) return null;
       ctx.db
@@ -114,7 +160,7 @@ export function registerCaixaTools(server, ctx, user) {
     {
       title: 'Caixa de entrada do Jay',
       description:
-        'Lê o que o dono mandou para o Jay no WhatsApp (serviços encaminhados, localizações, contatos, recados), do mais antigo para o mais novo. Mensagens seguidas costumam ser do mesmo serviço. Atenção: o Jay pode já ter criado o serviço sozinho a partir dessas mensagens; antes de criar, confira com listar_servicos (hoje) e, se já existir, use atualizar_servico em vez de criar outro. Organize junto com o dono e só crie serviço quando ele mandar; depois use marcar_caixa_lida.',
+        'Lê o que o dono mandou para o Jay no WhatsApp (serviços encaminhados, localizações, contatos, recados, áudios), do mais antigo para o mais novo. Áudios vêm escritos pelo Jay ("Transcrição do Jay"); endereço ou nome entendido errado é possível, então confira com o dono. Mensagens seguidas costumam ser do mesmo serviço. Atenção: o Jay pode já ter criado o serviço sozinho a partir dessas mensagens; antes de criar, confira com listar_servicos (hoje) e, se já existir, use atualizar_servico em vez de criar outro. Organize junto com o dono e só crie serviço quando ele mandar; depois use marcar_caixa_lida.',
       inputSchema: {
         incluir_lidas: z.boolean().optional().describe('true para ver também as já tratadas'),
         limite: z.number().int().min(1).max(100).optional(),
