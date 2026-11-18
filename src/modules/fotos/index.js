@@ -110,6 +110,8 @@ function listDocs(ctx, serviceId) {
 }
 
 function publicRoutes(app, ctx) {
+  app.get('/fotos/:token', (req, res) => sharePage(ctx, req, res));
+  app.get('/fotos/:token/:n.jpg', (req, res) => shareImage(ctx, req, res));
   app.get('/arquivo/:id/:token/:name', (req, res) => {
     const id = Number(req.params.id);
     const [exp, sig] = String(req.params.token).split('.');
@@ -123,6 +125,69 @@ function publicRoutes(app, ctx) {
     res.setHeader('Cache-Control', 'private, no-store');
     res.sendFile(path.join(ctx.config.uploadsDir, doc.file));
   });
+}
+
+// ---------- link das fotos para o cliente (WhatsApp do cliente) ----------
+// O celular não deixa um site escolher o contato no "Compartilhar". Então o painel abre a
+// conversa do cliente (wa.me/número) com uma mensagem pronta e um link para as fotos marcadas.
+// O link não precisa de login, mostra só aquelas fotos (carimbadas) e vale por 60 dias.
+const SHARE_DAYS = 60;
+const shareSig = (ctx, payload) => crypto.createHmac('sha256', ctx.config.secret).update(`fotos:${payload}`).digest('base64url').slice(0, 22);
+function shareToken(ctx, serviceId, ids) {
+  const exp = Math.floor(Date.now() / 1000) + SHARE_DAYS * 86400;
+  const payload = `${serviceId}-${ids.join('_')}-${exp.toString(36)}`;
+  return `${payload}-${shareSig(ctx, payload)}`;
+}
+function readShareToken(ctx, token) {
+  const m = /^(\d+)-([\d_]+)-([0-9a-z]+)-([\w-]{22})$/.exec(String(token || ''));
+  if (!m) return null;
+  const payload = `${m[1]}-${m[2]}-${m[3]}`;
+  const expected = Buffer.from(shareSig(ctx, payload));
+  const given = Buffer.from(m[4]);
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
+  return { serviceId: Number(m[1]), ids: m[2].split('_').map(Number), expired: parseInt(m[3], 36) * 1000 <= Date.now() };
+}
+function publicBase(ctx) {
+  const env = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL;
+  const saved = ctx.db.prepare("SELECT value FROM settings WHERE key = 'public_url'").get()?.value;
+  return (env || saved || '').replace(/\/$/, '');
+}
+// Fotos do link, na ordem marcada, só as que ainda existem e são daquele serviço.
+function sharedPhotos(ctx, share) {
+  const get = ctx.db.prepare('SELECT * FROM photos WHERE id = ? AND service_id = ?');
+  return share.ids.map((id) => get.get(id, share.serviceId)).filter(Boolean);
+}
+const escHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+function sharePage(ctx, req, res) {
+  const share = readShareToken(ctx, req.params.token);
+  const photos = share && !share.expired ? sharedPhotos(ctx, share) : [];
+  res.set({ 'Cache-Control': 'private, no-store', 'X-Robots-Tag': 'noindex', 'Referrer-Policy': 'no-referrer' });
+  const base = publicBase(ctx) || `${req.protocol}://${req.get('host')}`;
+  const img = (n) => `/fotos/${req.params.token}/${n + 1}.jpg`;
+  const body = !share
+    ? '<p>Link not found.</p>'
+    : share.expired
+      ? '<p>This link has expired. Please ask us to send the photos again.</p>'
+      : photos.length
+        ? photos.map((p, n) => `<a href="${img(n)}"><img src="${img(n)}" alt="Photo ${n + 1}" loading="lazy"></a>`).join('')
+        : '<p>These photos are no longer available.</p>';
+  res.status(share && !share.expired && photos.length ? 200 : 404).type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
+<title>Vehicle photos</title><meta property="og:title" content="Vehicle photos (${photos.length})">
+${photos.length ? `<meta property="og:image" content="${escHtml(base + img(0))}">` : ''}
+<style>body{margin:0;background:#111;color:#eee;font:16px system-ui,sans-serif}h1{font-size:18px;margin:16px}
+main{display:grid;gap:8px;padding:0 8px 16px}img{width:100%;display:block;border-radius:6px}p{margin:16px}</style></head>
+<body><h1>Vehicle photos${photos.length ? ` (${photos.length})` : ''}</h1><main>${body}</main></body></html>`);
+}
+
+function shareImage(ctx, req, res) {
+  const share = readShareToken(ctx, req.params.token);
+  const photo = share && !share.expired ? sharedPhotos(ctx, share)[Number(req.params.n) - 1] : null;
+  if (!photo) return res.status(404).send('Not found.');
+  res.set({ 'Cache-Control': 'private, max-age=3600', 'X-Robots-Tag': 'noindex' });
+  if (photo.stamped_file) return res.type('image/jpeg').sendFile(path.join(ctx.config.uploadsDir, photo.stamped_file));
+  res.type(photo.mime || 'image/jpeg').sendFile(path.join(ctx.config.uploadsDir, photo.file));
 }
 
 // Entende o ângulo escrito na legenda: "antes frente", "traseira", "lado direito"...
@@ -390,6 +455,17 @@ function routes(api, ctx) {
     const place = placeFromQuery(ctx, req.query);
     const id = savePhoto(ctx, { serviceId: service.id, kind, angle, buffer: req.body, mime: req.headers['content-type'], userId: req.user.id, place });
     res.status(201).json({ id, kind, angle, url: `/api/photos/${id}/file` });
+  });
+
+  // Link das fotos marcadas para mandar no WhatsApp do cliente (quem pediu o serviço).
+  api.post('/services/:id/photos/link', (req, res) => {
+    const service = findServiceFor(ctx, req.user, req.params.id);
+    const wanted = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    const ok = new Set(ctx.db.prepare('SELECT id FROM photos WHERE service_id = ?').all(service.id).map((p) => p.id));
+    const ids = wanted.filter((id) => ok.has(id)).slice(0, 40);
+    if (!ids.length) throw new HttpError(400, 'Marque as fotos para mandar.');
+    const base = publicBase(ctx) || `${req.protocol}://${req.get('host')}`;
+    res.json({ url: `${base}/fotos/${shareToken(ctx, service.id, ids)}`, count: ids.length });
   });
 
   // Gate pass e outros documentos: PDF ou foto, até 20 MB.

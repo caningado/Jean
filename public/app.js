@@ -1415,8 +1415,8 @@ screens.servico = async (params, id) => {
     photoCard.querySelectorAll('.photo-open').forEach((b) => picked.add(b.dataset.view));
     markPicked();
   });
-  on('#shareSend', async () => {
-    const list = (s.photos || []).filter((p) => picked.has(String(p.id)));
+  // Manda as fotos de verdade pelo "Compartilhar" do celular (a pessoa escolhe o contato).
+  const shareFiles = async (list) => {
     toast('Preparando as fotos…');
     try {
       const files = await Promise.all(list.map(async (p, i) => {
@@ -1439,6 +1439,22 @@ screens.servico = async (params, id) => {
     } catch (err) {
       if (err.name !== 'AbortError') toast(err.message || 'Não consegui enviar as fotos.');
     }
+  };
+  on('#shareSend', async () => {
+    const list = (s.photos || []).filter((p) => picked.has(String(p.id)));
+    // Sem telefone do cliente: só o "Compartilhar" de sempre.
+    if (!s.contact_phone) return shareFiles(list);
+    // Com telefone: o link já fica pronto antes do toque, para o WhatsApp abrir na hora.
+    let link;
+    try {
+      link = await api(`/services/${id}/photos/link`, { method: 'POST', body: { ids: list.map((p) => p.id) } });
+    } catch (err) {
+      return shareFiles(list);
+    }
+    const text = `Hi! Here are the photos of your vehicle${s.vehicle ? ` (${s.vehicle})` : ''}:\n${link.url}`;
+    const choice = await sendPhotosDialog({ name: s.contact_name, phone: s.contact_phone, count: list.length, wa: `https://wa.me/${s.contact_phone}?text=${encodeURIComponent(text)}` });
+    if (choice === 'wa') selecting(false);
+    else if (choice === 'share') shareFiles(list);
   });
 
   view.querySelectorAll('[data-view]').forEach((btn) => {
@@ -1753,6 +1769,35 @@ function searchPicker(box, { placeholder, items, onPick }) {
   show();
 }
 // Janela com busca (searchPicker). Devolve o item escolhido, null para "nenhum" ou undefined se voltou.
+// Enviar fotos: direto no WhatsApp de quem pediu o serviço (link com as fotos) ou pelo
+// "Compartilhar" do celular (fotos de verdade, mas a pessoa procura o contato: o celular não
+// deixa o app escolher o contato por ela).
+function sendPhotosDialog({ name, phone, count, wa }) {
+  return new Promise((resolve) => {
+    const back = document.createElement('div');
+    back.className = 'dialog-back';
+    const n = `${count} foto${count > 1 ? 's' : ''}`;
+    back.innerHTML = `<div class="dialog" role="dialog" aria-modal="true"><h2>Enviar ${n}</h2>
+      <a class="btn block wa-send" data-act="wa" href="${esc(wa)}" target="_blank" rel="noopener">💬 WhatsApp de ${esc(name || 'cliente')}<br><span class="sub">${esc(phoneFmt(phone))} · vai um link com as fotos, é só tocar em enviar</span></a>
+      <button type="button" class="secondary block" data-act="share">📤 Mandar as fotos e escolher o contato</button>
+      <div class="dialog-actions"><button type="button" class="secondary" data-act="no">Voltar</button></div></div>`;
+    const done = (v) => {
+      back.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(v);
+    };
+    const onKey = (e) => e.key === 'Escape' && done(undefined);
+    // O link abre sozinho (é um link de verdade); a janela só fecha depois do toque.
+    back.querySelector('[data-act="wa"]').addEventListener('click', () => setTimeout(() => done('wa'), 0));
+    back.querySelector('[data-act="share"]').onclick = () => done('share');
+    back.querySelector('[data-act="no"]').onclick = () => done(undefined);
+    back.onclick = (e) => {
+      if (e.target === back) done(undefined);
+    };
+    document.addEventListener('keydown', onKey);
+    document.body.append(back);
+  });
+}
 function pickDialog({ title, placeholder, none, items }) {
   return new Promise((resolve) => {
     const back = document.createElement('div');
