@@ -1264,7 +1264,7 @@ function routes(api, ctx) {
     if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
     const extras = {};
     for (const mod of ctx.loaded) {
-      if (mod.serviceDetail) Object.assign(extras, mod.serviceDetail({ ctx, service }));
+      if (mod.serviceDetail) Object.assign(extras, mod.serviceDetail({ ctx, service, user: req.user }));
     }
     // Apelido do endereço, se for um dos salvos (ex.: "Ribas").
     const nick = (v) => (v ? db.prepare('SELECT nickname FROM saved_places WHERE address = ?').get(v)?.nickname || null : null);
