@@ -6,6 +6,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { nowIso } from '../../lib/util.js';
 import { mapLink } from '../../lib/validate.js';
+import { imageForClaude } from '../../lib/imagem.js';
 import { logAction } from './tools.js';
 
 export const caixaMigrations = [
@@ -25,6 +26,8 @@ export const caixaMigrations = [
   // Foto que o dono mandou: o arquivo fica guardado para o Claude ver.
   `ALTER TABLE jay_inbox ADD COLUMN file TEXT;
    ALTER TABLE jay_inbox ADD COLUMN mime TEXT;`,
+  // A foto já foi anexada ao serviço (photos.id), para não anexar duas vezes.
+  `ALTER TABLE jay_inbox ADD COLUMN photo_id INTEGER;`,
 ];
 
 const PHOTO_DIR = 'caixa';
@@ -70,6 +73,39 @@ export function createCaixa(ctx) {
       fs.writeFileSync(path.join(ctx.config.uploadsDir, name), file.buffer);
       ctx.db.prepare('UPDATE jay_inbox SET file = ?, mime = ? WHERE id = ?').run(name, mime, row.id);
       return true;
+    },
+    // Leva as fotos dessas mensagens para o serviço (o motorista vê no painel e recebe no
+    // WhatsApp). Só as mensagens ligadas a esse serviço; cada foto vai uma vez só.
+    attachToService(ids, serviceId, user, { notify = true } = {}) {
+      if (!ctx.api.fotos?.attachInboxPhoto) return [];
+      const rows = ids.length
+        ? ctx.db.prepare(`SELECT * FROM jay_inbox WHERE id IN (${ids.map(() => '?').join(',')}) AND service_id = ? AND file IS NOT NULL AND photo_id IS NULL ORDER BY id`).all(...ids, serviceId)
+        : [];
+      const added = [];
+      for (const r of rows) {
+        const file = path.join(ctx.config.uploadsDir, r.file);
+        if (!r.file.startsWith(`${PHOTO_DIR}/`) || !fs.existsSync(file)) continue;
+        const photoId = ctx.api.fotos.attachInboxPhoto({ serviceId, file, mime: r.mime, userId: user.id });
+        ctx.db.prepare('UPDATE jay_inbox SET photo_id = ? WHERE id = ?').run(photoId, r.id);
+        added.push(photoId);
+      }
+      const service = added.length && ctx.data.services.get(serviceId);
+      if (notify && service?.driver_id && service.driver_id !== user.id && ['pendente', 'aberto'].includes(service.status)) {
+        const driver = ctx.data.users.get(service.driver_id);
+        Promise.resolve(ctx.api.fotos.sendCarPhotos(service, driver, added)).catch((err) => ctx.log('Caixa: não consegui mandar as fotos ao motorista', err.message));
+      }
+      return added;
+    },
+    // Fotos de mensagens já tratadas antes desta atualização: vão para o serviço (sem avisar ninguém).
+    backfill() {
+      const rows = ctx.db.prepare('SELECT j.id, j.service_id, j.user_id FROM jay_inbox j JOIN services s ON s.id = j.service_id WHERE j.file IS NOT NULL AND j.photo_id IS NULL').all();
+      for (const r of rows) {
+        try {
+          this.attachToService([r.id], r.service_id, { id: r.user_id }, { notify: false });
+        } catch (err) {
+          ctx.log(`Caixa: não consegui levar a foto [${r.id}] para o serviço #${r.service_id}`, err.message);
+        }
+      }
     },
     // Só guarda o que vem do dono (ADM).
     save(user, msg) {
@@ -135,7 +171,7 @@ export function registerCaixaTools(server, ctx, user) {
       logAction(ctx, user, null, 'ver_foto_caixa', { id });
       return {
         content: [
-          { type: 'image', data: fs.readFileSync(file).toString('base64'), mimeType: row.mime },
+          { type: 'image', ...(await imageForClaude(fs.readFileSync(file), row.mime)) },
           { type: 'text', text: `Foto [${row.id}] mandada em ${row.created_at}${row.text ? ` · ${row.text}` : ''}.` },
         ],
       };
@@ -146,7 +182,8 @@ export function registerCaixaTools(server, ctx, user) {
     'marcar_caixa_lida',
     {
       title: 'Marcar mensagens como tratadas',
-      description: 'Marca mensagens da caixa de entrada do Jay como tratadas (não apaga nada). Informe o serviço criado com elas, se houver.',
+      description:
+        'Marca mensagens da caixa de entrada do Jay como tratadas (não apaga nada). Informe o serviço criado com elas, se houver: as fotos dessas mensagens vão junto para o serviço (o motorista vê no painel e recebe no WhatsApp, para saber qual é o carro). Pode chamar de novo com mensagens já tratadas para levar as fotos ao serviço.',
       inputSchema: {
         ids: z.array(z.number().int()).min(1).describe('Os números entre colchetes da caixa de entrada'),
         numero_servico: z.number().int().optional(),
@@ -158,8 +195,14 @@ export function registerCaixaTools(server, ctx, user) {
       const mark = ctx.db.prepare('UPDATE jay_inbox SET done_at = COALESCE(done_at, ?), service_id = COALESCE(?, service_id) WHERE id = ?');
       let n = 0;
       for (const id of ids) n += Number(mark.run(nowIso(), numero_servico ?? null, id).changes);
-      logAction(ctx, user, numero_servico ?? null, 'marcar_caixa_lida', { ids, numero_servico: numero_servico ?? null });
-      return ok(`${n} mensagem(ns) marcada(s) como tratada(s)${numero_servico ? ` no serviço #${numero_servico}` : ''}.`);
+      const photos = numero_servico ? ctx.api.caixa.attachToService(ids, numero_servico, user) : [];
+      logAction(ctx, user, numero_servico ?? null, 'marcar_caixa_lida', { ids, numero_servico: numero_servico ?? null, fotos: photos.length }, photos.length ? 'fotos_anexadas' : null);
+      const s = numero_servico && ctx.data.services.get(numero_servico);
+      const toDriver = photos.length && s?.driver_id && s.driver_id !== user.id && ['pendente', 'aberto'].includes(s.status);
+      const photoText = photos.length
+        ? ` ${photos.length} foto(s) anexada(s) ao serviço${toDriver ? ` e mandada(s) para ${s.driver_name || 'o motorista'} no WhatsApp` : ''}.`
+        : '';
+      return ok(`${n} mensagem(ns) marcada(s) como tratada(s)${numero_servico ? ` no serviço #${numero_servico}` : ''}.${photoText}`);
     }
   );
 }
