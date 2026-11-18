@@ -248,7 +248,7 @@ export async function processMessage(ctx, client, msg) {
   // PDF do dono (pedido de serviço, gate pass): a caixa guarda o arquivo para o Claude ler.
   if (msg.doc) {
     try {
-      ctx.api.caixa?.attachDoc(user, msg, file);
+      if (ctx.api.caixa?.attachDoc(user, msg, file)) await ctx.api.caixa.readDoc(msg);
     } catch (err) {
       ctx.log('Caixa de entrada: não consegui guardar o PDF', err.message);
     }

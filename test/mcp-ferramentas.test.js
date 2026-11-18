@@ -35,7 +35,7 @@ const events = (ctx, id) => ctx.db.prepare('SELECT action, source FROM service_e
 test('mcp ferramentas: lista tudo e não tem ferramenta de apagar', async (t) => {
   const { client } = await setup(t);
   const names = (await client.listTools()).tools.map((x) => x.name).sort();
-  assert.deepEqual(names, ['agenda', 'agendar_servico', 'anexar_foto_caixa', 'apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'caixa_de_entrada', 'calcular_preco', 'criar_servico', 'enderecos_com_apelido', 'equipe', 'listar_servicos', 'marcar_caixa_lida', 'marcar_pago', 'salvar_endereco_apelido', 'teste', 'ver_arquivo_caixa', 'ver_foto_caixa', 'ver_fotos_servico', 'ver_servico']);
+  assert.deepEqual(names, ['agenda', 'agendar_servico', 'anexar_foto_caixa', 'anexar_pdf_caixa', 'apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'caixa_de_entrada', 'calcular_preco', 'criar_servico', 'enderecos_com_apelido', 'equipe', 'listar_servicos', 'marcar_caixa_lida', 'marcar_pago', 'salvar_endereco_apelido', 'teste', 'ver_arquivo_caixa', 'ver_foto_caixa', 'ver_fotos_servico', 'ver_servico']);
   assert.ok(!names.some((n) => /apagar|delete|excluir/.test(n)));
 });
 
@@ -408,7 +408,11 @@ test('mcp caixa de entrada: PDF do dono fica guardado e o Claude lê o texto', a
   const row = ctx.db.prepare("SELECT * FROM jay_inbox WHERE wa_id = 'p1'").get();
   assert.ok(row.doc_file, 'guardou o PDF');
   assert.equal(row.file, null, 'PDF não vira foto');
-  assert.match((await call('caixa_de_entrada')).text, new RegExp(`\\[${row.id}\\] .* arquivo: \\[arquivo gatepass.pdf\\]\\n    PDF guardado: use ver_arquivo_caixa com id ${row.id}`));
+  assert.ok(row.doc_text, 'o texto já foi tirado quando o PDF chegou');
+  // O texto vem direto na caixa de entrada (o Claude por voz não abre arquivo).
+  const listed = (await call('caixa_de_entrada')).text;
+  assert.match(listed, new RegExp(`\\[${row.id}\\] .* arquivo: \\[arquivo gatepass.pdf\\]\\n    Texto do PDF \\(2 página\\(s\\)\\), texto do PDF:\\n      --- Página 1 ---\\n      Gate Pass - CarMax Clermont\\n      Pickup: 16731 State Road 50`));
+  assert.match(listed, /      VIN 1HGCM82633A004352/);
   const r = await call('ver_arquivo_caixa', { id: row.id });
   assert.equal(r.error, false, r.text);
   assert.match(r.text, /2 página\(s\)/);
@@ -416,6 +420,22 @@ test('mcp caixa de entrada: PDF do dono fica guardado e o Claude lê o texto', a
   assert.match(r.text, /--- Página 2 ---\nVIN 1HGCM82633A004352/);
   assert.equal((await call('ver_foto_caixa', { id: row.id })).error, true, 'não é foto');
   assert.equal((await call('ver_arquivo_caixa', { id: 999 })).error, true);
+  // Colocar o PDF no gate pass do serviço (sem o Claude abrir o arquivo; funciona por voz).
+  const sv = await call('criar_servico', { cliente_nome: 'CarMax', marca: 'Ram', modelo: '1500', retirada: '16731 State Road 50, Clermont FL', destino: '40 Oak Ave, Kissimmee FL', preco: 150, motorista: 'Jorge' });
+  assert.equal(sv.error, false, sv.text);
+  const sid = ctx.db.prepare('SELECT MAX(id) AS id FROM services').get().id;
+  const att = await call('anexar_pdf_caixa', { ids: [row.id], numero_servico: sid });
+  assert.equal(att.error, false, att.text);
+  assert.match(att.text, /gatepass\.pdf\) colocado no gate pass do serviço/);
+  const doc = ctx.db.prepare('SELECT * FROM service_docs WHERE service_id = ?').get(sid);
+  assert.equal(doc.kind, 'gatepass');
+  assert.equal(doc.name, 'gatepass.pdf');
+  assert.deepEqual((await import('node:fs')).readFileSync(`${ctx.config.uploadsDir}/${doc.file}`), pdf);
+  assert.match((await call('anexar_pdf_caixa', { ids: [row.id], numero_servico: sid })).text, /já estava/);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM service_docs').get().n, 1, 'não põe duas vezes');
+  // PDF antigo, de antes de guardar o arquivo: a caixa avisa para mandar de novo.
+  ctx.db.prepare("INSERT INTO jay_inbox (user_id, wa_id, type, text, created_at) VALUES (?, 'old', 'document', '[arquivo velho.pdf]', ?)").run(row.user_id, new Date().toISOString());
+  assert.match((await call('caixa_de_entrada')).text, /velho\.pdf\]\n    \(O arquivo não ficou guardado/);
 
   // PDF escaneado (sem letra): o Gemini lê.
   ctx.config.geminiApiKey = 'k';
@@ -430,6 +450,7 @@ test('mcp caixa de entrada: PDF do dono fica guardado e o Claude lê o texto', a
   const wa2 = { sendText: async () => true, downloadMedia: async () => ({ buffer: scanned, mime: 'application/pdf' }) };
   await processMessage(ctx, wa2, { id: 'p2', from: OWNER_PHONE, type: 'document', text: '', mediaId: 'm2', doc: { name: 'scan.pdf', mime: 'application/pdf' } });
   const id2 = ctx.db.prepare("SELECT id FROM jay_inbox WHERE wa_id = 'p2'").get().id;
+  assert.match((await call('caixa_de_entrada')).text, /Texto do PDF \(1 página\(s\)\), PDF escaneado, lido pelo Gemini.*\n      Tow order: 12 Main St, Orlando/);
   const r2 = await call('ver_arquivo_caixa', { id: id2 });
   assert.match(r2.text, /lido pelo Gemini/);
   assert.match(r2.text, /Tow order: 12 Main St, Orlando/);

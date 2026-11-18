@@ -31,6 +31,10 @@ export const caixaMigrations = [
   `ALTER TABLE jay_inbox ADD COLUMN photo_id INTEGER;`,
   // PDF que o dono mandou (pedido de serviço, gate pass): fica guardado para o Claude ler (pedido do Caningado 18/11).
   `ALTER TABLE jay_inbox ADD COLUMN doc_file TEXT;`,
+  // Texto já tirado do PDF (para não ler de novo a cada vez).
+  `ALTER TABLE jay_inbox ADD COLUMN doc_text TEXT;`,
+  // Gate pass da caixa já colocado num serviço (service_docs.id), para não pôr duas vezes.
+  `ALTER TABLE jay_inbox ADD COLUMN doc_id INTEGER;`,
 ];
 
 const PHOTO_DIR = 'caixa';
@@ -58,6 +62,8 @@ function audioMime(mime) {
 const DOC_DIR = 'caixa-pdf';
 const MAX_PDF = 20 * 1024 * 1024;
 const MAX_PDF_TEXT = 30000;
+const MAX_LIST_PDF = 6000;
+const indent = (t) => t.split('\n').map((l) => `      ${l}`).join('\n');
 const PDF_PROMPT = `Este PDF chegou para uma empresa de guincho nos EUA (pedido de serviço, gate pass de leilão, ordem de reboque...). Escreva todo o texto que está nele, página por página, na ordem, sem resumir e sem inventar. Mantenha endereços, nomes, telefones, VIN, números e valores exatamente como estão. Tabelas: uma linha por item, "campo: valor".`;
 const PDF_SCHEMA = { type: 'OBJECT', properties: { texto: { type: 'STRING' } }, required: ['texto'] };
 
@@ -133,6 +139,12 @@ export function createCaixa(ctx) {
       ctx.db.prepare('UPDATE jay_inbox SET doc_file = ? WHERE id = ?').run(name, row.id);
       return true;
     },
+    // Já tira o texto do PDF quando ele chega (o Claude por voz não abre arquivo: precisa do texto pronto).
+    async readDoc(msg) {
+      const row = msg.id && ctx.db.prepare('SELECT * FROM jay_inbox WHERE wa_id = ?').get(msg.id);
+      const file = row && pdfFile(ctx, row);
+      return file ? readPdf(ctx, row, file) : null;
+    },
     // Áudio do dono: escreve o que foi falado e guarda o texto na mensagem da caixa.
     // Usa o Gemini que o sistema já tem (GEMINI_API_KEY). Se falhar, a mensagem fica marcada.
     async transcribe(user, msg, file, fetchImpl = globalThis.fetch) {
@@ -194,13 +206,55 @@ export function createCaixa(ctx) {
 
 const ok = (text) => ({ content: [{ type: 'text', text }] });
 
+// Lê o PDF guardado de uma mensagem da caixa: texto do PDF (pdfjs) ou, se for escaneado, pelo Gemini.
+// Guarda o resultado em doc_text para não ler de novo.
+async function readPdf(ctx, row, file) {
+  if (row.doc_text) {
+    try {
+      return JSON.parse(row.doc_text);
+    } catch {}
+  }
+  const buffer = fs.readFileSync(file);
+  let text = '';
+  let pages = 0;
+  try {
+    const r = await pdfText(buffer);
+    pages = r.numPages;
+    text = r.pages.map((t, i) => (r.pages.length > 1 ? `--- Página ${i + 1} ---\n${t}` : t)).join('\n\n').trim();
+  } catch (err) {
+    ctx.log?.('Caixa de entrada: não consegui abrir o PDF', err.message);
+  }
+  let how = 'texto do PDF';
+  // PDF escaneado (foto de papel) não tem letra: o Gemini, que o sistema já usa, lê a imagem.
+  if (text.replace(/[^\p{L}\p{N}]/gu, '').length < 20 && ctx.config.geminiApiKey) {
+    try {
+      const a = await askGemini(ctx, { prompt: PDF_PROMPT, audio: buffer, mimeType: 'application/pdf', schema: PDF_SCHEMA, model: ctx.config.geminiModel, timeoutMs: 60000 });
+      if (String(a.texto || '').trim()) {
+        text = String(a.texto).trim();
+        how = 'PDF escaneado, lido pelo Gemini (confira com o dono)';
+      }
+    } catch (err) {
+      ctx.log?.('Caixa de entrada: o Gemini não leu o PDF', err.message);
+    }
+  }
+  const out = { text, pages, how };
+  if (text) ctx.db.prepare('UPDATE jay_inbox SET doc_text = ? WHERE id = ?').run(JSON.stringify(out), row.id);
+  return out;
+}
+
+const pdfFile = (ctx, row) => {
+  const file = row?.doc_file && path.join(ctx.config.uploadsDir, row.doc_file);
+  return file && row.doc_file.startsWith(`${DOC_DIR}/`) && fs.existsSync(file) ? file : null;
+};
+
+
 export function registerCaixaTools(server, ctx, user) {
   server.registerTool(
     'caixa_de_entrada',
     {
       title: 'Caixa de entrada do Jay',
       description:
-        'Lê o que o dono mandou para o Jay no WhatsApp (serviços encaminhados, localizações, contatos, recados, áudios, PDFs), do mais antigo para o mais novo. Áudios vêm escritos pelo Jay ("Transcrição do Jay"); endereço ou nome entendido errado é possível, então confira com o dono. Mensagens seguidas costumam ser do mesmo serviço. Atenção: o Jay pode já ter criado o serviço sozinho a partir dessas mensagens; antes de criar, confira com listar_servicos (hoje) e, se já existir, use atualizar_servico em vez de criar outro. Organize junto com o dono e só crie serviço quando ele mandar; depois use marcar_caixa_lida.',
+        'Lê o que o dono mandou para o Jay no WhatsApp (serviços encaminhados, localizações, contatos, recados, áudios, PDFs). O texto dos PDFs já vem aqui, logo abaixo da mensagem, do mais antigo para o mais novo. Áudios vêm escritos pelo Jay ("Transcrição do Jay"); endereço ou nome entendido errado é possível, então confira com o dono. Mensagens seguidas costumam ser do mesmo serviço. Atenção: o Jay pode já ter criado o serviço sozinho a partir dessas mensagens; antes de criar, confira com listar_servicos (hoje) e, se já existir, use atualizar_servico em vez de criar outro. Organize junto com o dono e só crie serviço quando ele mandar; depois use marcar_caixa_lida.',
       inputSchema: {
         incluir_lidas: z.boolean().optional().describe('true para ver também as já tratadas'),
         limite: z.number().int().min(1).max(100).optional(),
@@ -216,7 +270,14 @@ export function registerCaixaTools(server, ctx, user) {
       for (const r of rows) {
         const coords = r.latitude != null ? `${r.latitude}, ${r.longitude}` : null;
         const photo = r.file ? `\n    Foto guardada: use ver_foto_caixa com id ${r.id} para ver a imagem.` : '';
-        const pdf = r.doc_file ? `\n    PDF guardado: use ver_arquivo_caixa com id ${r.id} para ler o que está escrito nele.` : '';
+        let pdf = '';
+        const pdfPath = pdfFile(ctx, r);
+        if (pdfPath) {
+          const read = await readPdf(ctx, r, pdfPath).catch((err) => (ctx.log?.('Caixa de entrada: não li o PDF', err.message), { text: '' }));
+          pdf = read.text
+            ? `\n    Texto do PDF${read.pages ? ` (${read.pages} página(s))` : ''}, ${read.how}:\n${indent(read.text.length > MAX_LIST_PDF ? `${read.text.slice(0, MAX_LIST_PDF)}\n[... continua: use ver_arquivo_caixa com id ${r.id}]` : read.text)}`
+            : `\n    PDF guardado, mas não consegui ler o texto (pode ser escaneado ou com senha). Peça ao dono para contar o que diz.`;
+        } else if (r.type === 'document' && !r.file) pdf = '\n    (O arquivo não ficou guardado: chegou antes da atualização. Peça ao dono para mandar de novo.)';
         out.push(
           `- [${r.id}] ${r.created_at} · ${KIND[r.type] || r.type}${r.done_at ? ` · já tratada${r.service_id ? ` (serviço #${r.service_id})` : ''}` : ''}: ${r.text || ''}${coords ? `\n    Mapa: ${mapLink(coords)}` : ''}${photo}${pdf}`
         );
@@ -265,33 +326,52 @@ export function registerCaixaTools(server, ctx, user) {
       if (!file || !row.doc_file.startsWith(`${DOC_DIR}/`) || !fs.existsSync(file)) {
         return { content: [{ type: 'text', text: row ? 'Essa mensagem não tem PDF guardado (PDFs de antes desta atualização não foram guardados; peça ao dono para mandar de novo).' : `Não achei a mensagem [${id}].` }], isError: true };
       }
-      const buffer = fs.readFileSync(file);
-      let text = '';
-      let pages = 0;
-      try {
-        const r = await pdfText(buffer);
-        pages = r.numPages;
-        text = r.pages.map((t, i) => (r.pages.length > 1 ? `--- Página ${i + 1} ---\n${t}` : t)).join('\n\n').trim();
-      } catch (err) {
-        ctx.log?.('Caixa de entrada: não consegui abrir o PDF', err.message);
-      }
-      let how = 'texto do PDF';
-      // PDF escaneado (foto de papel) não tem letra: o Gemini, que o sistema já usa, lê a imagem.
-      if (text.replace(/[^\p{L}\p{N}]/gu, '').length < 20 && ctx.config.geminiApiKey) {
-        try {
-          const a = await askGemini(ctx, { prompt: PDF_PROMPT, audio: buffer, mimeType: 'application/pdf', schema: PDF_SCHEMA, model: ctx.config.geminiModel, timeoutMs: 60000 });
-          if (String(a.texto || '').trim()) {
-            text = String(a.texto).trim();
-            how = 'PDF escaneado, lido pelo Gemini (confira com o dono)';
-          }
-        } catch (err) {
-          ctx.log?.('Caixa de entrada: o Gemini não leu o PDF', err.message);
-        }
-      }
+      const r = await readPdf(ctx, row, file);
       logAction(ctx, user, null, 'ver_arquivo_caixa', { id });
+      const text = r.text;
       if (!text) return { content: [{ type: 'text', text: `Não consegui ler o PDF [${row.id}] (pode ser escaneado ou estar com senha). Peça ao dono para contar o que diz, ou mandar uma foto dele.` }], isError: true };
       const cut = text.length > MAX_PDF_TEXT ? `${text.slice(0, MAX_PDF_TEXT)}\n[... cortado, o PDF é muito longo]` : text;
-      return ok(`PDF [${row.id}] mandado em ${row.created_at}${row.text ? ` · ${row.text}` : ''}${pages ? ` · ${pages} página(s)` : ''} (${how}):\n\n${cut}`);
+      return ok(`PDF [${row.id}] mandado em ${row.created_at}${row.text ? ` · ${row.text}` : ''}${r.pages ? ` · ${r.pages} página(s)` : ''} (${r.how}):\n\n${cut}`);
+    }
+  );
+
+  server.registerTool(
+    'anexar_pdf_caixa',
+    {
+      title: 'Anexar PDF ao serviço (gate pass)',
+      description:
+        'Coloca o PDF da caixa de entrada no campo Gate pass do serviço (o mesmo do botão "Anexar gate pass" do painel). O sistema copia o arquivo sozinho: você não precisa abrir o PDF, então funciona também no chat por voz. Use quando o dono pedir, ou depois de criar o serviço a partir do PDF (pergunte antes). Um PDF por carro: confira pelo VIN ou pelo carro que é o serviço certo.',
+      inputSchema: {
+        ids: z.array(z.number().int()).min(1).describe('Os números entre colchetes dos PDFs na caixa de entrada'),
+        numero_servico: z.number().int(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ ids, numero_servico }) => {
+      const s = ctx.data.services.get(numero_servico);
+      if (!s) return { content: [{ type: 'text', text: `Não achei o serviço #${numero_servico}.` }], isError: true };
+      if (!ctx.api.fotos?.saveDoc) return { content: [{ type: 'text', text: 'O módulo de fotos e gate pass está desligado.' }], isError: true };
+      const out = [];
+      let added = 0;
+      for (const id of ids) {
+        const row = ctx.db.prepare('SELECT * FROM jay_inbox WHERE id = ?').get(id);
+        const file = row && pdfFile(ctx, row);
+        if (!file) {
+          out.push(row ? `[${id}] não tem PDF guardado (peça ao dono para mandar de novo).` : `Não achei a mensagem [${id}].`);
+          continue;
+        }
+        if (row.doc_id && ctx.db.prepare('SELECT 1 FROM service_docs WHERE id = ?').get(row.doc_id)) {
+          out.push(`[${id}] já estava num serviço.`);
+          continue;
+        }
+        const name = (String(row.text || '').match(/\[arquivo ([^\]]+)\]/)?.[1] || 'gate pass.pdf').trim();
+        const docId = ctx.api.fotos.saveDoc({ serviceId: s.id, buffer: fs.readFileSync(file), mime: 'application/pdf', name, userId: user.id });
+        ctx.db.prepare('UPDATE jay_inbox SET doc_id = ?, service_id = COALESCE(service_id, ?) WHERE id = ?').run(docId, s.id, id);
+        added++;
+        out.unshift(`PDF [${id}] (${name}) colocado no gate pass do serviço #${s.id}.`);
+      }
+      if (added) logAction(ctx, user, s.id, 'anexar_pdf_caixa', { ids }, 'gatepass_anexado');
+      return { content: [{ type: 'text', text: out.join(' ') }], isError: !added && !out.some((l) => /já estava/.test(l)) };
     }
   );
 
