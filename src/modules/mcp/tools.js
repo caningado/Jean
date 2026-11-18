@@ -87,9 +87,9 @@ function line(ctx, s) {
 
 const ok = (text) => ({ content: [{ type: 'text', text }] });
 
-// Nome da foto para o Claude: "do ADM (caixa do Jay)", "antes · frente", "VIN"...
+// Nome da foto para o Claude: "anexo (caixa do Jay)", "antes · frente", "VIN"...
 function photoLabel(ctx, p) {
-  if (p.origin === 'caixa') return 'do ADM (caixa do Jay)';
+  if (p.origin === 'caixa') return 'anexo (caixa do Jay)';
   const { kindLabel = {}, angleLabel = {} } = ctx.api.fotos || {};
   return [kindLabel[p.kind] || p.kind, p.angle ? angleLabel[p.angle] || p.angle : null].filter(Boolean).join(' · ');
 }
@@ -97,7 +97,7 @@ function photoLabel(ctx, p) {
 function photoSummary(ctx, photos) {
   const count = {};
   for (const p of photos) {
-    const key = p.origin === 'caixa' ? 'do ADM (caixa do Jay)' : (ctx.api.fotos?.kindLabel || {})[p.kind] || p.kind;
+    const key = p.origin === 'caixa' ? 'anexo (caixa do Jay)' : (ctx.api.fotos?.kindLabel || {})[p.kind] || p.kind;
     count[key] = (count[key] || 0) + 1;
   }
   return Object.entries(count).map(([k, n]) => `${n} ${k}`).join(', ');

@@ -297,7 +297,7 @@ test('mcp caixa de entrada: só a foto escolhida vai para o serviço e para o mo
   assert.equal(detail.photos.filter((p) => p.origin === 'caixa').length, 1);
 
   // O Claude vê as fotos do serviço.
-  assert.match((await call('ver_servico', { numero: id })).text, /Fotos: 1 do ADM \(caixa do Jay\)/);
+  assert.match((await call('ver_servico', { numero: id })).text, /Fotos: 1 anexo \(caixa do Jay\)/);
   const res = await mcpClient.callTool({ name: 'ver_fotos_servico', arguments: { numero: id } });
   assert.equal(res.content.filter((c) => c.type === 'image').length, 1);
   assert.match(res.content.at(-1).text, /mostrando 1 de 1/);
