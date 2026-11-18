@@ -487,7 +487,7 @@ export default {
     });
     return [...docFiles, ...rows.map((p) => {
       const folder = clean(`Serviço ${p.service_id}${p.contact_name ? ' - ' + p.contact_name : ''}`);
-      const label = clean([p.origin === 'caixa' ? 'do ADM' : KIND_FILE[p.kind] || p.kind, p.angle ? ANGLE_LABEL[p.angle] || p.angle : ''].filter(Boolean).join(' - '));
+      const label = clean([p.origin === 'caixa' ? 'anexo' : KIND_FILE[p.kind] || p.kind, p.angle ? ANGLE_LABEL[p.angle] || p.angle : ''].filter(Boolean).join(' - '));
       const file = p.stamped_file || p.file; // no .zip vai a foto carimbada
       const ext = path.extname(file) || '.jpg';
       let name = `fotos/${folder}/${label}${ext}`;

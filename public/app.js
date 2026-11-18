@@ -3606,10 +3606,10 @@ function photoGroups(photos) {
   if (!photos.length) return '<p class="sub">Nenhuma foto. São opcionais.</p>';
   const figure = (p, label) =>
     `<figure><button type="button" class="photo-open" data-view="${p.id}" data-label="${esc(label)}"><img src="${p.url}" loading="lazy" alt="${esc(label)}"></button><figcaption>${esc(label)}</figcaption></figure>`;
-  // Fotos que o ADM mandou ao Jay e anexou ao serviço: vêm primeiro, para o motorista achar o carro.
+  // Anexos: fotos que o ADM mandou ao Jay e escolheu para o serviço (ex.: a do carro). Vêm primeiro.
   const fromAdm = photos.filter((p) => p.origin === 'caixa');
   photos = photos.filter((p) => p.origin !== 'caixa');
-  const top = fromAdm.length ? `<h3>📥 Do ADM (para achar o carro)</h3><div class="photos">${fromAdm.map((p) => figure(p, 'Do ADM')).join('')}</div>` : '';
+  const top = fromAdm.length ? `<h3>📎 Anexos</h3><div class="photos">${fromAdm.map((p) => figure(p, 'Anexo')).join('')}</div>` : '';
   const groups = ['antes', 'depois'].map((kind) => {
     const list = photos.filter((p) => p.kind === kind);
     if (!list.length) return '';
