@@ -35,7 +35,7 @@ const events = (ctx, id) => ctx.db.prepare('SELECT action, source FROM service_e
 test('mcp ferramentas: lista tudo e não tem ferramenta de apagar', async (t) => {
   const { client } = await setup(t);
   const names = (await client.listTools()).tools.map((x) => x.name).sort();
-  assert.deepEqual(names, ['agenda', 'agendar_servico', 'anexar_foto_caixa', 'apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'caixa_de_entrada', 'calcular_preco', 'criar_servico', 'enderecos_com_apelido', 'equipe', 'listar_servicos', 'marcar_caixa_lida', 'marcar_pago', 'salvar_endereco_apelido', 'teste', 'ver_foto_caixa', 'ver_fotos_servico', 'ver_servico']);
+  assert.deepEqual(names, ['agenda', 'agendar_servico', 'anexar_foto_caixa', 'apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'caixa_de_entrada', 'calcular_preco', 'criar_servico', 'enderecos_com_apelido', 'equipe', 'listar_servicos', 'marcar_caixa_lida', 'marcar_pago', 'salvar_endereco_apelido', 'teste', 'ver_arquivo_caixa', 'ver_foto_caixa', 'ver_fotos_servico', 'ver_servico']);
   assert.ok(!names.some((n) => /apagar|delete|excluir/.test(n)));
 });
 
@@ -360,4 +360,77 @@ test('mcp endereços com apelido: buscar, salvar, mudar e usar na retirada/desti
   await call('salvar_endereco_apelido', { apelido: 'ss', endereco: '9 Elm St, Orlando FL' });
   assert.equal(ctx.db.prepare('SELECT address FROM companies WHERE id = ?').get(Number(c.lastInsertRowid)).address, '9 Elm St, Orlando FL');
   assert.equal(ctx.db.prepare("SELECT address FROM saved_places WHERE key = 'ss'").get().address, '9 Elm St, Orlando FL');
+});
+
+test('mcp criar_servico: 4 carros no mesmo lugar (VINs diferentes) viram 4 serviços; o mesmo pedido repetido não', async (t) => {
+  const { ctx, call } = await setup(t);
+  const base = { cliente_nome: 'Auto Leilão', marca: 'Ram', modelo: '1500', retirada: '16731 State Road 50, Clermont FL', destino: '40 Oak Ave, Kissimmee FL', preco: 150, motorista: 'Jorge', vin_conferido: true };
+  const vins = ['1HGCM82633A004352', '1HGCM82633A004353', '1HGCM82633A004354', '1HGCM82633A004355'];
+  for (const vin of vins) {
+    const r = await call('criar_servico', { ...base, vin });
+    assert.match(r.text, /criado/, r.text);
+  }
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM services').get().n, 4);
+  assert.deepEqual(ctx.db.prepare('SELECT vin FROM services ORDER BY id').all().map((r) => r.vin), vins);
+  // O mesmo pedido de novo (mesmo VIN, logo em seguida) continua não duplicando.
+  const again = await call('criar_servico', { ...base, vin: vins[3] });
+  assert.match(again.text, /já tinha sido criado/);
+  // Sem VIN: carro diferente no mesmo lugar também é outro serviço.
+  const { vin_conferido, ...noVin } = base;
+  assert.match((await call('criar_servico', { ...noVin, modelo: '2500' })).text, /criado/);
+  assert.match((await call('criar_servico', { ...noVin, modelo: '2500' })).text, /já tinha sido criado/);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM services').get().n, 5);
+});
+
+// Monta um PDF de teste (com texto, ou só um desenho, como um papel escaneado).
+async function makePdf(pages) {
+  const PDFDocument = (await import('pdfkit')).default;
+  const doc = new PDFDocument();
+  const chunks = [];
+  doc.on('data', (c) => chunks.push(c));
+  const done = new Promise((r) => doc.on('end', r));
+  pages.forEach((text, i) => {
+    if (i) doc.addPage();
+    if (text) doc.text(text);
+    else doc.rect(50, 50, 200, 100).fill('#333');
+  });
+  doc.end();
+  await done;
+  return Buffer.concat(chunks);
+}
+
+test('mcp caixa de entrada: PDF do dono fica guardado e o Claude lê o texto', async (t) => {
+  const { processMessage } = await import('../src/modules/whatsapp/index.js');
+  const { ctx, call } = await setup(t);
+  const pdf = await makePdf(['Gate Pass - CarMax Clermont\nPickup: 16731 State Road 50, Clermont FL 34711', 'VIN 1HGCM82633A004352\n2020 Ram 1500 Classic']);
+  const wa = { sendText: async () => true, downloadMedia: async () => ({ buffer: pdf, mime: 'application/pdf' }) };
+  await processMessage(ctx, wa, { id: 'p1', from: OWNER_PHONE, type: 'document', text: '', mediaId: 'm1', doc: { name: 'gatepass.pdf', mime: 'application/pdf' } });
+  const row = ctx.db.prepare("SELECT * FROM jay_inbox WHERE wa_id = 'p1'").get();
+  assert.ok(row.doc_file, 'guardou o PDF');
+  assert.equal(row.file, null, 'PDF não vira foto');
+  assert.match((await call('caixa_de_entrada')).text, new RegExp(`\\[${row.id}\\] .* arquivo: \\[arquivo gatepass.pdf\\]\\n    PDF guardado: use ver_arquivo_caixa com id ${row.id}`));
+  const r = await call('ver_arquivo_caixa', { id: row.id });
+  assert.equal(r.error, false, r.text);
+  assert.match(r.text, /2 página\(s\)/);
+  assert.match(r.text, /--- Página 1 ---\nGate Pass - CarMax Clermont\nPickup: 16731 State Road 50, Clermont FL 34711/);
+  assert.match(r.text, /--- Página 2 ---\nVIN 1HGCM82633A004352/);
+  assert.equal((await call('ver_foto_caixa', { id: row.id })).error, true, 'não é foto');
+  assert.equal((await call('ver_arquivo_caixa', { id: 999 })).error, true);
+
+  // PDF escaneado (sem letra): o Gemini lê.
+  ctx.config.geminiApiKey = 'k';
+  const real = globalThis.fetch;
+  t.after(() => (globalThis.fetch = real));
+  globalThis.fetch = async (url, opts) => {
+    if (!String(url).includes('generativelanguage.googleapis.com')) return real(url, opts);
+    assert.equal(JSON.parse(opts.body).contents[0].parts[0].inline_data.mime_type, 'application/pdf');
+    return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ texto: 'Tow order: 12 Main St, Orlando' }) }] } }] });
+  };
+  const scanned = await makePdf(['']);
+  const wa2 = { sendText: async () => true, downloadMedia: async () => ({ buffer: scanned, mime: 'application/pdf' }) };
+  await processMessage(ctx, wa2, { id: 'p2', from: OWNER_PHONE, type: 'document', text: '', mediaId: 'm2', doc: { name: 'scan.pdf', mime: 'application/pdf' } });
+  const id2 = ctx.db.prepare("SELECT id FROM jay_inbox WHERE wa_id = 'p2'").get().id;
+  const r2 = await call('ver_arquivo_caixa', { id: id2 });
+  assert.match(r2.text, /lido pelo Gemini/);
+  assert.match(r2.text, /Tow order: 12 Main St, Orlando/);
 });
