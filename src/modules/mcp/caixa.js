@@ -33,6 +33,8 @@ export const caixaMigrations = [
   `ALTER TABLE jay_inbox ADD COLUMN doc_file TEXT;`,
   // Texto já tirado do PDF (para não ler de novo a cada vez).
   `ALTER TABLE jay_inbox ADD COLUMN doc_text TEXT;`,
+  // Gate pass da caixa já colocado num serviço (service_docs.id), para não pôr duas vezes.
+  `ALTER TABLE jay_inbox ADD COLUMN doc_id INTEGER;`,
 ];
 
 const PHOTO_DIR = 'caixa';
@@ -330,6 +332,46 @@ export function registerCaixaTools(server, ctx, user) {
       if (!text) return { content: [{ type: 'text', text: `Não consegui ler o PDF [${row.id}] (pode ser escaneado ou estar com senha). Peça ao dono para contar o que diz, ou mandar uma foto dele.` }], isError: true };
       const cut = text.length > MAX_PDF_TEXT ? `${text.slice(0, MAX_PDF_TEXT)}\n[... cortado, o PDF é muito longo]` : text;
       return ok(`PDF [${row.id}] mandado em ${row.created_at}${row.text ? ` · ${row.text}` : ''}${r.pages ? ` · ${r.pages} página(s)` : ''} (${r.how}):\n\n${cut}`);
+    }
+  );
+
+  server.registerTool(
+    'anexar_pdf_caixa',
+    {
+      title: 'Anexar PDF ao serviço (gate pass)',
+      description:
+        'Coloca o PDF da caixa de entrada no campo Gate pass do serviço (o mesmo do botão "Anexar gate pass" do painel). O sistema copia o arquivo sozinho: você não precisa abrir o PDF, então funciona também no chat por voz. Use quando o dono pedir, ou depois de criar o serviço a partir do PDF (pergunte antes). Um PDF por carro: confira pelo VIN ou pelo carro que é o serviço certo.',
+      inputSchema: {
+        ids: z.array(z.number().int()).min(1).describe('Os números entre colchetes dos PDFs na caixa de entrada'),
+        numero_servico: z.number().int(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ ids, numero_servico }) => {
+      const s = ctx.data.services.get(numero_servico);
+      if (!s) return { content: [{ type: 'text', text: `Não achei o serviço #${numero_servico}.` }], isError: true };
+      if (!ctx.api.fotos?.saveDoc) return { content: [{ type: 'text', text: 'O módulo de fotos e gate pass está desligado.' }], isError: true };
+      const out = [];
+      let added = 0;
+      for (const id of ids) {
+        const row = ctx.db.prepare('SELECT * FROM jay_inbox WHERE id = ?').get(id);
+        const file = row && pdfFile(ctx, row);
+        if (!file) {
+          out.push(row ? `[${id}] não tem PDF guardado (peça ao dono para mandar de novo).` : `Não achei a mensagem [${id}].`);
+          continue;
+        }
+        if (row.doc_id && ctx.db.prepare('SELECT 1 FROM service_docs WHERE id = ?').get(row.doc_id)) {
+          out.push(`[${id}] já estava num serviço.`);
+          continue;
+        }
+        const name = (String(row.text || '').match(/\[arquivo ([^\]]+)\]/)?.[1] || 'gate pass.pdf').trim();
+        const docId = ctx.api.fotos.saveDoc({ serviceId: s.id, buffer: fs.readFileSync(file), mime: 'application/pdf', name, userId: user.id });
+        ctx.db.prepare('UPDATE jay_inbox SET doc_id = ?, service_id = COALESCE(service_id, ?) WHERE id = ?').run(docId, s.id, id);
+        added++;
+        out.unshift(`PDF [${id}] (${name}) colocado no gate pass do serviço #${s.id}.`);
+      }
+      if (added) logAction(ctx, user, s.id, 'anexar_pdf_caixa', { ids }, 'gatepass_anexado');
+      return { content: [{ type: 'text', text: out.join(' ') }], isError: !added && !out.some((l) => /já estava/.test(l)) };
     }
   );
 
