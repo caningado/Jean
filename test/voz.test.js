@@ -74,7 +74,9 @@ test('Comando de voz: o Gemini diz a ação e o serviço muda, com quem fez e a 
   // Finalizar
   r = await (await speak(drv, s.id, 'finalizar_servico')).json();
   assert.equal(r.service.status, 'concluido');
-  const detail = await json(drv, 'GET', `/services/${s.id}`);
+  // O histórico só aparece para o ADM (pedido do dono 18/11).
+  assert.deepEqual((await json(drv, 'GET', `/services/${s.id}`)).events, []);
+  const detail = await json(adm, 'GET', `/services/${s.id}`);
   assert.deepEqual(detail.events.map((e) => [e.action, e.user_name, e.source]), [
     ['iniciar_servico', 'Jorge', 'voz'],
     ['peguei_o_carro', 'Jorge', 'voz'],
