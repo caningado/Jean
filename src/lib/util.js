@@ -93,6 +93,33 @@ export function startOfYearIso(timeZone, date = new Date()) {
   return startOfDayIso(timeZone, new Date(Date.UTC(year, 0, 1, 12)));
 }
 
+// Dia "AAAA-MM-DD" mais (ou menos) alguns dias.
+export function addDays(day, n) {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+// Semanas numeradas do ano (sábado a sexta, pedido do Caningado 21/11).
+// A semana é do ano em que cai a sexta dela: a Semana 1 é a que tem a primeira sexta do ano.
+// Por isso o ano tem 52 ou 53 semanas, e a Semana 1 pode começar no fim de dezembro.
+export function weeksOfYear(year) {
+  const jan1 = new Date(Date.UTC(year, 0, 1));
+  const firstFriday = addDays(jan1.toISOString().slice(0, 10), (5 - jan1.getUTCDay() + 7) % 7);
+  const weeks = [];
+  for (let end = firstFriday; end.startsWith(String(year)); end = addDays(end, 7)) {
+    weeks.push({ n: weeks.length + 1, start: addDays(end, -6), end });
+  }
+  return weeks;
+}
+
+// Os 12 meses do ano: { n: 1..12, start: 'AAAA-MM-01', end: último dia }.
+export function monthsOfYear(year) {
+  return Array.from({ length: 12 }, (_, i) => {
+    const mm = String(i + 1).padStart(2, '0');
+    return { n: i + 1, start: `${year}-${mm}-01`, end: new Date(Date.UTC(year, i + 1, 0)).toISOString().slice(0, 10) };
+  });
+}
+
 export class HttpError extends Error {
   constructor(status, message) {
     super(message);

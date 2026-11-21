@@ -568,3 +568,15 @@ button.chat-mic svg { width: 22px; height: 22px; }
 /* Enviar fotos: botão do WhatsApp do cliente (é um link) */
 .btn.wa-send { display: block; width: 100%; margin-top: 14px; text-align: center; text-decoration: none; background: #25d366; color: #fff; line-height: 1.3; }
 .btn.wa-send .sub { color: rgba(255, 255, 255, .9); font-size: 13px; font-weight: 400; }
+
+/* Semanas e meses numerados (Entregues/Todos › Semana ou Mês) */
+.anos { display: flex; gap: 8px; margin-bottom: 12px; overflow-x: auto; }
+.anos a { flex: 1; min-width: 64px; text-align: center; background: var(--chip); color: var(--muted); border-radius: 99px; padding: 8px; text-decoration: none; }
+.anos a.on { background: var(--text); color: var(--bg); font-weight: 600; }
+.list.periodos .p-left { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.list.periodos .p-num { flex: none; min-width: 34px; text-align: center; font-size: 13px; font-weight: 600; color: #fff; background: #2563eb; border-radius: 8px; padding: 2px 6px; margin-top: 1px; }
+.periodo-head .periodo-sum { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 6px; }
+.periodo-head .big { font-size: 22px; font-weight: 700; }
+.periodo-nav { display: flex; gap: 8px; margin-bottom: 12px; }
+.periodo-nav > * { flex: 1; }
+.periodo-nav a { text-align: center; background: var(--chip); border-radius: 10px; padding: 9px; color: var(--text); text-decoration: none; font-size: 14px; }
