@@ -35,7 +35,7 @@ const events = (ctx, id) => ctx.db.prepare('SELECT action, source FROM service_e
 test('mcp ferramentas: lista tudo e não tem ferramenta de apagar', async (t) => {
   const { client } = await setup(t);
   const names = (await client.listTools()).tools.map((x) => x.name).sort();
-  assert.deepEqual(names, ['apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'caixa_de_entrada', 'criar_servico', 'equipe', 'listar_servicos', 'marcar_caixa_lida', 'marcar_pago', 'teste', 'ver_servico']);
+  assert.deepEqual(names, ['agenda', 'agendar_servico', 'anexar_foto_caixa', 'anexar_pdf_caixa', 'apelido_cliente', 'atribuir_motorista', 'atualizar_servico', 'atualizar_status', 'buscar_cliente', 'caixa_de_entrada', 'calcular_preco', 'criar_servico', 'enderecos_com_apelido', 'equipe', 'listar_servicos', 'marcar_caixa_lida', 'marcar_pago', 'salvar_endereco_apelido', 'teste', 'ver_arquivo_caixa', 'ver_foto_caixa', 'ver_fotos_servico', 'ver_servico']);
   assert.ok(!names.some((n) => /apagar|delete|excluir/.test(n)));
 });
 
@@ -193,4 +193,265 @@ test('mcp caixa de entrada: JAY_CAIXA=off deixa o Jay como antes', async () => {
   await processMessage(ctx, client, { id: 'x1', from: OWNER_PHONE, type: 'text', text: 'oi Jay', mediaId: null });
   assert.ok(!sent.some((m) => /Guardei na caixa/.test(m.text)));
   assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM jay_inbox').get().n, 1, 'a cópia continua sendo guardada');
+});
+
+test('mcp caixa de entrada: foto do dono fica guardada e o Claude vê a imagem', async (t) => {
+  const { processMessage } = await import('../src/modules/whatsapp/index.js');
+  const { ctx, call, client: mcpClient } = await setup(t);
+  const callRaw = (name, args) => mcpClient.callTool({ name, arguments: args });
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const client = { sendText: async () => true, downloadMedia: async () => ({ buffer: png, mime: 'image/png' }) };
+  await processMessage(ctx, client, { id: 'f1', from: OWNER_PHONE, type: 'image', text: 'carro do Luan', mediaId: 'm1' });
+  const row = ctx.db.prepare("SELECT * FROM jay_inbox WHERE wa_id = 'f1'").get();
+  assert.equal(row.mime, 'image/png');
+  assert.match((await call('caixa_de_entrada')).text, new RegExp(`\\[${row.id}\\] .* foto: \\[foto\\] carro do Luan\\n    Foto guardada: use ver_foto_caixa com id ${row.id}`));
+  const r = await call('ver_foto_caixa', { id: row.id });
+  assert.equal(r.error, false);
+  // O Claude recebe a imagem de verdade (não só o texto "[foto]").
+  const res = await callRaw('ver_foto_caixa', { id: row.id });
+  assert.deepEqual(res.content[0], { type: 'image', data: png.toString('base64'), mimeType: 'image/png' });
+  const raw = await (await import('node:fs')).promises.readFile(`${ctx.config.uploadsDir}/${row.file}`);
+  assert.deepEqual(raw, png);
+  assert.equal((await call('ver_foto_caixa', { id: 999 })).error, true);
+});
+
+test('mcp caixa de entrada: áudio do dono vem escrito pelo Jay para o Claude ler', async (t) => {
+  const { processMessage } = await import('../src/modules/whatsapp/index.js');
+  const { ctx, call } = await setup(t);
+  ctx.config.geminiApiKey = 'k';
+  ctx.config.roboVoz = false;
+  const real = globalThis.fetch;
+  t.after(() => (globalThis.fetch = real));
+  const asked = [];
+  globalThis.fetch = async (url, opts) => {
+    if (!String(url).includes('generativelanguage.googleapis.com')) return real(url, opts);
+    const body = JSON.parse(opts.body);
+    asked.push(body.contents[0].parts);
+    const said = 'Pega o Civic no 1200 Alafaya Trail, Oviedo, e leva pro GR2. Cobra $150.';
+    return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ transcricao: said }) }] } }] });
+  };
+  const client = { sendText: async () => true, downloadMedia: async () => ({ buffer: Buffer.from('OggS-fake-audio'), mime: 'audio/ogg; codecs=opus' }) };
+  await processMessage(ctx, client, { id: 'a1', from: OWNER_PHONE, type: 'audio', text: '', mediaId: 'm1', audio: true });
+  const row = ctx.db.prepare("SELECT * FROM jay_inbox WHERE wa_id = 'a1'").get();
+  assert.match(row.text, /^\[mensagem de voz\] Transcrição do Jay: "Pega o Civic no 1200 Alafaya Trail, Oviedo/);
+  const sentAudio = asked.find((parts) => /Transcreva este áudio/.test(parts[1]?.text || ''));
+  assert.ok(sentAudio, 'pediu a transcrição ao Gemini');
+  assert.equal(sentAudio[0].inline_data.mime_type, 'audio/ogg');
+  assert.equal(Buffer.from(sentAudio[0].inline_data.data, 'base64').toString(), 'OggS-fake-audio');
+  const caixa = await call('caixa_de_entrada');
+  assert.match(caixa.text, new RegExp(`\\[${row.id}\\] .* áudio: \\[mensagem de voz\\] Transcrição do Jay: ".*GR2. Cobra \\$150\\."`));
+
+  // Gemini fora do ar: a mensagem avisa o Claude que não deu para escrever.
+  globalThis.fetch = async (url, opts) => (String(url).includes('generativelanguage') ? new Response('erro', { status: 400 }) : real(url, opts));
+  await processMessage(ctx, client, { id: 'a2', from: OWNER_PHONE, type: 'audio', text: '', mediaId: 'm2', audio: true });
+  assert.match(ctx.db.prepare("SELECT text FROM jay_inbox WHERE wa_id = 'a2'").get().text, /não consegui escrever o áudio/);
+
+  // Jay em silêncio no WhatsApp (JAY_WHATSAPP desligado): o áudio continua sendo escrito.
+  ctx.config.whatsapp.conversar = false;
+  globalThis.fetch = async (url, opts) =>
+    String(url).includes('generativelanguage') ? Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ transcricao: 'leva pro Ribas' }) }] } }] }) : real(url, opts);
+  await processMessage(ctx, client, { id: 'a4', from: OWNER_PHONE, type: 'audio', text: '', mediaId: 'm4', audio: true });
+  assert.match(ctx.db.prepare("SELECT text FROM jay_inbox WHERE wa_id = 'a4'").get().text, /Transcrição do Jay: "leva pro Ribas"/);
+  ctx.config.whatsapp.conversar = true;
+
+  // Áudio do motorista não entra na caixa.
+  await processMessage(ctx, client, { id: 'a3', from: DRIVER_PHONE, type: 'audio', text: '', mediaId: 'm3', audio: true });
+  assert.equal(ctx.db.prepare("SELECT COUNT(*) AS n FROM jay_inbox WHERE wa_id = 'a3'").get().n, 0);
+});
+
+test('mcp caixa de entrada: só a foto escolhida vai para o serviço e para o motorista', async (t) => {
+  const { processMessage } = await import('../src/modules/whatsapp/index.js');
+  const { ctx, call, client: mcpClient, driver } = await setup(t);
+  const sentImages = [];
+  ctx.sendImage = async (to, buffer, mime, caption) => sentImages.push({ to, buffer, mime, caption });
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const wa = { sendText: async () => true, downloadMedia: async () => ({ buffer: png, mime: 'image/png' }) };
+  await processMessage(ctx, wa, { id: 'f1', from: OWNER_PHONE, type: 'image', text: '', mediaId: 'm1' });
+  await processMessage(ctx, wa, { id: 'f2', from: OWNER_PHONE, type: 'image', text: 'placa', mediaId: 'm2' });
+  const ids = ctx.db.prepare('SELECT id FROM jay_inbox ORDER BY id').all().map((r) => r.id);
+  const r = await call('criar_servico', { cliente_nome: 'Marcos', marca: 'Honda', modelo: 'Civic', retirada: '12 Main St, Orlando FL', destino: '40 Oak Ave, Kissimmee FL', preco: 150, motorista: 'Jorge' });
+  assert.equal(r.error, false, r.text);
+  const id = ctx.db.prepare('SELECT MAX(id) AS id FROM services').get().id;
+
+  // Marcar como tratada NÃO leva foto nenhuma: só lembra o Claude de perguntar.
+  const marked = await call('marcar_caixa_lida', { ids, numero_servico: id });
+  assert.match(marked.text, /Tem 2 foto\(s\).*anexar_foto_caixa/);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM photos').get().n, 0);
+
+  // O dono escolhe só a foto do carro (a 2ª era a print do endereço).
+  const chosen = await call('anexar_foto_caixa', { ids: [ids[0]], numero_servico: id });
+  assert.match(chosen.text, /1 foto\(s\) colocada\(s\) no serviço #\d+\. O motorista vê no serviço, no painel/);
+  const photos = ctx.db.prepare('SELECT * FROM photos WHERE service_id = ?').all(id);
+  assert.equal(photos.length, 1);
+  assert.ok(photos.every((p) => p.origin === 'caixa' && p.kind === 'outro' && !p.stamped_file));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(sentImages.length, 0, 'o Jay não manda nada ao motorista');
+
+  // Anexar de novo não duplica nem manda de novo.
+  assert.match((await call('anexar_foto_caixa', { ids: [ids[0]], numero_servico: id })).text, /Já estava/);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM photos WHERE service_id = ?').get(id).n, 1);
+  assert.equal(sentImages.length, 0);
+
+  // O motorista vê a foto no painel (detalhe do serviço).
+  const detail = ctx.loaded.find((m) => m.name === 'fotos').serviceDetail({ ctx, service: ctx.data.services.get(id) });
+  assert.equal(detail.photos.filter((p) => p.origin === 'caixa').length, 1);
+
+  // O Claude vê as fotos do serviço.
+  assert.match((await call('ver_servico', { numero: id })).text, /Fotos: 1 anexo \(caixa do Jay\)/);
+  const res = await mcpClient.callTool({ name: 'ver_fotos_servico', arguments: { numero: id } });
+  assert.equal(res.content.filter((c) => c.type === 'image').length, 1);
+  assert.match(res.content.at(-1).text, /mostrando 1 de 1/);
+  assert.match((await call('ver_fotos_servico', { numero: id, tipo: 'antes' })).text, /não tem fotos desse tipo/);
+  assert.ok(driver);
+});
+
+test('mcp agenda: agendar ao criar, agendar depois, ver a agenda e tirar', async (t) => {
+  const { ctx, call } = await setup(t);
+  const r = await call('criar_servico', { cliente_nome: 'Rui', marca: 'Nissan', modelo: 'Altima', retirada: '9 Lake St, Orlando FL', destino: '10 Lake St, Orlando FL', preco: 120, motorista: 'Jorge', agendar_para: 'amanhã 9h' });
+  assert.equal(r.error, false, r.text);
+  assert.ok(ctx.data.services.get(1).scheduled_at);
+  assert.match((await call('agenda')).text, /Agenda:\n- .*Rui/);
+  assert.match((await call('agendar_servico', { numero: 1, quando: 'qualquer coisa' })).text, /Não entendi o dia\/hora/);
+  assert.match((await call('agendar_servico', { numero: 1, quando: 'tirar' })).text, /tirado/);
+  assert.equal(ctx.data.services.get(1).scheduled_at, null);
+  assert.match((await call('agendar_servico', { numero: 1, quando: 'sexta 8am' })).text, /agendado para/);
+  assert.match((await call('ver_servico', { numero: 1 })).text, /Agendado para: /);
+  assert.deepEqual(events(ctx, 1).map((e) => e.action), ['criado_servico', 'agendado', 'agendado']);
+});
+
+test('mcp endereços com apelido: buscar, salvar, mudar e usar na retirada/destino e no preço', async (t) => {
+  const { ctx, call } = await setup(t);
+  const vazio = await call('enderecos_com_apelido', { busca: 'GR2' });
+  assert.match(vazio.text, /Nenhum endereço com o apelido "GR2"/);
+
+  const novo = await call('salvar_endereco_apelido', { apelido: 'GR2', endereco: 'GR2 Auto Mechanic, 4912 Old Winter Garden Rd, Orlando, FL 32811' });
+  assert.equal(novo.error, false, novo.text);
+  assert.match(novo.text, /Apelido "GR2" salvo/);
+  assert.equal(ctx.db.prepare("SELECT address FROM saved_places WHERE key = 'gr2'").get().address, 'GR2 Auto Mechanic, 4912 Old Winter Garden Rd, Orlando, FL 32811');
+  await call('salvar_endereco_apelido', { apelido: 'Luan', endereco: '10 Oak Ave, Oviedo FL' });
+
+  // Acha pelo apelido (sem diferença de maiúscula), por parte do endereço, e lista todos.
+  assert.match((await call('enderecos_com_apelido', { busca: 'gr2' })).text, /GR2: GR2 Auto Mechanic, 4912 Old Winter Garden Rd.*google\.com\/maps/);
+  assert.match((await call('enderecos_com_apelido', { busca: 'oviedo' })).text, /Luan: 10 Oak Ave/);
+  assert.match((await call('enderecos_com_apelido', {})).text, /2 endereço\(s\)/);
+
+  // Mudar o endereço de um apelido que já existe.
+  const muda = await call('salvar_endereco_apelido', { apelido: 'luan', endereco: '20 Pine St, Oviedo FL' });
+  assert.match(muda.text, /mudado \(antes: 10 Oak Ave, Oviedo FL\)/);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM saved_places').get().n, 2);
+  assert.equal(ctx.db.prepare("SELECT COUNT(*) AS n FROM mcp_actions WHERE tool = 'salvar_endereco_apelido'").get().n, 3);
+
+  // Apelido na retirada e no destino vira o endereço salvo.
+  const r = await call('criar_servico', { cliente_nome: 'Ana', cliente_telefone: '407 555 0144', marca: 'Toyota', modelo: 'Camry', retirada: 'gr2', destino: 'Luan', preco: 120, motorista: 'Jorge' });
+  assert.equal(r.error, false, r.text);
+  assert.match(r.text, /Retirada: apelido "GR2" = GR2 Auto Mechanic/);
+  const s = ctx.db.prepare('SELECT pickup, dropoff FROM services').get();
+  assert.equal(s.pickup, 'GR2 Auto Mechanic, 4912 Old Winter Garden Rd, Orlando, FL 32811');
+  assert.equal(s.dropoff, '20 Pine St, Oviedo FL');
+
+  const preco = await call('calcular_preco', { retirada: 'GR2', destino: 'luan', milhas: 12 });
+  assert.match(preco.text, /Retirada: apelido "GR2" = GR2 Auto Mechanic/);
+  assert.match(preco.text, /Destino: apelido "Luan" = 20 Pine St/);
+
+  // Apelido que é de uma empresa: muda o endereço da empresa também.
+  const c = ctx.db.prepare("INSERT INTO companies (name, nickname, address, token, created_at) VALUES ('SUPER SPEED', 'SS', '1 Main St, Orlando FL', 'tk', ?)").run(new Date().toISOString());
+  ctx.api.empresas.setAddress(Number(c.lastInsertRowid), '1 Main St, Orlando FL');
+  assert.match((await call('enderecos_com_apelido', { busca: 'super speed' })).text, /SS \(empresa SUPER SPEED\): 1 Main St/);
+  await call('salvar_endereco_apelido', { apelido: 'ss', endereco: '9 Elm St, Orlando FL' });
+  assert.equal(ctx.db.prepare('SELECT address FROM companies WHERE id = ?').get(Number(c.lastInsertRowid)).address, '9 Elm St, Orlando FL');
+  assert.equal(ctx.db.prepare("SELECT address FROM saved_places WHERE key = 'ss'").get().address, '9 Elm St, Orlando FL');
+});
+
+test('mcp criar_servico: 4 carros no mesmo lugar (VINs diferentes) viram 4 serviços; o mesmo pedido repetido não', async (t) => {
+  const { ctx, call } = await setup(t);
+  const base = { cliente_nome: 'Auto Leilão', marca: 'Ram', modelo: '1500', retirada: '16731 State Road 50, Clermont FL', destino: '40 Oak Ave, Kissimmee FL', preco: 150, motorista: 'Jorge', vin_conferido: true };
+  const vins = ['1HGCM82633A004352', '1HGCM82633A004353', '1HGCM82633A004354', '1HGCM82633A004355'];
+  for (const vin of vins) {
+    const r = await call('criar_servico', { ...base, vin });
+    assert.match(r.text, /criado/, r.text);
+  }
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM services').get().n, 4);
+  assert.deepEqual(ctx.db.prepare('SELECT vin FROM services ORDER BY id').all().map((r) => r.vin), vins);
+  // O mesmo pedido de novo (mesmo VIN, logo em seguida) continua não duplicando.
+  const again = await call('criar_servico', { ...base, vin: vins[3] });
+  assert.match(again.text, /já tinha sido criado/);
+  // Sem VIN: carro diferente no mesmo lugar também é outro serviço.
+  const { vin_conferido, ...noVin } = base;
+  assert.match((await call('criar_servico', { ...noVin, modelo: '2500' })).text, /criado/);
+  assert.match((await call('criar_servico', { ...noVin, modelo: '2500' })).text, /já tinha sido criado/);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM services').get().n, 5);
+});
+
+// Monta um PDF de teste (com texto, ou só um desenho, como um papel escaneado).
+async function makePdf(pages) {
+  const PDFDocument = (await import('pdfkit')).default;
+  const doc = new PDFDocument();
+  const chunks = [];
+  doc.on('data', (c) => chunks.push(c));
+  const done = new Promise((r) => doc.on('end', r));
+  pages.forEach((text, i) => {
+    if (i) doc.addPage();
+    if (text) doc.text(text);
+    else doc.rect(50, 50, 200, 100).fill('#333');
+  });
+  doc.end();
+  await done;
+  return Buffer.concat(chunks);
+}
+
+test('mcp caixa de entrada: PDF do dono fica guardado e o Claude lê o texto', async (t) => {
+  const { processMessage } = await import('../src/modules/whatsapp/index.js');
+  const { ctx, call } = await setup(t);
+  const pdf = await makePdf(['Gate Pass - CarMax Clermont\nPickup: 16731 State Road 50, Clermont FL 34711', 'VIN 1HGCM82633A004352\n2020 Ram 1500 Classic']);
+  const wa = { sendText: async () => true, downloadMedia: async () => ({ buffer: pdf, mime: 'application/pdf' }) };
+  await processMessage(ctx, wa, { id: 'p1', from: OWNER_PHONE, type: 'document', text: '', mediaId: 'm1', doc: { name: 'gatepass.pdf', mime: 'application/pdf' } });
+  const row = ctx.db.prepare("SELECT * FROM jay_inbox WHERE wa_id = 'p1'").get();
+  assert.ok(row.doc_file, 'guardou o PDF');
+  assert.equal(row.file, null, 'PDF não vira foto');
+  assert.ok(row.doc_text, 'o texto já foi tirado quando o PDF chegou');
+  // O texto vem direto na caixa de entrada (o Claude por voz não abre arquivo).
+  const listed = (await call('caixa_de_entrada')).text;
+  assert.match(listed, new RegExp(`\\[${row.id}\\] .* arquivo: \\[arquivo gatepass.pdf\\]\\n    Texto do PDF \\(2 página\\(s\\)\\), texto do PDF:\\n      --- Página 1 ---\\n      Gate Pass - CarMax Clermont\\n      Pickup: 16731 State Road 50`));
+  assert.match(listed, /      VIN 1HGCM82633A004352/);
+  const r = await call('ver_arquivo_caixa', { id: row.id });
+  assert.equal(r.error, false, r.text);
+  assert.match(r.text, /2 página\(s\)/);
+  assert.match(r.text, /--- Página 1 ---\nGate Pass - CarMax Clermont\nPickup: 16731 State Road 50, Clermont FL 34711/);
+  assert.match(r.text, /--- Página 2 ---\nVIN 1HGCM82633A004352/);
+  assert.equal((await call('ver_foto_caixa', { id: row.id })).error, true, 'não é foto');
+  assert.equal((await call('ver_arquivo_caixa', { id: 999 })).error, true);
+  // Colocar o PDF no gate pass do serviço (sem o Claude abrir o arquivo; funciona por voz).
+  const sv = await call('criar_servico', { cliente_nome: 'CarMax', marca: 'Ram', modelo: '1500', retirada: '16731 State Road 50, Clermont FL', destino: '40 Oak Ave, Kissimmee FL', preco: 150, motorista: 'Jorge' });
+  assert.equal(sv.error, false, sv.text);
+  const sid = ctx.db.prepare('SELECT MAX(id) AS id FROM services').get().id;
+  const att = await call('anexar_pdf_caixa', { ids: [row.id], numero_servico: sid });
+  assert.equal(att.error, false, att.text);
+  assert.match(att.text, /gatepass\.pdf\) colocado no gate pass do serviço/);
+  const doc = ctx.db.prepare('SELECT * FROM service_docs WHERE service_id = ?').get(sid);
+  assert.equal(doc.kind, 'gatepass');
+  assert.equal(doc.name, 'gatepass.pdf');
+  assert.deepEqual((await import('node:fs')).readFileSync(`${ctx.config.uploadsDir}/${doc.file}`), pdf);
+  assert.match((await call('anexar_pdf_caixa', { ids: [row.id], numero_servico: sid })).text, /já estava/);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM service_docs').get().n, 1, 'não põe duas vezes');
+  // PDF antigo, de antes de guardar o arquivo: a caixa avisa para mandar de novo.
+  ctx.db.prepare("INSERT INTO jay_inbox (user_id, wa_id, type, text, created_at) VALUES (?, 'old', 'document', '[arquivo velho.pdf]', ?)").run(row.user_id, new Date().toISOString());
+  assert.match((await call('caixa_de_entrada')).text, /velho\.pdf\]\n    \(O arquivo não ficou guardado/);
+
+  // PDF escaneado (sem letra): o Gemini lê.
+  ctx.config.geminiApiKey = 'k';
+  const real = globalThis.fetch;
+  t.after(() => (globalThis.fetch = real));
+  globalThis.fetch = async (url, opts) => {
+    if (!String(url).includes('generativelanguage.googleapis.com')) return real(url, opts);
+    assert.equal(JSON.parse(opts.body).contents[0].parts[0].inline_data.mime_type, 'application/pdf');
+    return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ texto: 'Tow order: 12 Main St, Orlando' }) }] } }] });
+  };
+  const scanned = await makePdf(['']);
+  const wa2 = { sendText: async () => true, downloadMedia: async () => ({ buffer: scanned, mime: 'application/pdf' }) };
+  await processMessage(ctx, wa2, { id: 'p2', from: OWNER_PHONE, type: 'document', text: '', mediaId: 'm2', doc: { name: 'scan.pdf', mime: 'application/pdf' } });
+  const id2 = ctx.db.prepare("SELECT id FROM jay_inbox WHERE wa_id = 'p2'").get().id;
+  assert.match((await call('caixa_de_entrada')).text, /Texto do PDF \(1 página\(s\)\), PDF escaneado, lido pelo Gemini.*\n      Tow order: 12 Main St, Orlando/);
+  const r2 = await call('ver_arquivo_caixa', { id: id2 });
+  assert.match(r2.text, /lido pelo Gemini/);
+  assert.match(r2.text, /Tow order: 12 Main St, Orlando/);
 });

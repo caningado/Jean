@@ -39,6 +39,11 @@ export function loadConfig(overrides = {}) {
       // Valor médio do serviço ($100, Caningado 23/10): é a sugestão quando não há milhas.
       baseCents: Math.round(Number(env.PRICE_BASE ?? 100) * 100),
       perMileCents: Math.round(Number(env.PRICE_PER_MILE || 0) * 100),
+      // Preço pelo tempo ($100 a hora, Caningado 15/11): ida + volta + 15 min para pegar + 15 para entregar.
+      perHourCents: Math.round(Number(env.PRICE_PER_HOUR ?? 100) * 100),
+      loadMinutes: Number(env.PRICE_LOAD_MINUTES ?? 30),
+      // Guincho anda mais devagar que carro: +10% no tempo do Google Maps.
+      truckFactor: Number(env.PRICE_TRUCK_FACTOR ?? 1.1),
     },
     zelle: {
       name: env.ZELLE_NAME || '',
@@ -52,6 +57,11 @@ export function loadConfig(overrides = {}) {
       apiVersion: env.WHATSAPP_API_VERSION || 'v21.0',
       // Só para trocar a foto do robô; sem ele, o sistema descobre pelo token.
       appId: env.WHATSAPP_APP_ID || '',
+      // O Jay conversa pelo WhatsApp? Desligado por ordem do dono (18/11): o Jay não manda NADA
+      // pelo WhatsApp para ninguém (respostas, avisos, fotos, áudios) e não executa comandos.
+      // As mensagens do dono continuam chegando na caixa de entrada (para o Claude).
+      // JAY_WHATSAPP=on volta ao normal.
+      conversar: env.JAY_WHATSAPP === 'on',
       // Mensagens de texto que chegam juntas (encaminhadas, cartão de contato) esperam este tempo
       // e viram uma só, para o robô entender o serviço inteiro.
       juntarMs: env.WHATSAPP_JUNTAR_MS != null && env.WHATSAPP_JUNTAR_MS !== '' ? Number(env.WHATSAPP_JUNTAR_MS) : 3000,
@@ -103,6 +113,10 @@ export function loadConfig(overrides = {}) {
     vinOcr: env.VIN_OCR !== 'off',
     // Conferir endereços no mapa (Census + OpenStreetMap, grátis). GEOCODER=off desliga.
     geocoder: env.GEOCODER !== 'off',
+    // Carimbo nas fotos do carro: data, hora e endereço escritos na foto. FOTO_CARIMBO=off desliga.
+    fotoCarimbo: env.FOTO_CARIMBO !== 'off',
+    // Milhas de carro entre retirada e destino pelo Google Maps (Routes API). Sem chave, as milhas são à mão.
+    googleMapsKey: (env.GOOGLE_MAPS_API_KEY || '').trim(),
     // Busca de endereço só neste estado (sigla). GEO_ESTADO=todos busca no país inteiro.
     geoEstado: (env.GEO_ESTADO || 'FL').toUpperCase() === 'TODOS' ? null : (env.GEO_ESTADO || 'FL').toUpperCase(),
   };

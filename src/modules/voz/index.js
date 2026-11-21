@@ -342,7 +342,9 @@ export default {
   ],
 
   // Na tela do serviço: a etapa atual e o histórico (quem fez e quando).
-  serviceDetail({ ctx, service }) {
+  // Só o ADM vê o histórico; o motorista não (pedido do dono 18/11).
+  serviceDetail({ ctx, service, user }) {
+    if (user && user.role !== 'dono') return { events: [] };
     const events = ctx.db
       .prepare('SELECT e.action, e.source, e.created_at, u.name AS user_name FROM service_events e LEFT JOIN users u ON u.id = e.user_id WHERE e.service_id = ? ORDER BY e.id')
       .all(service.id);

@@ -7,6 +7,8 @@ import express from 'express';
 import { FlowError } from '../../core/bot.js';
 import { simplify, nowIso, HttpError } from '../../lib/util.js';
 import { readVinBarcode } from '../../lib/barcode.js';
+import { coordsOf } from '../../lib/validate.js';
+import { readPhotoMeta, takenToIso, stampPhoto, stampDate, coordsText } from '../../lib/carimbo.js';
 
 const KINDS = { antes: 'antes', depois: 'depois', vin: 'vin', outro: 'outro' };
 const KIND_LABEL = { antes: 'antes', depois: 'depois', vin: 'VIN', outro: 'sem tipo' };
@@ -52,7 +54,28 @@ const migrations = [
      created_at TEXT NOT NULL
    );
    CREATE INDEX service_docs_service ON service_docs(service_id);`,
+  // Carimbo: onde e quando a foto foi tirada, e a cópia com isso escrito na foto.
+  // place_source: foto (GPS da própria foto), celular (GPS do painel), whatsapp (localização 📍
+  // que o motorista mandou), servico (endereço de retirada/entrega do serviço).
+  `ALTER TABLE photos ADD COLUMN stamped_file TEXT;
+   ALTER TABLE photos ADD COLUMN lat REAL;
+   ALTER TABLE photos ADD COLUMN lng REAL;
+   ALTER TABLE photos ADD COLUMN address TEXT;
+   ALTER TABLE photos ADD COLUMN taken_at TEXT;
+   ALTER TABLE photos ADD COLUMN place_source TEXT;
+   CREATE TABLE user_locations (
+     user_id INTEGER PRIMARY KEY REFERENCES users(id),
+     lat REAL NOT NULL,
+     lng REAL NOT NULL,
+     at TEXT NOT NULL
+   );`,
+  // De onde veio a foto: 'caixa' = o dono mandou ao Jay e foi anexada ao serviço (para o
+  // motorista saber qual é o carro). Essas não levam carimbo (não são a prova da retirada).
+  `ALTER TABLE photos ADD COLUMN origin TEXT;`,
 ];
+
+// Localização 📍 do WhatsApp vale para as fotos dos próximos 60 minutos.
+const LOCATION_MINUTES = 60;
 
 const DOC_TYPES = { 'application/pdf': '.pdf', 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/heic': '.heic', 'image/heif': '.heic', 'image/gif': '.gif' };
 
@@ -87,6 +110,8 @@ function listDocs(ctx, serviceId) {
 }
 
 function publicRoutes(app, ctx) {
+  app.get('/fotos/:token', (req, res) => sharePage(ctx, req, res));
+  app.get('/fotos/:token/:n.jpg', (req, res) => shareImage(ctx, req, res));
   app.get('/arquivo/:id/:token/:name', (req, res) => {
     const id = Number(req.params.id);
     const [exp, sig] = String(req.params.token).split('.');
@@ -100,6 +125,69 @@ function publicRoutes(app, ctx) {
     res.setHeader('Cache-Control', 'private, no-store');
     res.sendFile(path.join(ctx.config.uploadsDir, doc.file));
   });
+}
+
+// ---------- link das fotos para o cliente (WhatsApp do cliente) ----------
+// O celular não deixa um site escolher o contato no "Compartilhar". Então o painel abre a
+// conversa do cliente (wa.me/número) com uma mensagem pronta e um link para as fotos marcadas.
+// O link não precisa de login, mostra só aquelas fotos (carimbadas) e vale por 60 dias.
+const SHARE_DAYS = 60;
+const shareSig = (ctx, payload) => crypto.createHmac('sha256', ctx.config.secret).update(`fotos:${payload}`).digest('base64url').slice(0, 22);
+function shareToken(ctx, serviceId, ids) {
+  const exp = Math.floor(Date.now() / 1000) + SHARE_DAYS * 86400;
+  const payload = `${serviceId}-${ids.join('_')}-${exp.toString(36)}`;
+  return `${payload}-${shareSig(ctx, payload)}`;
+}
+function readShareToken(ctx, token) {
+  const m = /^(\d+)-([\d_]+)-([0-9a-z]+)-([\w-]{22})$/.exec(String(token || ''));
+  if (!m) return null;
+  const payload = `${m[1]}-${m[2]}-${m[3]}`;
+  const expected = Buffer.from(shareSig(ctx, payload));
+  const given = Buffer.from(m[4]);
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
+  return { serviceId: Number(m[1]), ids: m[2].split('_').map(Number), expired: parseInt(m[3], 36) * 1000 <= Date.now() };
+}
+function publicBase(ctx) {
+  const env = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL;
+  const saved = ctx.db.prepare("SELECT value FROM settings WHERE key = 'public_url'").get()?.value;
+  return (env || saved || '').replace(/\/$/, '');
+}
+// Fotos do link, na ordem marcada, só as que ainda existem e são daquele serviço.
+function sharedPhotos(ctx, share) {
+  const get = ctx.db.prepare('SELECT * FROM photos WHERE id = ? AND service_id = ?');
+  return share.ids.map((id) => get.get(id, share.serviceId)).filter(Boolean);
+}
+const escHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+function sharePage(ctx, req, res) {
+  const share = readShareToken(ctx, req.params.token);
+  const photos = share && !share.expired ? sharedPhotos(ctx, share) : [];
+  res.set({ 'Cache-Control': 'private, no-store', 'X-Robots-Tag': 'noindex', 'Referrer-Policy': 'no-referrer' });
+  const base = publicBase(ctx) || `${req.protocol}://${req.get('host')}`;
+  const img = (n) => `/fotos/${req.params.token}/${n + 1}.jpg`;
+  const body = !share
+    ? '<p>Link not found.</p>'
+    : share.expired
+      ? '<p>This link has expired. Please ask us to send the photos again.</p>'
+      : photos.length
+        ? photos.map((p, n) => `<a href="${img(n)}"><img src="${img(n)}" alt="Photo ${n + 1}" loading="lazy"></a>`).join('')
+        : '<p>These photos are no longer available.</p>';
+  res.status(share && !share.expired && photos.length ? 200 : 404).type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
+<title>Vehicle photos</title><meta property="og:title" content="Vehicle photos (${photos.length})">
+${photos.length ? `<meta property="og:image" content="${escHtml(base + img(0))}">` : ''}
+<style>body{margin:0;background:#111;color:#eee;font:16px system-ui,sans-serif}h1{font-size:18px;margin:16px}
+main{display:grid;gap:8px;padding:0 8px 16px}img{width:100%;display:block;border-radius:6px}p{margin:16px}</style></head>
+<body><h1>Vehicle photos${photos.length ? ` (${photos.length})` : ''}</h1><main>${body}</main></body></html>`);
+}
+
+function shareImage(ctx, req, res) {
+  const share = readShareToken(ctx, req.params.token);
+  const photo = share && !share.expired ? sharedPhotos(ctx, share)[Number(req.params.n) - 1] : null;
+  if (!photo) return res.status(404).send('Not found.');
+  res.set({ 'Cache-Control': 'private, max-age=3600', 'X-Robots-Tag': 'noindex' });
+  if (photo.stamped_file) return res.type('image/jpeg').sendFile(path.join(ctx.config.uploadsDir, photo.stamped_file));
+  res.type(photo.mime || 'image/jpeg').sendFile(path.join(ctx.config.uploadsDir, photo.file));
 }
 
 // Entende o ângulo escrito na legenda: "antes frente", "traseira", "lado direito"...
@@ -127,17 +215,101 @@ export function kindFromText(text) {
 // Nome das fotos dentro do .zip.
 const KIND_FILE = { antes: 'antes', depois: 'depois', vin: 'VIN', outro: 'outra' };
 
-const EXTENSIONS = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/heic': '.heic' };
+const EXTENSIONS = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/heic': '.heic', 'image/gif': '.gif' };
 
-function savePhoto(ctx, { serviceId, kind, angle = null, buffer, mime, userId }) {
+// ---------- fotos que o dono mandou ao Jay (caixa de entrada) ----------
+
+// Anexa ao serviço uma foto da caixa de entrada (uma cópia: a da caixa continua lá).
+function attachInboxPhoto(ctx, { serviceId, file, mime, userId }) {
+  const buffer = fs.readFileSync(file);
+  return savePhoto(ctx, { serviceId, kind: 'outro', buffer, mime, userId, origin: 'caixa' });
+}
+
+function savePhoto(ctx, { serviceId, kind, angle = null, buffer, mime, userId, place = null, origin = null }) {
   const dir = path.join(ctx.config.uploadsDir, `servico-${serviceId}`);
   fs.mkdirSync(dir, { recursive: true });
   const name = `${Date.now()}-${kind}-${crypto.randomBytes(3).toString('hex')}${EXTENSIONS[mime] || '.jpg'}`;
   fs.writeFileSync(path.join(dir, name), buffer);
   const info = ctx.db
-    .prepare('INSERT INTO photos (service_id, kind, angle, file, mime, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(serviceId, kind, angle, path.join(`servico-${serviceId}`, name), mime || 'image/jpeg', userId, nowIso());
-  return Number(info.lastInsertRowid);
+    .prepare('INSERT INTO photos (service_id, kind, angle, file, mime, uploaded_by, created_at, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(serviceId, kind, angle, path.join(`servico-${serviceId}`, name), mime || 'image/jpeg', userId, nowIso(), origin);
+  const id = Number(info.lastInsertRowid);
+  // O carimbo demora 1 ou 2 segundos: é feito depois, sem segurar a resposta.
+  if (ctx.config.fotoCarimbo && !origin) queueStamp(ctx, id, buffer, place);
+  return id;
+}
+
+// ---------- carimbo (data, hora e endereço escritos na foto) ----------
+const stampQueues = new WeakMap();
+function queueStamp(ctx, id, buffer, place) {
+  const next = (stampQueues.get(ctx) || Promise.resolve()).then(() =>
+    stamp(ctx, id, buffer, place).catch((err) => ctx.log(`Fotos: não consegui carimbar a foto ${id}`, err.message))
+  );
+  stampQueues.set(ctx, next);
+}
+
+// Lugar da foto, do mais certo para o menos certo: GPS gravado na foto, GPS do celular no
+// painel, localização 📍 que o motorista mandou no WhatsApp há pouco, endereço do serviço.
+async function findPlace(ctx, photo, meta, given) {
+  if (meta.lat != null) return { lat: meta.lat, lng: meta.lng, source: 'foto' };
+  if (given?.lat != null) return { lat: given.lat, lng: given.lng, source: given.source || 'celular' };
+  const recent = ctx.db.prepare('SELECT * FROM user_locations WHERE user_id = ?').get(photo.uploaded_by);
+  if (recent && Date.parse(photo.created_at) - Date.parse(recent.at) < LOCATION_MINUTES * 60000) return { lat: recent.lat, lng: recent.lng, source: 'whatsapp' };
+  const service = ctx.db.prepare('SELECT pickup, dropoff FROM services WHERE id = ?').get(photo.service_id);
+  const where = photo.kind === 'depois' ? service?.dropoff || service?.pickup : service?.pickup || service?.dropoff;
+  if (!where) return null;
+  const coords = coordsOf(where);
+  if (coords) {
+    const [lat, lng] = coords.split(',').map(Number);
+    return { lat, lng, source: 'servico' };
+  }
+  return /https?:\/\//i.test(where) ? null : { address: where, source: 'servico' };
+}
+
+async function stamp(ctx, id, buffer, given) {
+  const photo = ctx.db.prepare('SELECT * FROM photos WHERE id = ?').get(id);
+  if (!photo) return;
+  const meta = await readPhotoMeta(buffer);
+  const takenAt = takenToIso(meta.taken, ctx.config.timeZone) || given?.takenAt || photo.created_at;
+  const place = await findPlace(ctx, photo, meta, given);
+  let address = place?.address || null;
+  if (!address && place && ctx.geo?.reverse) {
+    address = await ctx.geo.reverse(place.lat, place.lng).catch(() => null);
+  }
+  // Coordenadas só quando não achou o endereço (ficam guardadas e aparecem no painel).
+  const lines = [stampDate(takenAt, ctx.config.timeZone), address || (place?.lat != null ? coordsText(place.lat, place.lng) : null)];
+  const out = await stampPhoto(buffer, lines);
+  let stamped = null;
+  if (out) {
+    stamped = photo.file.replace(/\.[a-z]+$/i, '') + '-carimbo.jpg';
+    fs.writeFileSync(path.join(ctx.config.uploadsDir, stamped), out);
+  }
+  // A foto pode ter sido apagada enquanto o carimbo era feito.
+  const still = ctx.db
+    .prepare('UPDATE photos SET stamped_file = ?, lat = ?, lng = ?, address = ?, taken_at = ?, place_source = ? WHERE id = ?')
+    .run(stamped, place?.lat ?? null, place?.lng ?? null, address, takenAt, place?.source || null, id);
+  if (!Number(still.changes) && stamped) fs.rmSync(path.join(ctx.config.uploadsDir, stamped), { force: true });
+}
+
+// Localização 📍 mandada no WhatsApp: guarda para carimbar as próximas fotos.
+function noteLocation(ctx, userId, { latitude, longitude }) {
+  if (!Number.isFinite(Number(latitude)) || !Number.isFinite(Number(longitude))) return;
+  ctx.db
+    .prepare('INSERT INTO user_locations (user_id, lat, lng, at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET lat = excluded.lat, lng = excluded.lng, at = excluded.at')
+    .run(userId, Number(latitude), Number(longitude), nowIso());
+}
+
+// Lugar e hora mandados pelo painel: ?lat=..&lng=..&origem=foto|celular&tirada=2026:11:15 14:20:33-05:00
+function placeFromQuery(ctx, q) {
+  const lat = Number(q.lat);
+  const lng = Number(q.lng);
+  const out = {};
+  if (q.lat != null && q.lng != null && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && (lat || lng)) {
+    Object.assign(out, { lat, lng, source: q.origem === 'foto' ? 'foto' : 'celular' });
+  }
+  const m = String(q.tirada || '').match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})([+-]\d{2}:\d{2})?$/);
+  if (m) out.takenAt = takenToIso({ y: +m[1], mo: +m[2], d: +m[3], h: +m[4], mi: +m[5], s: +m[6], offset: m[7] || null }, ctx.config.timeZone);
+  return Object.keys(out).length ? out : null;
 }
 
 function countPhotos(ctx, serviceId, kind) {
@@ -216,7 +388,7 @@ const flows = {
     finish({ ctx, user, data }) {
       // Ajusta todas as fotos sem tipo que acabaram de chegar (o motorista pode ter mandado várias de uma vez).
       const fresh = ctx.db
-        .prepare("SELECT id FROM photos WHERE service_id = ? AND uploaded_by = ? AND kind = 'outro' AND created_at >= ? ORDER BY id")
+        .prepare("SELECT id FROM photos WHERE service_id = ? AND uploaded_by = ? AND kind = 'outro' AND origin IS NULL AND created_at >= ? ORDER BY id")
         .all(data.serviceId, user.id, data.since);
       const update = ctx.db.prepare('UPDATE photos SET kind = ?, angle = ? WHERE id = ?');
       for (const photo of fresh) {
@@ -259,9 +431,10 @@ function findServiceFor(ctx, user, id) {
 
 function listPhotos(ctx, serviceId) {
   return ctx.db
-    .prepare('SELECT p.id, p.kind, p.angle, p.created_at, u.name AS uploaded_by_name FROM photos p LEFT JOIN users u ON u.id = p.uploaded_by WHERE service_id = ? ORDER BY p.id')
+    .prepare('SELECT p.id, p.kind, p.angle, p.origin, p.created_at, p.taken_at, p.address, p.lat, p.lng, p.place_source, p.stamped_file IS NOT NULL AS stamped, u.name AS uploaded_by_name FROM photos p LEFT JOIN users u ON u.id = p.uploaded_by WHERE service_id = ? ORDER BY p.id')
     .all(serviceId)
-    .map((p) => ({ ...p, url: `/api/photos/${p.id}/file` }));
+    // ?c=1 depois do carimbo: o celular não fica mostrando a foto sem carimbo guardada.
+    .map(({ stamped, ...p }) => ({ ...p, url: `/api/photos/${p.id}/file${stamped ? '?c=1' : ''}` }));
 }
 
 function routes(api, ctx) {
@@ -279,8 +452,20 @@ function routes(api, ctx) {
       angle = req.query.angle ? (ANGLE_LABEL[req.query.angle] ? req.query.angle : null) : nextAngle(ctx, service.id, kind);
       if (req.query.angle && !angle) throw new HttpError(400, 'Ângulo inválido.');
     }
-    const id = savePhoto(ctx, { serviceId: service.id, kind, angle, buffer: req.body, mime: req.headers['content-type'], userId: req.user.id });
+    const place = placeFromQuery(ctx, req.query);
+    const id = savePhoto(ctx, { serviceId: service.id, kind, angle, buffer: req.body, mime: req.headers['content-type'], userId: req.user.id, place });
     res.status(201).json({ id, kind, angle, url: `/api/photos/${id}/file` });
+  });
+
+  // Link das fotos marcadas para mandar no WhatsApp do cliente (quem pediu o serviço).
+  api.post('/services/:id/photos/link', (req, res) => {
+    const service = findServiceFor(ctx, req.user, req.params.id);
+    const wanted = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    const ok = new Set(ctx.db.prepare('SELECT id FROM photos WHERE service_id = ?').all(service.id).map((p) => p.id));
+    const ids = wanted.filter((id) => ok.has(id)).slice(0, 40);
+    if (!ids.length) throw new HttpError(400, 'Marque as fotos para mandar.');
+    const base = publicBase(ctx) || `${req.protocol}://${req.get('host')}`;
+    res.json({ url: `${base}/fotos/${shareToken(ctx, service.id, ids)}`, count: ids.length });
   });
 
   // Gate pass e outros documentos: PDF ou foto, até 20 MB.
@@ -316,6 +501,11 @@ function routes(api, ctx) {
     const photo = ctx.db.prepare('SELECT * FROM photos WHERE id = ?').get(Number(req.params.id));
     if (!photo) throw new HttpError(404, 'Foto não encontrada.');
     findServiceFor(ctx, req.user, photo.service_id);
+    // Mostra a foto carimbada; ?original=1 abre a foto como chegou.
+    if (photo.stamped_file && req.query.original == null) {
+      res.type('image/jpeg');
+      return res.sendFile(path.join(ctx.config.uploadsDir, photo.stamped_file));
+    }
     res.type(photo.mime || 'image/jpeg');
     res.sendFile(path.join(ctx.config.uploadsDir, photo.file));
   });
@@ -340,6 +530,7 @@ function routes(api, ctx) {
     }
     ctx.db.prepare('DELETE FROM photos WHERE id = ?').run(photo.id);
     fs.rmSync(path.join(ctx.config.uploadsDir, photo.file), { force: true });
+    if (photo.stamped_file) fs.rmSync(path.join(ctx.config.uploadsDir, photo.stamped_file), { force: true });
     res.json({ ok: true });
   });
 }
@@ -372,12 +563,13 @@ export default {
     });
     return [...docFiles, ...rows.map((p) => {
       const folder = clean(`Serviço ${p.service_id}${p.contact_name ? ' - ' + p.contact_name : ''}`);
-      const label = clean([KIND_FILE[p.kind] || p.kind, p.angle ? ANGLE_LABEL[p.angle] || p.angle : ''].filter(Boolean).join(' - '));
-      const ext = path.extname(p.file) || '.jpg';
+      const label = clean([p.origin === 'caixa' ? 'anexo' : KIND_FILE[p.kind] || p.kind, p.angle ? ANGLE_LABEL[p.angle] || p.angle : ''].filter(Boolean).join(' - '));
+      const file = p.stamped_file || p.file; // no .zip vai a foto carimbada
+      const ext = path.extname(file) || '.jpg';
       let name = `fotos/${folder}/${label}${ext}`;
       for (let n = 2; used.has(name); n++) name = `fotos/${folder}/${label} ${n}${ext}`;
       used.add(name);
-      return { name, path: path.join(ctx.config.uploadsDir, p.file) };
+      return { name, path: path.join(ctx.config.uploadsDir, file) };
     })];
   },
   exportColumns: (ctx) => {
@@ -397,6 +589,14 @@ export default {
       mode: (userId) => currentMode(ctx, userId),
       docTypes: DOC_TYPES,
       saveDoc: (doc) => saveDoc(ctx, doc),
+      noteLocation: (userId, location) => noteLocation(ctx, userId, location),
+      attachInboxPhoto: (photo) => attachInboxPhoto(ctx, photo),
+      list: (serviceId) => ctx.db.prepare('SELECT * FROM photos WHERE service_id = ? ORDER BY id').all(serviceId),
+      fileOf: (photo) => path.join(ctx.config.uploadsDir, photo.stamped_file || photo.file),
+      kindLabel: KIND_LABEL,
+      angleLabel: ANGLE_LABEL,
+      // Para os testes: espera os carimbos que estão na fila.
+      stamped: () => stampQueues.get(ctx) || Promise.resolve(),
     };
   },
   serviceHint: '📷 Fotos: mande *antes* ou *depois* e em seguida as fotos da volta no carro (frente, lateral esquerda, traseira, lateral direita).',

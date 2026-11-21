@@ -2,11 +2,14 @@
 // (ctx.api.servicos, pagamentos, VIN) e cada ação fica registrada como feita pelo Claude:
 // no histórico do serviço (service_events, source 'claude') e no registro mcp_actions.
 // Não existe ferramenta de apagar.
+import fs from 'node:fs';
 import { z } from 'zod';
 import { formatMoney, formatPhone, normalizePhone, simplify, nowIso } from '../../lib/util.js';
 import { mapLink } from '../../lib/validate.js';
+import { routeLines } from '../../lib/rotas.js';
 import { zonedMidnight } from '../planilha/index.js';
 import { applyAction } from '../voz/index.js';
+import { imageForClaude } from '../../lib/imagem.js';
 
 export const SOURCE = 'claude';
 
@@ -75,6 +78,7 @@ function line(ctx, s) {
     s.price_cents != null ? (s.price_cents === 0 ? 'Free' : formatMoney(s.price_cents)) : null,
     payText(p, s),
     s.driver_name ? `motorista: ${s.driver_name}` : null,
+    s.scheduled_at && ctx.api.agenda ? `agendado: ${ctx.api.agenda.format(s.scheduled_at)}` : null,
     firmOf(ctx, s),
   ]
     .filter(Boolean)
@@ -82,6 +86,25 @@ function line(ctx, s) {
 }
 
 const ok = (text) => ({ content: [{ type: 'text', text }] });
+
+// Nome da foto para o Claude: "anexo (caixa do Jay)", "antes · frente", "VIN"...
+function photoLabel(ctx, p) {
+  if (p.origin === 'caixa') return 'anexo (caixa do Jay)';
+  const { kindLabel = {}, angleLabel = {} } = ctx.api.fotos || {};
+  return [kindLabel[p.kind] || p.kind, p.angle ? angleLabel[p.angle] || p.angle : null].filter(Boolean).join(' · ');
+}
+
+function photoSummary(ctx, photos) {
+  const count = {};
+  for (const p of photos) {
+    const key = p.origin === 'caixa' ? 'anexo (caixa do Jay)' : (ctx.api.fotos?.kindLabel || {})[p.kind] || p.kind;
+    count[key] = (count[key] || 0) + 1;
+  }
+  return Object.entries(count).map(([k, n]) => `${n} ${k}`).join(', ');
+}
+
+const PHOTO_FILTER = { do_adm: (p) => p.origin === 'caixa', antes: (p) => p.kind === 'antes', depois: (p) => p.kind === 'depois', vin: (p) => p.kind === 'vin' };
+const MAX_PHOTOS = 6;
 const fail = (text) => ({ content: [{ type: 'text', text }], isError: true });
 
 // Erros das regras (400, 404, 409...) voltam como texto para o Claude explicar ao dono.
@@ -143,6 +166,14 @@ function checkVinArg(ctx, vin, conferido) {
   return check.vin;
 }
 
+// "amanhã 9h" -> data/hora (precisa do módulo agenda).
+function parseWhenArg(ctx, text) {
+  if (!ctx.api.agenda) throw userError('O módulo de agenda está desligado.');
+  const iso = ctx.api.agenda.parse(text);
+  if (!iso) throw userError(`Não entendi o dia/hora "${text}". Exemplos: "amanhã 9h", "24/11 14:30", "sexta 8am".`);
+  return iso;
+}
+
 // Situação pedida -> filtro.
 const STATUS_FILTER = { pendente: 'pendente', em_andamento: 'aberto', entregue: 'concluido', cancelado: 'cancelado' };
 
@@ -161,6 +192,23 @@ function dayRange(ctx, day) {
 function shift(day, n) {
   const [y, m, d] = day.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+// Apelido de endereço na retirada/destino ("GR2"): troca pelo endereço salvo e diz qual foi.
+function usePlaceNicknames(ctx, a) {
+  const lines = [];
+  if (!ctx.api.enderecos) return lines;
+  for (const [field, label] of [['retirada', 'Retirada'], ['destino', 'Destino']]) {
+    const p = typeof a[field] === 'string' && a[field].trim() ? ctx.api.enderecos.get(a[field]) : null;
+    if (!p || p.address === a[field].trim()) continue;
+    a[field] = p.address;
+    lines.push(`${label}: apelido "${p.nickname}" = ${p.address}`);
+  }
+  return lines;
+}
+
+function placeLine(p) {
+  return `- ${p.nickname}${p.company_name && simplify(p.company_name) !== simplify(p.nickname) ? ` (empresa ${p.company_name})` : ''}: ${p.address} · mapa: ${mapLink(p.address)}`;
 }
 
 // ---------- ferramentas ----------
@@ -188,18 +236,20 @@ export function registerTools(server, ctx, user) {
         placa: z.string().optional(),
         vin: z.string().optional().describe('VIN de 17 caracteres (ex.: lido da foto que o dono mandou)'),
         vin_conferido: z.boolean().optional().describe('true só se o dono confirmou um VIN cujo dígito verificador não bateu'),
-        retirada: z.string().optional().describe('Endereço, coordenadas ou link de mapa de onde pegar o carro'),
-        destino: z.string().optional().describe('Endereço de entrega'),
+        retirada: z.string().optional().describe('Endereço, coordenadas, link de mapa ou apelido de endereço (ex.: "GR2") de onde pegar o carro'),
+        destino: z.string().optional().describe('Endereço de entrega, ou apelido de endereço (ex.: "GR2")'),
         endereco_conferido: z.boolean().optional().describe('true se o dono confirmou o endereço do jeito que está, quando o mapa não achou'),
         preco: z.union([z.number(), z.string()]).optional().describe('Preço em dólares, ex.: 180, ou "free"'),
         forma_pagamento: z.string().optional().describe('Forma de pagamento combinada (Zelle, dinheiro, cartão, Square, cheque, Brasil, seguradora)'),
         observacoes: z.string().optional(),
         motorista: z.string().optional().describe('Nome de quem vai fazer, "eu" para o dono, ou "nenhum"'),
+        agendar_para: z.string().optional().describe('Dia e hora do serviço, se for agendado: "amanhã 9h", "24/11 14:30", "sexta 8am" ou AAAA-MM-DDTHH:MM'),
         mesmo_incompleto: z.boolean().optional().describe('true só se o dono mandou criar mesmo faltando dados'),
       },
       annotations: write,
     },
     safe(ctx, async (a) => {
+      const nickLines = usePlaceNicknames(ctx, a);
       const vehicle = [a.ano, a.marca, a.modelo, a.cor].map((v) => (v == null ? '' : String(v).trim())).filter(Boolean).join(' ');
       const missing = [];
       if (!a.cliente_id && !a.cliente_nome && !a.cliente_telefone) missing.push('cliente (nome ou telefone)');
@@ -210,6 +260,7 @@ export function registerTools(server, ctx, user) {
       if (!a.retirada) return ok(`Não criei. Falta: ${missing.join(', ')}. O endereço de retirada é obrigatório no sistema.`);
       if (missing.length && !a.mesmo_incompleto) return ok(`Não criei ainda. Falta: ${missing.join(', ')}. Pergunte ao dono, ou chame de novo com mesmo_incompleto = true se ele mandar criar assim.`);
       const vin = checkVinArg(ctx, a.vin, a.vin_conferido);
+      const when = a.agendar_para ? parseWhenArg(ctx, a.agendar_para) : null;
       let driverId = null;
       if (a.motorista && !NONE(a.motorista)) driverId = findDriver(ctx, user, a.motorista).id;
       const notes = [a.observacoes?.trim(), a.forma_pagamento ? `Pagamento combinado: ${a.forma_pagamento.trim()}` : null].filter(Boolean).join('\n') || null;
@@ -221,6 +272,7 @@ export function registerTools(server, ctx, user) {
         dropoff: a.destino,
         vehicle: vehicle || undefined,
         plate: a.placa,
+        vin: vin || undefined,
         price: a.preco == null ? undefined : String(a.preco),
         notes,
         driver_id: driverId,
@@ -230,10 +282,11 @@ export function registerTools(server, ctx, user) {
       if (status === 200) return ok(`Esse serviço já tinha sido criado agora há pouco: ${line(ctx, service)}`);
       let s = service;
       if (vin) s = (await ctx.api.vin.save(s, vin)).service;
+      if (when) ctx.api.agenda.set(s.id, when);
       logAction(ctx, user, s.id, 'criar_servico', { args: a }, 'criado_servico');
       if (vin) logAction(ctx, user, s.id, 'vin', { vin }, 'vin_salvo');
       s = data.services.get(s.id);
-      const lines = [`Serviço #${s.id} criado.`, line(ctx, s)];
+      const lines = [`Serviço #${s.id} criado.`, line(ctx, s), ...nickLines];
       if (s.contact_phone && a.cliente_nome && simplify(s.contact_name) !== simplify(a.cliente_nome)) lines.push(`Atenção: esse telefone já era do cliente "${s.contact_name}"; o serviço ficou no nome dele.`);
       if (s.pickup) lines.push(`Retirada no mapa: ${mapLink(s.pickup)}`);
       if (s.dropoff) lines.push(`Entrega no mapa: ${mapLink(s.dropoff)}`);
@@ -313,8 +366,11 @@ export function registerTools(server, ctx, user) {
         }
       }
       if (s.driver_name) out.push(`Motorista: ${s.driver_name}`);
+      if (s.scheduled_at && ctx.api.agenda) out.push(`Agendado para: ${ctx.api.agenda.format(s.scheduled_at)}`);
       if (s.notes) out.push(`Observações: ${s.notes}`);
       out.push(`Aberto em: ${s.created_at}${s.completed_at ? ` · entregue em: ${s.completed_at}` : ''}`);
+      const photos = ctx.api.fotos?.list(s.id) || [];
+      if (photos.length) out.push(`Fotos: ${photoSummary(ctx, photos)}. Use ver_fotos_servico para ver as imagens.`);
       if (hasTable(ctx, 'service_events')) {
         const events = ctx.db
           .prepare('SELECT e.action, e.source, e.created_at, u.name FROM service_events e LEFT JOIN users u ON u.id = e.user_id WHERE e.service_id = ? ORDER BY e.id')
@@ -327,6 +383,42 @@ export function registerTools(server, ctx, user) {
       return ok(out.join('\n'));
     })
   );
+
+  // 3b. Ver as fotos de um serviço
+  if (ctx.api.fotos) {
+    server.registerTool(
+      'ver_fotos_servico',
+      {
+        title: 'Ver fotos do serviço',
+        description: `Mostra as fotos guardadas no serviço (as que o dono mandou ao Jay para achar o carro, e as de antes, depois e VIN tiradas pelo motorista). Olhe as imagens para saber o carro, a placa, o VIN ou o estado do carro. Mostra no máximo ${MAX_PHOTOS} de cada vez, das mais novas para as mais antigas; use "tipo" ou "pular" para ver outras.`,
+        inputSchema: {
+          numero: z.number().int().describe('Número do serviço (#)'),
+          tipo: z.enum(['todas', 'do_adm', 'antes', 'depois', 'vin']).optional().describe('do_adm = fotos que o dono mandou ao Jay'),
+          pular: z.number().int().min(0).optional().describe('Quantas das mais novas pular (para ver as mais antigas)'),
+        },
+        annotations: read,
+      },
+      safe(ctx, async ({ numero, tipo, pular = 0 }) => {
+        const s = getService(ctx, numero);
+        const all = ctx.api.fotos.list(s.id);
+        const list = all.filter(PHOTO_FILTER[tipo] || (() => true)).reverse();
+        if (!list.length) return ok(all.length ? `O serviço #${s.id} não tem fotos desse tipo. Tem: ${photoSummary(ctx, all)}.` : `O serviço #${s.id} não tem fotos.`);
+        const page = list.slice(pular, pular + MAX_PHOTOS);
+        if (!page.length) return ok(`Não há mais fotos. O serviço #${s.id} tem ${list.length} foto(s) desse tipo.`);
+        const content = [];
+        for (const p of page) {
+          const file = ctx.api.fotos.fileOf(p);
+          if (!fs.existsSync(file)) continue;
+          content.push({ type: 'text', text: `Foto ${p.id} · ${photoLabel(ctx, p)} · ${p.taken_at || p.created_at}${p.address ? ` · ${p.address}` : ''}` });
+          content.push({ type: 'image', ...(await imageForClaude(fs.readFileSync(file), p.stamped_file ? 'image/jpeg' : p.mime || 'image/jpeg')) });
+        }
+        logAction(ctx, user, s.id, 'ver_fotos_servico', { tipo: tipo || 'todas', pular });
+        const rest = list.length - pular - page.length;
+        content.push({ type: 'text', text: `Serviço #${s.id}: mostrando ${page.length} de ${list.length} foto(s).${rest > 0 ? ` Para ver as outras ${rest}, chame de novo com pular = ${pular + page.length}.` : ''}` });
+        return { content };
+      })
+    );
+  }
 
   // 4. Atualizar status
   server.registerTool(
@@ -403,6 +495,46 @@ export function registerTools(server, ctx, user) {
     })
   );
 
+  // Milhas pelo Google Maps e preço sugerido (pelo que o dono já cobrou). Não grava nada.
+  server.registerTool(
+    'calcular_preco',
+    {
+      title: 'Calcular milhas e preço',
+      description:
+        'Calcula as milhas de carro entre a retirada e o destino pelo Google Maps e sugere um preço, aprendido com os serviços que o dono já fez (da mesma empresa do cliente, quando tem). Não grava nada. Use antes de perguntar o preço ao dono e leia a sugestão para ele: quem decide o preço é sempre o dono. Se já souber as milhas, mande em milhas.',
+      inputSchema: {
+        retirada: z.string().optional().describe('Endereço, coordenadas, link de mapa ou apelido de endereço (ex.: "GR2") de onde pegar'),
+        destino: z.string().optional().describe('Endereço, coordenadas, link de mapa ou apelido de endereço de onde entregar'),
+        milhas: z.number().optional().describe('Milhas, se já souber (aí não usa o Google Maps)'),
+        cliente_id: z.number().int().optional().describe('Id do cliente (de buscar_cliente), para usar o preço da empresa dele'),
+      },
+      annotations: { ...read, openWorldHint: true },
+    },
+    safe(ctx, async (a) => {
+      const servicos = ctx.api.servicos;
+      const nickLines = usePlaceNicknames(ctx, a);
+      let miles = Number(a.milhas) > 0 ? Number(a.milhas) : null;
+      let minutes = null;
+      const out = [...nickLines];
+      if (miles == null && a.retirada && a.destino) {
+        if (!ctx.rotas) out.push('O Google Maps ainda não está ligado no sistema (falta a chave GOOGLE_MAPS_API_KEY no Render): pergunte as milhas ao dono.');
+        else {
+          const r = await servicos.route(a.retirada, a.destino);
+          if (r) {
+            miles = r.miles;
+            minutes = r.minutes;
+            out.push(...routeLines(r));
+            if (r.has_tolls) out.push('O valor do pedágio é o de carro: o guincho com carro em cima pode pagar mais. A sugestão de preço usa as milhas da rota com pedágio; se o dono for pela rota sem pedágio, chame de novo com milhas.');
+          } else out.push('O Google Maps não achou a rota entre esses dois endereços. Confira os endereços ou pergunte as milhas ao dono.');
+        }
+      }
+      const sug = servicos.priceSuggestion(miles, { contactId: a.cliente_id || null, minutes });
+      out.push(sug ? sug.texto : 'Ainda não dá para sugerir preço: pergunte ao dono.');
+      out.push('Confirme o preço com o dono antes de criar o serviço.');
+      return ok(out.join('\n'));
+    })
+  );
+
   // 6. Buscar cliente
   server.registerTool(
     'buscar_cliente',
@@ -456,6 +588,49 @@ export function registerTools(server, ctx, user) {
       ctx.db.prepare('UPDATE contacts SET nickname = ? WHERE id = ?').run(value, c.id);
       logAction(ctx, user, null, 'apelido_cliente', { cliente_id: c.id, apelido: value });
       return ok(value ? `Apelido "${value}" gravado para ${c.name}.` : `Apelido de ${c.name} apagado.`);
+    })
+  );
+
+  // Endereços com apelido: a lista do painel (Menu › Endereços com apelido). Oficina, loja,
+  // mecânico, casa de alguém ("Luan"). Os endereços das empresas entram aqui sozinhos.
+  server.registerTool(
+    'enderecos_com_apelido',
+    {
+      title: 'Endereços com apelido',
+      description:
+        'Procura nos endereços com apelido do dono (ex.: "GR2", "Ribas", "Luan"): oficinas, lojas, mecânicos, casa de alguém, e as empresas com endereço. Use sempre que o dono falar um lugar pelo nome ou apelido em vez do endereço. Acha pelo apelido, pelo nome da empresa ou por parte do endereço. Sem busca, lista todos. Na retirada e no destino de criar_servico e calcular_preco, o apelido já vira o endereço sozinho.',
+      inputSchema: { busca: z.string().optional().describe('Apelido, nome ou parte do endereço; vazio = todos') },
+      annotations: read,
+    },
+    safe(ctx, async ({ busca }) => {
+      if (!ctx.api.enderecos) return fail('Os endereços com apelido não estão disponíveis.');
+      const list = ctx.api.enderecos.find(busca);
+      if (!list.length) {
+        return ok(busca ? `Nenhum endereço com o apelido "${busca}". Pergunte ao dono o endereço e se quer salvar com esse apelido (salvar_endereco_apelido).` : 'Ainda não tem nenhum endereço com apelido.');
+      }
+      const shown = list.slice(0, 50);
+      return ok([`${list.length} endereço(s) com apelido${busca ? ` para "${busca}"` : ''}:`, ...shown.map(placeLine), list.length > shown.length ? `(mostrando ${shown.length}; refine a busca)` : null].filter(Boolean).join('\n'));
+    })
+  );
+
+  server.registerTool(
+    'salvar_endereco_apelido',
+    {
+      title: 'Salvar endereço com apelido',
+      description: `Cadastra um apelido novo para um endereço (ex.: GR2 = 4912 Old Winter Garden Rd, Orlando, FL 32811) ou muda o endereço de um apelido que já existe. Depois o dono pode falar só o apelido na retirada ou no destino. Se o apelido for de uma empresa, muda o endereço da empresa também. ${CONFIRM}`,
+      inputSchema: {
+        apelido: z.string().min(1).describe('Como o dono chama o lugar, ex.: "GR2", "Luan"'),
+        endereco: z.string().min(1).describe('Endereço completo (rua, número, cidade, estado, CEP), coordenadas ou link de mapa'),
+        endereco_conferido: z.boolean().optional().describe('true se o dono confirmou o endereço do jeito que está, quando o mapa não achou'),
+      },
+      annotations: write,
+    },
+    safe(ctx, async (a) => {
+      if (!ctx.api.enderecos) return fail('Os endereços com apelido não estão disponíveis.');
+      const { place, created, before } = await ctx.api.enderecos.save({ nickname: a.apelido, address: a.endereco, addressOk: a.endereco_conferido });
+      logAction(ctx, user, null, 'salvar_endereco_apelido', { apelido: place.nickname, endereco: place.address, antes: before });
+      const head = created ? `Apelido "${place.nickname}" salvo.` : before === place.address ? `O apelido "${place.nickname}" já estava com esse endereço.` : `Endereço do apelido "${place.nickname}" mudado (antes: ${before}).`;
+      return ok([head, placeLine(place)].join('\n'));
     })
   );
 
@@ -526,6 +701,45 @@ export function registerTools(server, ctx, user) {
       logAction(ctx, user, s.id, 'atribuir_motorista', { motorista: driver?.name || null }, 'motorista');
       const fresh = data.services.get(s.id);
       return ok(`Serviço #${s.id}: ${statusText(fresh)}.`);
+    })
+  );
+
+  server.registerTool(
+    'agenda',
+    {
+      title: 'Ver a agenda',
+      description: 'Lista os serviços agendados (com dia e hora) que ainda não foram feitos, do mais próximo para o mais longe.',
+      inputSchema: {},
+      annotations: read,
+    },
+    safe(ctx, async () => {
+      if (!ctx.api.agenda) return fail('O módulo de agenda está desligado.');
+      const list = ctx.api.agenda.upcoming(user);
+      if (!list.length) return ok('Nenhum serviço agendado.');
+      return ok(['Agenda:', ...list.map((r) => `- ${ctx.api.agenda.format(r.scheduled_at)} · ${line(ctx, data.services.get(r.id))}`)].join('\n'));
+    })
+  );
+
+  server.registerTool(
+    'agendar_servico',
+    {
+      title: 'Agendar serviço',
+      description: `Marca o dia e a hora de um serviço (o motorista recebe aviso 1 hora antes). Para tirar o agendamento, mande quando = "tirar". ${CONFIRM}`,
+      inputSchema: {
+        numero: z.number().int(),
+        quando: z.string().describe('"amanhã 9h", "24/11 14:30", "sexta 8am", AAAA-MM-DDTHH:MM ou "tirar"'),
+      },
+      annotations: write,
+    },
+    safe(ctx, async ({ numero, quando }) => {
+      if (!ctx.api.agenda) return fail('O módulo de agenda está desligado.');
+      const s = getService(ctx, numero);
+      if (!['pendente', 'aberto'].includes(s.status)) return fail('Serviço entregue ou cancelado não pode ser agendado.');
+      const remove = ['tirar', 'remover', 'cancelar', 'sem', 'nenhum'].includes(simplify(quando));
+      const iso = remove ? null : parseWhenArg(ctx, quando);
+      ctx.api.agenda.set(s.id, iso);
+      logAction(ctx, user, s.id, 'agendar_servico', { quando: iso }, 'agendado');
+      return ok(iso ? `Serviço #${s.id} agendado para ${ctx.api.agenda.format(iso)}. ${line(ctx, data.services.get(s.id))}` : `Agendamento do serviço #${s.id} tirado.`);
     })
   );
 

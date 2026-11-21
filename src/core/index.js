@@ -5,6 +5,8 @@ import { FlowError } from './bot.js';
 import { repairEncodedNames } from './data.js';
 import { hashPin, verifyPin, signToken } from '../lib/auth.js';
 import { collectAlerts, servicesBlocked } from '../lib/daily.js';
+import { priceSuggestion } from './preco.js';
+import { routeMiles, routeLines } from '../lib/rotas.js';
 import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkServicePrice, FREE, isMapReference } from '../lib/validate.js';
 import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfWeekIso, startOfMonthIso, startOfYearIso, formatPhone, dayFormatter } from '../lib/util.js';
 import { speak, toWav, textoParaFala, MAX_FALA } from '../lib/tts.js';
@@ -319,6 +321,55 @@ function placesWithNames(ctx) {
     .all();
 }
 
+// Lista de endereços com apelido para o Claude: busca pelo apelido, nome da empresa ou parte do endereço.
+function findPlaces(ctx, query) {
+  const key = simplify(query || '').replace(/\s+/g, ' ').trim();
+  const all = placesWithNames(ctx);
+  if (!key) return all;
+  const norm = (v) => simplify(v || '').replace(/\s+/g, ' ').trim();
+  const exact = all.filter((p) => p.key === key || norm(p.company_name) === key);
+  const rest = all.filter((p) => !exact.includes(p) && [p.nickname, p.company_name, p.address].some((v) => norm(v).includes(key)));
+  return [...exact, ...rest];
+}
+
+// Cadastra um apelido novo ou muda o endereço de um que já existe (mesmas regras do painel).
+// Endereço de oficina/dealer (vem da empresa): muda o endereço da empresa, que atualiza o apelido.
+async function savePlace(ctx, { nickname: rawNick, address: rawAddress, addressOk = false }) {
+  const nickname = checkName(rawNick, 'O apelido');
+  const key = simplify(nickname).replace(/\s+/g, ' ').trim();
+  let address = checkLocation(rawAddress, 'O endereço');
+  const saved = savedPlace(ctx, address);
+  if (saved && saved.key !== key) address = saved.address;
+  else if (!addressOk) {
+    const place = await resolvePlace(ctx, address);
+    if (place.value) address = place.value;
+    else {
+      const { options } = place.check;
+      if (!options.some((o) => o.toLowerCase() === address.toLowerCase())) {
+        const err = new HttpError(
+          400,
+          options.length
+            ? `Achei mais de um endereço no mapa para "${address}". Pergunte ao dono qual é e mande de novo o escolhido.`
+            : `Não achei "${address}" no mapa. Confira com o dono; se ele confirmar que está certo, mande de novo com endereco_conferido = true.`
+        );
+        err.options = options;
+        throw err;
+      }
+    }
+  }
+  const existing = ctx.db.prepare('SELECT * FROM saved_places WHERE key = ?').get(key);
+  const company = existing && ctx.has('empresas') ? ctx.db.prepare('SELECT * FROM companies WHERE place_id = ?').get(existing.id) : null;
+  if (company && ctx.api.empresas?.setAddress) {
+    ctx.api.empresas.setAddress(company.id, address);
+  } else if (existing) {
+    ctx.db.prepare('UPDATE saved_places SET address = ? WHERE id = ?').run(address, existing.id);
+  } else {
+    ctx.db.prepare('INSERT INTO saved_places (nickname, key, address, created_at) VALUES (?, ?, ?, ?)').run(nickname, key, address, new Date().toISOString());
+  }
+  const place = placesWithNames(ctx).find((p) => p.key === key) || ctx.db.prepare('SELECT * FROM saved_places WHERE key = ?').get(key);
+  return { place, created: !existing, before: existing?.address || null };
+}
+
 async function resolvePlace(ctx, location) {
   const saved = savedPlace(ctx, location);
   if (saved) return { value: saved.address, notice: saved.address === String(location).trim() ? undefined : `📍 ${saved.nickname}: *${saved.address}*` };
@@ -528,14 +579,36 @@ const flows = {
       {
         key: 'price_cents',
         optional: true,
-        ask(data, ctx) {
-          const suggestion = suggestPrice(ctx, data.miles);
-          return suggestion != null
-            ? `Qual o *valor* do serviço? Pela tabela dá ${formatMoney(suggestion)}. Mande *ok* para aceitar, outro valor, ou *pular*.`
-            : 'Qual o *valor* do serviço em dólar? (*free* se não cobrar, ou *pular*)';
+        // Antes de perguntar o valor: milhas pelo Google Maps (quando tem a chave e os dois endereços).
+        async prepare(data, ctx) {
+          if (data.miles != null || data._route_done || !data.pickup || !data.dropoff) return;
+          data._route_done = true;
+          const r = await routeMiles(ctx, data.pickup, data.dropoff);
+          if (r && r.miles > 0 && r.miles <= 1000) Object.assign(data, { miles: r.miles, _route: r });
         },
+        ask(data, ctx) {
+          const r = data._route;
+          const minutes = data._sem_pedagio ? r?.sem_pedagio?.minutes : r?.minutes;
+          const s = priceSuggestion(ctx, data.miles, { contactId: data.client?.id, minutes });
+          const which = r?.has_tolls && r.sem_pedagio ? (data._sem_pedagio ? '\nUsei as milhas da rota *sem pedágio* (mande *com pedágio* para trocar).' : '\nUsei as milhas da rota *com pedágio* (mande *sem pedágio* para trocar).') : '';
+          const route = r ? routeLines(r, '*').join('\n') + which + '\n' : '';
+          return s
+            ? `${route}Qual o *valor* do serviço? ${s.texto.replace(/^Sugestão (\S+)/, 'Sugiro *$1*')} Mande *ok* para aceitar, outro valor, ou *pular*.`
+            : `${route}Qual o *valor* do serviço em dólar? (*free* se não cobrar, ou *pular*)`;
+        },
+        // Trocou de rota (com/sem pedágio): pergunta o valor de novo com as milhas da outra rota.
+        again: (data) => Boolean(data._switch),
         parse(text, { ctx, data }) {
-          const suggestion = suggestPrice(ctx, data.miles);
+          delete data._switch;
+          const r = data._route;
+          const t = simplify(text);
+          if (r?.sem_pedagio && /^(sem|com) pedagio$/.test(t)) {
+            data._sem_pedagio = t.startsWith('sem');
+            data.miles = data._sem_pedagio ? r.sem_pedagio.miles : r.miles;
+            data._switch = true;
+            return null;
+          }
+          const suggestion = suggestPrice(ctx, data.miles, { contactId: data.client?.id });
           if (simplify(text) === 'ok' && suggestion != null) return suggestion;
           if (!FREE.test(text) && !/^\$?\s*[\d.,]+\s*$/.test(text.trim())) throw new FlowError('Mande só o valor em dólar (Ex: 150 ou 150.50), ou *free* se não cobrar.');
           return checkServicePrice(text);
@@ -587,11 +660,15 @@ const flows = {
   },
 };
 
-export function suggestPrice(ctx, miles) {
-  const { baseCents, perMileCents } = ctx.config.pricing;
-  if (!baseCents && !perMileCents) return null;
-  if (miles == null && !baseCents) return null;
-  return baseCents + Math.round((miles || 0) * perMileCents);
+// Valor sugerido (aprende com os serviços já feitos; sem histórico, usa a tabela). Só sugestão.
+export function suggestPrice(ctx, miles, who = {}) {
+  return priceSuggestion(ctx, miles, who)?.cents ?? null;
+}
+
+// Milhas de carro pelo Google Maps, prontas para gravar no serviço (null quando não deu).
+export async function autoMiles(ctx, pickup, dropoff) {
+  const r = await routeMiles(ctx, pickup, dropoff);
+  return r && r.miles > 0 && r.miles <= 1000 ? r.miles : null;
 }
 
 // "Honda Civic ABC1234" -> veículo "Honda Civic", placa "ABC1234".
@@ -777,6 +854,8 @@ async function createService(ctx, user, rawBody) {
   // Confere tudo antes de criar qualquer coisa.
   const fields = serviceFields(body);
   await checkPlaces(ctx, fields, body);
+  // Sem milhas: calcula pelo Google Maps (quando tem a chave). O dono pode editar depois.
+  if (fields.miles == null) fields.miles = await autoMiles(ctx, fields.pickup, fields.dropoff);
   let contactName = optional(body.contact_name, (v) => checkName(v, 'O nome do cliente'));
   const contactPhone = optional(body.contact_phone, checkPhone);
   let contactId = Number(body.contact_id) || null;
@@ -810,11 +889,17 @@ async function createService(ctx, user, rawBody) {
   if (companyId && contactId && ctx.has('empresas') && ctx.db.prepare('SELECT 1 FROM companies WHERE id = ?').get(companyId)) {
     ctx.db.prepare('UPDATE contacts SET company_id = ? WHERE id = ? AND company_id IS NULL').run(companyId, contactId);
   }
-  // Toque duplo no "Criar serviço": o mesmo pedido em menos de 30 s devolve o serviço já criado.
+  // Toque duplo no "Criar serviço": o MESMO pedido em menos de 30 s devolve o serviço já criado.
+  // Só é o mesmo se tudo bate: cliente, retirada, destino, carro, placa e VIN. Vários carros no mesmo
+  // lugar (ex.: 4 carros do leilão, 4 VINs) são serviços diferentes (Caningado 18/11).
   const since = new Date(Date.now() - 30 * 1000).toISOString();
+  const vin = String(body.vin || '').trim().toUpperCase();
   const twinService = ctx.db
-    .prepare("SELECT id FROM services WHERE created_at >= ? AND IFNULL(contact_id, 0) = ? AND IFNULL(pickup, '') = ? AND status IN ('aberto', 'pendente') ORDER BY id DESC")
-    .get(since, contactId || 0, fields.pickup || '');
+    .prepare(
+      `SELECT id FROM services WHERE created_at >= ? AND IFNULL(contact_id, 0) = ? AND IFNULL(pickup, '') = ? AND IFNULL(dropoff, '') = ?
+         AND IFNULL(vehicle, '') = ? AND IFNULL(plate, '') = ? AND (? = '' OR IFNULL(vin, '') IN ('', ?)) AND status IN ('aberto', 'pendente') ORDER BY id DESC`
+    )
+    .get(since, contactId || 0, fields.pickup || '', fields.dropoff || '', fields.vehicle || '', fields.plate || '', vin, vin);
   if (twinService) return { status: 200, service: data.services.get(twinService.id) };
   // "fila": entra como pendente, sem motorista, até o dono escolher quem vai. Só o dono.
   // Sem motorista escolhido, o serviço do dono também começa Pendente.
@@ -840,6 +925,12 @@ async function editService(ctx, user, service, rawBody) {
   const body = serviceFields(raw, { partial: true });
   await checkPlaces(ctx, body, raw, service);
   if (body.pickup === null) delete body.pickup; // retirada não pode ficar vazia
+  // Mudou a retirada ou o destino e as milhas não foram mexidas: calcula de novo pelo Google Maps.
+  const moved = ['pickup', 'dropoff'].some((k) => body[k] !== undefined && body[k] !== service[k]);
+  if (moved && (body.miles === undefined || body.miles === service.miles)) {
+    const miles = await autoMiles(ctx, body.pickup ?? service.pickup, body.dropoff !== undefined ? body.dropoff : service.dropoff);
+    if (miles != null) body.miles = miles;
+  }
   // Trocar o cliente (quem pediu o serviço).
   if (raw.contact_id !== undefined) {
     const contactId = Number(raw.contact_id) || null;
@@ -1107,6 +1198,23 @@ function routes(api, ctx) {
       })
     );
   });
+  // Milhas (Google Maps) e valor sugerido para a tela do serviço. Só sugere: o dono confirma ou muda.
+  api.get('/estimate', async (req, res) => {
+    const q = req.query;
+    let miles = Number(q.miles) > 0 ? Math.round(Number(q.miles) * 10) / 10 : null;
+    let route = null;
+    const pickup = String(q.pickup || '').trim();
+    const dropoff = String(q.dropoff || '').trim();
+    if (miles == null && pickup && dropoff) {
+      const expand = (v) => savedPlace(ctx, v)?.address || v;
+      route = await routeMiles(ctx, expand(pickup), expand(dropoff));
+      if (route && route.miles > 0 && route.miles <= 1000) miles = route.miles;
+      else route = null;
+    }
+    const suggestion = priceSuggestion(ctx, miles, { contactId: Number(q.contact_id) || null, companyId: Number(q.company_id) || null, minutes: route?.minutes ?? null });
+    res.json({ maps: Boolean(ctx.rotas), miles, minutes: route?.minutes ?? null, from_maps: Boolean(route), route, suggestion });
+  });
+
   // Sugestões de endereço enquanto digita no painel.
   api.get('/places', async (req, res) => {
     const q = String(req.query.q || '').trim();
@@ -1162,7 +1270,7 @@ function routes(api, ctx) {
     if (!canSee(req.user, service)) throw new HttpError(404, 'Serviço não encontrado.');
     const extras = {};
     for (const mod of ctx.loaded) {
-      if (mod.serviceDetail) Object.assign(extras, mod.serviceDetail({ ctx, service }));
+      if (mod.serviceDetail) Object.assign(extras, mod.serviceDetail({ ctx, service, user: req.user }));
     }
     // Apelido do endereço, se for um dos salvos (ex.: "Ribas").
     const nick = (v) => (v ? db.prepare('SELECT nickname FROM saved_places WHERE address = ?').get(v)?.nickname || null : null);
@@ -1363,6 +1471,15 @@ export default {
       edit: (user, service, body) => editService(ctx, user, service, body),
       pass: (user, service, driverId) => passService(ctx, user, service, driverId),
       firmName: (id) => firmName(ctx, id),
+      // Milhas pelo Google Maps (aceita apelido de endereço) e preço sugerido.
+      route: (pickup, dropoff) => routeMiles(ctx, savedPlace(ctx, pickup)?.address || pickup, savedPlace(ctx, dropoff)?.address || dropoff),
+      priceSuggestion: (miles, who) => priceSuggestion(ctx, miles, who),
+    };
+    // Endereços com apelido ("GR2" = endereço da oficina). Usado pelo Claude (MCP).
+    ctx.api.enderecos = {
+      find: (query) => findPlaces(ctx, query),
+      get: (text) => savedPlace(ctx, text),
+      save: (args) => savePlace(ctx, args),
     };
     const fixed = repairEncodedNames(ctx.db);
     if (fixed) ctx.log?.(`Nomes de clientes corrigidos (importação antiga): ${fixed}`);

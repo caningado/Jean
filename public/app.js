@@ -238,6 +238,67 @@ async function shrinkImage(file, max = 1600) {
   }
 }
 
+// ---------- lugar e hora das fotos (carimbo) ----------
+// O painel diminui a foto antes de mandar, e isso apaga o GPS e a hora gravados nela.
+// Então lê esses dados antes e manda junto. Sem GPS na foto, usa o GPS do celular agora
+// (só se a foto acabou de ser tirada: foto antiga da galeria não é daqui).
+let exifrPromise = null;
+let lastFix = null;
+function hereNow() {
+  if (!navigator.geolocation) return Promise.resolve(null);
+  if (lastFix && Date.now() - lastFix.at < 2 * 60000) return Promise.resolve(lastFix);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), 8000);
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        clearTimeout(timer);
+        lastFix = { lat: p.coords.latitude, lng: p.coords.longitude, at: Date.now() };
+        resolve(lastFix);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(null);
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 2 * 60000 }
+    );
+  });
+}
+
+async function photoPlace(file) {
+  const q = new URLSearchParams();
+  // Foto sem data gravada: vale a hora do arquivo (a câmera acabou de criar). Print colado não é do lugar.
+  let fresh = !file || (/jpe?g|hei[cf]/i.test(file.type) && Math.abs(Date.now() - (file.lastModified || 0)) < 30 * 60000);
+  if (file) {
+    try {
+      const exifr = await (exifrPromise ??= import('/vendor/exifr.mjs'));
+      const gps = await exifr.gps(file).catch(() => null);
+      if (gps && Number.isFinite(gps.latitude) && Number.isFinite(gps.longitude) && (gps.latitude || gps.longitude)) {
+        q.set('lat', gps.latitude);
+        q.set('lng', gps.longitude);
+        q.set('origem', 'foto');
+      }
+      const raw = await exifr.parse(file, { reviveValues: false }).catch(() => null);
+      const m = String(raw?.DateTimeOriginal || '').match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+      if (m) {
+        q.set('tirada', m[0] + (/^[+-]\d{2}:\d{2}$/.test(raw.OffsetTimeOriginal) ? raw.OffsetTimeOriginal : ''));
+        fresh = Math.abs(Date.now() - new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime()) < 30 * 60000;
+      }
+    } catch {
+      /* sem leitor: segue só com o GPS do celular */
+    }
+  }
+  if (!q.has('lat') && fresh) {
+    const here = await hereNow();
+    if (here) {
+      q.set('lat', here.lat);
+      q.set('lng', here.lng);
+      q.set('origem', 'celular');
+    }
+  }
+  const text = q.toString();
+  return text ? '&' + text : '';
+}
+
 function pickPhoto() {
   return new Promise((resolve) => {
     const input = document.createElement('input');
@@ -698,6 +759,96 @@ async function useSharedPlace(form, text) {
   toast(choice === 0 ? 'Local colocado na retirada' : 'Local colocado no destino');
 }
 
+// Milhas (Google Maps) e valor sugerido na tela do serviço. Só preenche o que a pessoa não digitou;
+// na edição, o valor nunca muda sozinho: só aparece a sugestão para tocar e usar.
+function milesAndPrice(form, out, { editing = false, contactId = null } = {}) {
+  if (!out) return;
+  const typed = new Set(); // campos digitados à mão
+  form.miles.addEventListener('input', (e) => e.isTrusted !== false && typed.add('miles'));
+  form.price.addEventListener('input', () => typed.add('price'));
+  if (editing && form.price.value !== '') typed.add('price');
+  let lastPlaces = editing ? `${form.pickup.value}|${form.dropoff.value}` : '';
+  let seq = 0;
+  let timer;
+  let route = null; // última resposta do Google Maps (com e sem pedágio)
+  const run = async () => {
+    const pickup = form.pickup.value.trim();
+    const dropoff = form.dropoff.value.trim();
+    const places = `${pickup}|${dropoff}`;
+    const placesChanged = places !== lastPlaces;
+    lastPlaces = places;
+    // Endereço mudou: as milhas antigas (do mapa) não valem mais, a não ser que tenham sido digitadas.
+    const askMaps = pickup && dropoff && placesChanged && !typed.has('miles');
+    const q = new URLSearchParams();
+    if (askMaps) q.set('pickup', pickup), q.set('dropoff', dropoff);
+    else if (form.miles.value) q.set('miles', form.miles.value);
+    const cid = (form.contact_id && form.contact_id.value) || contactId;
+    if (cid) q.set('contact_id', cid);
+    if (form.company_id?.value) q.set('company_id', form.company_id.value);
+    const my = ++seq;
+    if (askMaps) out.textContent = '📍 Calculando as milhas no Google Maps…';
+    let r;
+    try {
+      r = await api(`/estimate?${q}`);
+    } catch {
+      return;
+    }
+    if (my !== seq) return;
+    const lines = [];
+    if (askMaps && r.from_maps) {
+      form.miles.value = r.miles;
+      route = r.route;
+    } else if (askMaps) {
+      route = null;
+      if (r.maps) lines.push('📍 O Google Maps não achou a rota: digite as milhas.');
+    }
+    // Rotas com e sem pedágio, com o tempo de cada uma; toque numa para usar as milhas dela.
+    if (route) {
+      const t = (min) => (!min ? '' : min < 60 ? `${min} min` : `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`);
+      const cur = Number(form.miles.value);
+      const opt = (key, label, x, extra) =>
+        `<button type="button" class="rota${cur === x.miles ? ' on' : ''}" data-mi="${x.miles}">${label}: <strong>${x.miles} mi</strong>${x.minutes ? ` · ${t(x.minutes)}` : ''}${extra}</button>`;
+      if (!route.has_tolls) lines.push(`📍 Google Maps: <strong>${route.miles} mi</strong>${route.minutes ? ` · ${t(route.minutes)}` : ''} (sem pedágio no caminho)`);
+      else {
+        const toll = route.toll_cents != null ? ` · pedágio ~${money(route.toll_cents)}*` : ' · tem pedágio';
+        lines.push(`<span class="rotas">${opt('com', '🛣️ Com pedágio', route, toll)}${route.sem_pedagio ? opt('sem', '🚫 Sem pedágio', route.sem_pedagio, '') : ''}</span>`);
+        if (route.toll_cents != null) lines.push('<small>* valor de carro; o guincho com carro em cima pode pagar mais.</small>');
+      }
+    }
+    const sug = r.suggestion;
+    if (sug) {
+      if (!typed.has('price')) form.price.value = (sug.cents / 100).toFixed(2);
+      lines.push(`💡 ${esc(sug.texto)}${typed.has('price') && form.price.value !== (sug.cents / 100).toFixed(2) ? ` <button type="button" class="link" id="usar-sugestao">Usar ${money(sug.cents)}</button>` : ''}`);
+    }
+    out.innerHTML = lines.join('<br>');
+    out.querySelectorAll('.rota').forEach((b) => {
+      b.onclick = () => {
+        form.miles.value = b.dataset.mi;
+        soon(0);
+      };
+    });
+    const use = out.querySelector('#usar-sugestao');
+    if (use) use.onclick = () => {
+      form.price.value = (sug.cents / 100).toFixed(2);
+      use.remove();
+    };
+  };
+  const soon = (ms) => {
+    clearTimeout(timer);
+    timer = setTimeout(run, ms);
+  };
+  form.pickup.addEventListener('change', () => soon(100));
+  form.dropoff.addEventListener('change', () => soon(100));
+  form.pickup.addEventListener('input', () => soon(1500));
+  form.dropoff.addEventListener('input', () => soon(1500));
+  form.miles.addEventListener('input', () => soon(400));
+  // Endereço que entrou sem digitar (localização compartilhada, voz): confere ao chegar nas milhas ou no valor.
+  form.miles.addEventListener('focus', () => soon(0));
+  form.price.addEventListener('focus', () => soon(0));
+  if (form.contact_name) form.contact_name.addEventListener('change', () => soon(600));
+  if (!editing) soon(0);
+}
+
 screens.novo = async () => {
   setScreen('Novo serviço', { tab: 'novo' });
   const drivers = state.me.role === 'dono' ? await api('/users') : [];
@@ -729,7 +880,7 @@ screens.novo = async () => {
         <div><label>Milhas</label><input name="miles" type="number" step="0.1" inputmode="decimal"></div>
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal" placeholder="0 = free"></div>
       </div>
-      ${priced ? `<p class="sub">Tabela: ${money(pricing.baseCents)} + ${money(pricing.perMileCents)} por milha.</p>` : ''}
+      <p class="sub" id="estimativa">${priced ? `Tabela: ${money(pricing.baseCents)} + ${money(pricing.perMileCents)} por milha.` : ''}</p>
       ${drivers.length ? `<label>Motorista</label><select name="driver_id"><option value="fila" selected>⏳ Ninguém ainda (Pendente)</option>${drivers.filter((d) => d.active && drives(d)).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select><p class="sub">O serviço entra como Pendente. Escolha o motorista agora ou depois, na tela do serviço.</p>` : ''}
       ${has('agenda') ? '<label>📅 Agendar para (só se precisar)</label><input type="datetime-local" name="scheduled_at">' : ''}
       <label>Observações</label><textarea name="notes" rows="2"></textarea>
@@ -856,12 +1007,8 @@ screens.novo = async () => {
     }, 300);
   };
   form.contact_phone.onblur = () => setTimeout(() => (phoneBox.hidden = true), 200);
-  form.miles.oninput = () => {
-    if (!priced || form.price.dataset.touched) return;
-    const miles = Number(form.miles.value) || 0;
-    form.price.value = ((pricing.baseCents + miles * pricing.perMileCents) / 100).toFixed(2);
-  };
-  form.price.oninput = () => (form.price.dataset.touched = '1');
+  // Milhas pelo Google Maps e valor sugerido (aprendido dos serviços já feitos). O dono pode mudar.
+  milesAndPrice(form, view.querySelector('#estimativa'));
   // Trava o botão enquanto salva: dois toques (internet lenta) não criam dois serviços.
   const novoFoto = form.querySelector('#novo-foto');
   if (novoFoto) {
@@ -1016,7 +1163,8 @@ screens.servico = async (params, id) => {
       <button type="button" class="mic" id="mic" aria-label="Comando de voz"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
       <p class="voice-status" id="voiceStatus">Segure e fale: "peguei o carro", "indo entregar", "finalizar", "recebi 150 no Zelle"…</p>
     </div>` : ''}
-    ${s.events?.length ? `<div class="card"><h2>Histórico</h2><ul class="list">${s.events.map((e) => `<li><div class="row"><span>${esc(VOICE_LABELS[e.action] || e.action)}</span><span class="sub">${when(e.created_at)} · ${esc(e.user_name || '')}${e.source === 'voz' ? ' 🎤' : e.source === 'claude' ? ' · 🤖 Claude' : ''}</span></div></li>`).join('')}</ul></div>` : ''}
+    ${/* Histórico só no computador (pedido do dono 18/11): no celular ninguém vê, nem o ADM logado no celular do caminhão. */ ''}
+    ${s.events?.length && isDesk() ? `<div class="card"><h2>Histórico</h2><ul class="list">${s.events.map((e) => `<li><div class="row"><span>${esc(VOICE_LABELS[e.action] || e.action)}</span><span class="sub">${when(e.created_at)} · ${esc(e.user_name || '')}${e.source === 'voz' ? ' 🎤' : e.source === 'claude' ? ' · 🤖 Claude' : ''}</span></div></li>`).join('')}</ul></div>` : ''}
 
     ${has('fotos') ? `
     <div class="card docs-card" id="docs-zone">
@@ -1267,8 +1415,8 @@ screens.servico = async (params, id) => {
     photoCard.querySelectorAll('.photo-open').forEach((b) => picked.add(b.dataset.view));
     markPicked();
   });
-  on('#shareSend', async () => {
-    const list = (s.photos || []).filter((p) => picked.has(String(p.id)));
+  // Manda as fotos de verdade pelo "Compartilhar" do celular (a pessoa escolhe o contato).
+  const shareFiles = async (list) => {
     toast('Preparando as fotos…');
     try {
       const files = await Promise.all(list.map(async (p, i) => {
@@ -1291,6 +1439,22 @@ screens.servico = async (params, id) => {
     } catch (err) {
       if (err.name !== 'AbortError') toast(err.message || 'Não consegui enviar as fotos.');
     }
+  };
+  on('#shareSend', async () => {
+    const list = (s.photos || []).filter((p) => picked.has(String(p.id)));
+    // Sem telefone do cliente: só o "Compartilhar" de sempre.
+    if (!s.contact_phone) return shareFiles(list);
+    // Com telefone: o link já fica pronto antes do toque, para o WhatsApp abrir na hora.
+    let link;
+    try {
+      link = await api(`/services/${id}/photos/link`, { method: 'POST', body: { ids: list.map((p) => p.id) } });
+    } catch (err) {
+      return shareFiles(list);
+    }
+    const text = `Hi! Here are the photos of your vehicle${s.vehicle ? ` (${s.vehicle})` : ''}:\n${link.url}`;
+    const choice = await sendPhotosDialog({ name: s.contact_name, phone: s.contact_phone, count: list.length, wa: `https://wa.me/${s.contact_phone}?text=${encodeURIComponent(text)}` });
+    if (choice === 'wa') selecting(false);
+    else if (choice === 'share') shareFiles(list);
   });
 
   view.querySelectorAll('[data-view]').forEach((btn) => {
@@ -1428,6 +1592,7 @@ screens.editar = async (params, id) => {
         <div><label>Milhas</label><input name="miles" type="number" step="0.1" value="${s.miles ?? ''}"></div>
         <div><label>Valor (US$)</label><input name="price" inputmode="decimal" placeholder="0 = free" value="${s.price_cents != null ? (s.price_cents / 100).toFixed(2) : ''}"></div>
       </div>
+      <p class="sub" id="estimativa"></p>
       ${drivers.length ? `<label>Motorista</label><select name="driver_id"><option value=""${s.driver_id ? '' : ' selected'}>${s.driver_id ? '🚫 Sem motorista' : 'Ninguém ainda (fila)'}</option>${drivers.filter((d) => d.id === s.driver_id || (d.active && drives(d))).map((d) => `<option value="${d.id}" ${d.id === s.driver_id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>` : ''}
       <label>Situação</label><select name="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === s.status ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <label>Observações</label><textarea name="notes" rows="3">${esc(s.notes)}</textarea>
@@ -1435,6 +1600,8 @@ screens.editar = async (params, id) => {
     </form>`;
   placeSuggestions(view.querySelector('#f').pickup);
   placeSuggestions(view.querySelector('#f').dropoff);
+  // Mudou o endereço: recalcula as milhas no Google Maps. O valor já gravado não muda sozinho (só mostra a sugestão).
+  milesAndPrice(view.querySelector('#f'), view.querySelector('#estimativa'), { editing: true, contactId: s.contact_id });
   // Trocar o cliente: janela com os 5 mais novos e busca; dá para cadastrar um novo ali mesmo.
   const contactSel = view.querySelector('#f').contact_id;
   const setContact = (c) => (contactSel.innerHTML = `<option value="${c.id}">${esc(c.name)}</option>`);
@@ -1602,6 +1769,35 @@ function searchPicker(box, { placeholder, items, onPick }) {
   show();
 }
 // Janela com busca (searchPicker). Devolve o item escolhido, null para "nenhum" ou undefined se voltou.
+// Enviar fotos: direto no WhatsApp de quem pediu o serviço (link com as fotos) ou pelo
+// "Compartilhar" do celular (fotos de verdade, mas a pessoa procura o contato: o celular não
+// deixa o app escolher o contato por ela).
+function sendPhotosDialog({ name, phone, count, wa }) {
+  return new Promise((resolve) => {
+    const back = document.createElement('div');
+    back.className = 'dialog-back';
+    const n = `${count} foto${count > 1 ? 's' : ''}`;
+    back.innerHTML = `<div class="dialog" role="dialog" aria-modal="true"><h2>Enviar ${n}</h2>
+      <a class="btn block wa-send" data-act="wa" href="${esc(wa)}" target="_blank" rel="noopener">💬 WhatsApp de ${esc(name || 'cliente')}<br><span class="sub">${esc(phoneFmt(phone))} · vai um link com as fotos, é só tocar em enviar</span></a>
+      <button type="button" class="secondary block" data-act="share">📤 Mandar as fotos e escolher o contato</button>
+      <div class="dialog-actions"><button type="button" class="secondary" data-act="no">Voltar</button></div></div>`;
+    const done = (v) => {
+      back.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(v);
+    };
+    const onKey = (e) => e.key === 'Escape' && done(undefined);
+    // O link abre sozinho (é um link de verdade); a janela só fecha depois do toque.
+    back.querySelector('[data-act="wa"]').addEventListener('click', () => setTimeout(() => done('wa'), 0));
+    back.querySelector('[data-act="share"]').onclick = () => done('share');
+    back.querySelector('[data-act="no"]').onclick = () => done(undefined);
+    back.onclick = (e) => {
+      if (e.target === back) done(undefined);
+    };
+    document.addEventListener('keydown', onKey);
+    document.body.append(back);
+  });
+}
 function pickDialog({ title, placeholder, none, items }) {
   return new Promise((resolve) => {
     const back = document.createElement('div');
@@ -3456,6 +3652,10 @@ function photoGroups(photos) {
   if (!photos.length) return '<p class="sub">Nenhuma foto. São opcionais.</p>';
   const figure = (p, label) =>
     `<figure><button type="button" class="photo-open" data-view="${p.id}" data-label="${esc(label)}"><img src="${p.url}" loading="lazy" alt="${esc(label)}"></button><figcaption>${esc(label)}</figcaption></figure>`;
+  // Anexos: fotos que o ADM mandou ao Jay e escolheu para o serviço (ex.: a do carro). Vêm primeiro.
+  const fromAdm = photos.filter((p) => p.origin === 'caixa');
+  photos = photos.filter((p) => p.origin !== 'caixa');
+  const top = fromAdm.length ? `<h3>📎 Anexos</h3><div class="photos">${fromAdm.map((p) => figure(p, 'Anexo')).join('')}</div>` : '';
   const groups = ['antes', 'depois'].map((kind) => {
     const list = photos.filter((p) => p.kind === kind);
     if (!list.length) return '';
@@ -3470,16 +3670,20 @@ function photoGroups(photos) {
   });
   const others = photos.filter((p) => p.kind !== 'antes' && p.kind !== 'depois');
   if (others.length) groups.push(`<h3>Outras</h3><div class="photos">${others.map((p) => figure(p, PHOTO_KINDS[p.kind])).join('')}</div>`);
-  return groups.join('');
+  return top + groups.join('');
 }
 
 // Foto em tela cheia, com Apagar (motorista só até entregar; o dono sempre). Devolve true se apagou.
+// De onde veio o lugar escrito na foto.
+const PLACE_SOURCE = { foto: 'GPS da foto', celular: 'GPS do celular', whatsapp: 'localização mandada no WhatsApp', servico: 'endereço do serviço' };
+
 function viewPhoto(photo, label, canDelete) {
   return new Promise((resolve) => {
     const back = document.createElement('div');
     back.className = 'photo-view';
     back.innerHTML = `<div class="photo-view-top"><span>${esc(label || '')}</span><button type="button" class="secondary" data-act="close">✕ Fechar</button></div>
       <img src="${photo.url}" alt="${esc(label || '')}">
+      ${photo.address || photo.lat != null ? `<p class="photo-view-place">📍 ${esc(photo.address || `${photo.lat}, ${photo.lng}`)}${PLACE_SOURCE[photo.place_source] ? ` <span>(${PLACE_SOURCE[photo.place_source]})</span>` : ''}</p>` : ''}
       ${canDelete ? '<div class="photo-view-actions"><button type="button" class="danger" data-act="delete">🗑 Apagar foto</button></div>' : ''}`;
     const done = (value) => {
       back.remove();
@@ -3599,7 +3803,7 @@ function pastePhotos(serviceId, kind, initial = []) {
       for (const f of files) {
         save.textContent = `Salvando ${saved + 1} de ${files.length}…`;
         try {
-          await api(`/services/${serviceId}/photos?kind=${chosen}`, { method: 'POST', raw: await shrinkImage(f), type: 'image/jpeg' });
+          await api(`/services/${serviceId}/photos?kind=${chosen}${await photoPlace(f)}`, { method: 'POST', raw: await shrinkImage(f), type: 'image/jpeg' });
           saved++;
         } catch (err) {
           toast(err.message);
@@ -3623,8 +3827,9 @@ async function guidedPhotos(serviceId, kind, doneAngles = [], onlyAngle = null) 
   const queue = onlyAngle ? [onlyAngle] : [...ANGLES.filter((a) => !doneAngles.includes(a)), ...(ANGLES.every((a) => doneAngles.includes(a)) ? ['detalhe'] : [])];
   let index = 0;
   let saved = 0;
-  const upload = async (blob, angle) => {
-    await api(`/services/${serviceId}/photos?kind=${kind}&angle=${angle}`, { method: 'POST', raw: blob, type: 'image/jpeg' });
+  hereNow(); // já pede o GPS (e a permissão) enquanto a câmera abre
+  const upload = async (blob, angle, file = null) => {
+    await api(`/services/${serviceId}/photos?kind=${kind}&angle=${angle}${await photoPlace(file)}`, { method: 'POST', raw: blob, type: 'image/jpeg' });
     saved++;
   };
 
@@ -3638,7 +3843,7 @@ async function guidedPhotos(serviceId, kind, doneAngles = [], onlyAngle = null) 
       const file = await pickPhoto();
       if (!file) break;
       try {
-        await upload(await shrinkImage(file), angle);
+        await upload(await shrinkImage(file), angle, file);
       } catch (err) {
         toast(err.message);
         break;
@@ -3931,6 +4136,8 @@ const VOICE_LABELS = {
   vin_salvo: '🔎 VIN salvo',
   pagamento: '💵 Pagamento registrado',
   motorista: '🚚 Motorista escolhido',
+  agendado: '📅 Agendado',
+  fotos_anexadas: '📷 Fotos do carro anexadas',
 };
 // Botões de áudio desligados no app (pedido do Caningado 27/10: não funcionavam bem).
 // O áudio pelo WhatsApp continua. Para voltar, troque VOICE_BUTTONS para true.

@@ -28,6 +28,12 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
   const headers = { Authorization: `Bearer ${token}` };
   const recent = new Map(); // telefone → horários das últimas mensagens mandadas
   const warned = new Map(); // telefone → quando avisou no log que travou
+  // Jay em silêncio (JAY_WHATSAPP desligado): nada sai pelo WhatsApp, para ninguém.
+  const silent = (to, what) => {
+    if (config.whatsapp.conversar !== false) return false;
+    log(`WhatsApp: Jay em silêncio (JAY_WHATSAPP desligado), não mandei ${what} para ${formatPhone(to)}.`);
+    return true;
+  };
   const guard = (to) => {
     const phone = normalizePhone(to);
     const t = now();
@@ -47,7 +53,9 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
   return {
     configured: Boolean(token && phoneNumberId),
 
-    async sendText(to, body) {
+    // { exceção: true } passa pelo silêncio: só o VIN lido da foto do dono (pedido do dono 18/11).
+    async sendText(to, body, { excecao = false } = {}) {
+      if (!excecao && silent(to, 'texto')) return false;
       // Trava: nunca fala com cliente nem com ninguém de fora da equipe.
       if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
       guard(to);
@@ -62,6 +70,7 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
 
     // Foto (ex.: a que o Jay não entendeu, para a pessoa de apoio ver).
     async sendImage(to, buffer, mime = 'image/jpeg', caption = '') {
+      if (silent(to, 'foto')) return false;
       if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
       guard(to);
       const form = new FormData();
@@ -82,6 +91,7 @@ export function createWhatsAppClient(config, fetchImpl = fetch, { isTeam = () =>
 
     // Mensagem de voz (.ogg Opus): sobe o arquivo na Meta e manda como áudio.
     async sendAudio(to, ogg) {
+      if (silent(to, 'áudio')) return false;
       if (!isTeam(to)) throw new Error(`Bloqueado: ${formatPhone(to)} não é da equipe, o robô não manda mensagem para fora.`);
       guard(to);
       const form = new FormData();
@@ -205,6 +215,14 @@ export async function processMessage(ctx, client, msg) {
   } catch (err) {
     ctx.log('Canal: não consegui guardar', err.message);
   }
+  // Localização 📍: as próximas fotos saem carimbadas com esse endereço (o WhatsApp tira o GPS das fotos).
+  if (msg.location) {
+    try {
+      ctx.api.fotos?.noteLocation(user.id, msg.location);
+    } catch (err) {
+      ctx.log('Fotos: não consegui guardar a localização', err.message);
+    }
+  }
   // Cópia na caixa de entrada do Jay (para o Claude ler depois). Nunca atrapalha o robô.
   // Dono mandou serviço/localização/recado (não comando): o Jay só guarda, quem cria é o Claude
   // (escolha do Caningado 14/11). Comandos e conversas em andamento continuam com o Jay.
@@ -231,14 +249,51 @@ export async function processMessage(ctx, client, msg) {
   // Foto ou áudio: antes, responde os textos que estavam esperando (a ordem importa).
   await flushTexts(ctx, client, msg.from);
   const file = await client.downloadMedia(msg.mediaId);
+  // Foto do dono: a caixa de entrada guarda a imagem para o Claude poder ver (ex.: qual é o carro).
+  try {
+    ctx.api.caixa?.attachMedia(user, msg, file);
+  } catch (err) {
+    ctx.log('Caixa de entrada: não consegui guardar a foto', err.message);
+  }
+  // PDF do dono (pedido de serviço, gate pass): a caixa guarda o arquivo para o Claude ler.
+  if (msg.doc) {
+    try {
+      if (ctx.api.caixa?.attachDoc(user, msg, file)) await ctx.api.caixa.readDoc(msg);
+    } catch (err) {
+      ctx.log('Caixa de entrada: não consegui guardar o PDF', err.message);
+    }
+  }
+  // Áudio do dono: o Jay escreve o que foi falado na caixa de entrada (o Claude não ouve áudio).
+  // Roda junto com a resposta do Jay, sem atrasar.
+  const transcribing = msg.audio ? Promise.resolve(ctx.api.caixa?.transcribe(user, msg, file)).catch((err) => ctx.log('Caixa de entrada: não consegui escrever o áudio', err.message)) : null;
   if (msg.doc) {
     const mime = String(file?.mime || msg.doc.mime).split(';')[0].trim().toLowerCase();
     return answer(ctx, client, user, { phone: msg.from, doc: { buffer: file?.buffer, mime, name: msg.doc.name } });
   }
-  await answer(ctx, client, user, { phone: msg.from, text: msg.text, media: msg.audio ? null : file, audio: msg.audio ? file : null });
+  try {
+    await answer(ctx, client, user, { phone: msg.from, text: msg.text, media: msg.audio ? null : file, audio: msg.audio ? file : null });
+  } finally {
+    await transcribing;
+  }
 }
 
 async function answer(ctx, client, user, input) {
+  // Jay em silêncio: não executa comando nenhum (o dono não veria a resposta). As mensagens do
+  // dono já ficaram na caixa de entrada para o Claude.
+  if (ctx.config.whatsapp.conversar === false) {
+    // Única exceção: foto do dono com VIN. O Jay lê e manda o VIN sozinho numa mensagem, fácil
+    // de copiar, como antes (pedido do dono 18/11). Foto sem VIN: continua em silêncio.
+    if (user.role === 'dono' && input.media?.buffer && ctx.api.vin?.readForOwner) {
+      const vin = await ctx.api.vin.readForOwner(input.media.buffer, input.media.mime).catch((err) => (ctx.log('Falha ao ler VIN da foto', err), null));
+      if (vin) {
+        for (const reply of vin) await client.sendText(input.phone, reply, { excecao: true });
+        ctx.log(`WhatsApp: Jay em silêncio, mas mandou o VIN lido da foto para ${user.name}.`);
+        return;
+      }
+    }
+    ctx.log(`WhatsApp: Jay em silêncio, mensagem de ${user.name} não foi executada${user.role === 'dono' ? ' (ficou na caixa de entrada)' : ''}.`);
+    return;
+  }
   const replies = await ctx.bot.handle(input);
   for (const reply of replies) await client.sendText(input.phone, reply);
   ctx.log(`${client.canal === 'sms' ? 'SMS' : 'WhatsApp'}: ${replies.length} resposta(s) enviada(s) para ${user.name}.`);

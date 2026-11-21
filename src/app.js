@@ -11,6 +11,7 @@ import core from './core/index.js';
 import { verifyToken, readCookie } from './lib/auth.js';
 import { HttpError } from './lib/util.js';
 import { createGeocoder } from './lib/geo.js';
+import { createRouter } from './lib/rotas.js';
 
 import vin from './modules/vin/index.js';
 import fotos from './modules/fotos/index.js';
@@ -48,6 +49,8 @@ const VENDOR = {
   // Leitor de PDF dentro do app (gate pass): o app instalado no iPhone não abre PDF em outra aba.
   '/vendor/pdf.mjs': pdfjsFile('pdf.min.mjs'),
   '/vendor/pdf.worker.mjs': pdfjsFile('pdf.worker.min.mjs'),
+  // Lê o GPS e a hora gravados na foto antes do painel diminuir a foto (que apaga esses dados).
+  '/vendor/exifr.mjs': path.join(path.dirname(createRequire(import.meta.url).resolve('exifr')), 'lite.esm.mjs'),
 };
 
 export function createContext(config) {
@@ -78,6 +81,8 @@ export function createContext(config) {
     has: (name) => loaded.some((m) => m.name === name),
     // Procura endereços no mapa (null = desligado).
     geo: config.geocoder ? createGeocoder({ state: config.geoEstado }) : null,
+    // Milhas pelo Google Maps (null = sem chave).
+    rotas: createRouter({ apiKey: config.googleMapsKey }),
   };
 
   for (const mod of loaded) migrate(db, mod.name, mod.migrations);
