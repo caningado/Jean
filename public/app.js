@@ -658,8 +658,9 @@ screens.servicos = async (params) => {
     const what = status === 'concluido' ? 'entregue' : 'serviço';
     view.querySelector('.card:last-child').outerHTML = `${anos.length > 1 ? `<div class="anos">${anos.map((y) => `<a href="${query(status, driver, periodo, `&ano=${y}`)}" class="${y === ano ? 'on' : ''}">${y}</a>`).join('')}</div>` : ''}
       <div class="card"><ul class="list periodos">${
-        r.periodos.length
+        r.periodos.some((p) => p.count)
           ? r.periodos
+              .filter((p) => p.count) // só as semanas/meses com serviço (pedido do Caningado 21/11)
               .map((p) => {
                 const info = periodo === 'semana' ? weekInfo(p.start) : monthInfo(p.start);
                 const name = periodo === 'semana' ? `${ddmm(p.start)} a ${ddmm(p.end)}` : MES_NOME[p.n - 1];
@@ -669,7 +670,7 @@ screens.servicos = async (params) => {
                   <div class="right nowrap">${p.count ? `<strong>${money(p.cents)}</strong>` : ''} <span class="sub">›</span></div></a></li>`;
               })
               .join('')
-          : `<li class="empty">${periodo === 'semana' ? 'Nenhuma semana' : 'Nenhum mês'} neste ano ainda.</li>`
+          : `<li class="empty">Nenhum serviço neste ano.</li>`
       }</ul></div>`;
     return;
   }
