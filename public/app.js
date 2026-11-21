@@ -557,8 +557,38 @@ const priceText = (cents) => (cents === 0 ? 'Free' : money(cents));
 const gallonsText = (e) => `${Number(e.gallons).toLocaleString('en-US', { maximumFractionDigits: 3 })} gal · ${money(Math.round(e.amount_cents / e.gallons))}/gal`;
 const payClass = (s) => (s.paid === true ? ' class="pago"' : s.paid === false ? ' class="nao-pago"' : '');
 
+// Semanas e meses numerados (pedido do Caningado 21/11). A semana vai de sábado a sexta e é do ano
+// em que cai a sexta dela: a Semana 1 é a que tem a primeira sexta do ano (52 ou 53 semanas por ano).
+const MES_NOME = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+const plusDays = (day, n) => {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+};
+const ddmm = (day) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
+function weekInfo(start) {
+  const end = plusDays(start, 6);
+  const ano = Number(end.slice(0, 4));
+  const jan1 = new Date(Date.UTC(ano, 0, 1));
+  const firstEnd = plusDays(`${ano}-01-01`, (5 - jan1.getUTCDay() + 7) % 7);
+  const n = Math.round((Date.parse(end) - Date.parse(firstEnd)) / 604800000) + 1;
+  return { ano, n, start, end, title: `Semana ${n} · ${ano}`, label: `Semana ${n}`, range: `Sábado ${ddmm(start)} a sexta ${ddmm(end)}` };
+}
+function monthInfo(start) {
+  const ano = Number(start.slice(0, 4));
+  const mes = Number(start.slice(5, 7));
+  const end = new Date(Date.UTC(ano, mes, 0)).toISOString().slice(0, 10);
+  return { ano, n: mes, start, end, title: `${MES_NOME[mes - 1]} · ${ano}`, label: MES_NOME[mes - 1], range: `1º a ${Number(end.slice(8, 10))} de ${MES_NOME[mes - 1].toLowerCase()}` };
+}
+// Semana/mês antes ou depois do escolhido.
+const periodShift = (tipo, start, dir) => {
+  if (tipo === 'semana') return weekInfo(plusDays(start, 7 * dir));
+  const d = new Date(Date.UTC(Number(start.slice(0, 4)), Number(start.slice(5, 7)) - 1 + dir, 1));
+  return monthInfo(d.toISOString().slice(0, 10));
+};
+
 screens.servicos = async (params) => {
   setScreen('Serviços', { tab: 'servicos' });
+  const here = location.hash;
   const status = params.get('status') ?? 'aberto';
   const driver = params.get('driver') || '';
   // Entregues: abre no dia de hoje; dá para trocar para a semana ou o mês.
@@ -570,6 +600,12 @@ screens.servicos = async (params) => {
   const today = new Intl.DateTimeFormat('en-CA').format(new Date());
   const de = periodo === 'datas' ? params.get('de') || today : '';
   const ate = periodo === 'datas' ? params.get('ate') || de : '';
+  // Semana ou Mês: primeiro a lista numerada do ano; tocando numa, abre só os serviços dela (?de=início).
+  const porLista = periodo === 'semana' || periodo === 'mes';
+  const ano = Number(params.get('ano')) || Number(today.slice(0, 4));
+  const pickStart = porLista && /^\d{4}-\d{2}-\d{2}$/.test(params.get('de') || '') ? params.get('de') : '';
+  const pick = pickStart ? (periodo === 'semana' ? weekInfo(pickStart) : monthInfo(pickStart)) : null;
+  if (pick) setScreen(pick.title, { tab: 'servicos', back: `#/servicos?status=${status}${driver ? `&driver=${driver}` : ''}&periodo=${periodo}&ano=${pick.ano}` });
   // O ADM pode ver só os serviços de um motorista. A lista tem só quem tem cargo de motorista.
   const drivers = state.me.role === 'dono' ? (await api('/users')).filter((d) => drives(d) || String(d.id) === driver) : [];
   const query = (s, d, p = '', dates = p === 'datas' ? `&de=${de || today}&ate=${ate || de || today}` : '') => `#/servicos?status=${s}${d ? `&driver=${d}` : ''}${p ? `&periodo=${p}` : ''}${dates}`;
@@ -578,13 +614,16 @@ screens.servicos = async (params) => {
   const fila = state.me.role === 'dono' ? await api('/services?status=pendente').catch(() => []) : [];
   // Motorista: aba Pendentes com os serviços agendados para ele (ainda não começados).
   const agendados = state.me.role !== 'dono' && has('agenda') ? (await api('/services?status=pendente').catch(() => [])).filter((s) => s.scheduled_at) : [];
+  const hideTop = pick && !isDesk() ? ' hidden' : '';
   view.innerHTML = `
-    <div class="segmented">
+    <div class="segmented${hideTop}">
       ${state.me.role === 'dono' ? `<button data-s="pendente">Pendentes${fila.length ? ` <span class="badge pendente">${fila.length}</span>` : ''}</button>` : has('agenda') ? `<button data-s="pendente">Pendentes${agendados.length ? ` <span class="badge pendente">${agendados.length}</span>` : ''}</button>` : ''}<button data-s="aberto">Andamento</button><button data-s="concluido">Entregues</button>${state.me.role === 'dono' ? '<button data-s="">Todos</button>' : ''}
     </div>
-    ${periodo ? `<div class="segmented periodo">${[['dia', 'Hoje'], ['semana', 'Semana'], ['mes', 'Mês'], ...(porDatas ? [['datas', '📅 Datas']] : [])].map(([p, l]) => `<button data-p="${p}" class="${p === periodo ? 'active' : ''}">${l}</button>`).join('')}</div>` : ''}
+    ${periodo ? `<div class="segmented periodo${hideTop}">${[['dia', 'Hoje'], ['semana', 'Semana'], ['mes', 'Mês'], ...(porDatas ? [['datas', '📅 Datas']] : [])].map(([p, l]) => `<button data-p="${p}" class="${p === periodo ? 'active' : ''}">${l}</button>`).join('')}</div>` : ''}
     ${periodo === 'datas' ? `<form class="datas" id="datas"><label>De <input type="date" name="de" value="${de}" max="${today}" required></label><label>Até <input type="date" name="ate" value="${ate}" max="${today}" required></label><button>Buscar</button></form>` : ''}
     ${drivers.length > 1 ? `<select id="driver" aria-label="Motorista"><option value="">Todos os motoristas</option>${drivers.map((d) => `<option value="${d.id}" ${String(d.id) === driver ? 'selected' : ''}>${esc(d.name)}${d.id === state.me.id ? ' (eu)' : ''}</option>`).join('')}</select>` : ''}
+    ${pick ? `<div class="card periodo-head"><div class="sub">${pick.range}</div><div class="periodo-sum"><div><span class="big" id="p-count">…</span> <span class="sub">${status === 'concluido' ? 'entregues' : 'serviços'}</span></div><div class="big" id="p-sum"></div></div></div>
+      <div class="periodo-nav">${[periodShift(periodo, pick.start, -1), periodShift(periodo, pick.start, 1)].map((p, i) => (p.start > today ? '<span></span>' : `<a href="${query(status, driver, periodo, `&de=${p.start}`)}">${i ? `${p.label} ›` : `‹ ${p.label}`}</a>`)).join('')}</div>` : ''}
     <div class="card"><ul class="list" id="list"><li class="empty">Carregando…</li></ul></div>`;
   view.querySelectorAll('.segmented:not(.periodo) button').forEach((b) => {
     b.classList.toggle('active', b.dataset.s === status);
@@ -603,10 +642,40 @@ screens.servicos = async (params) => {
     };
   }
   const select = view.querySelector('#driver');
-  if (select) select.onchange = () => (location.hash = query(status, select.value, periodo));
+  if (select) select.onchange = () => (location.hash = query(status, select.value, periodo, pick ? `&de=${pick.start}` : porLista ? `&ano=${ano}` : ''));
+  // Lista das semanas (ou meses) do ano, com quantos serviços e o total de cada uma.
+  if (porLista && !pick) {
+    let r;
+    try {
+      r = await api(`/services/periodos?tipo=${periodo}&ano=${ano}&status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}`);
+      if (location.hash !== here) return; // já mudou de tela enquanto carregava
+    } catch (err) {
+      if (!/suspensa/.test(err.message)) throw err;
+      view.innerHTML = `<div class="card"><h2>🚫 Lista suspensa</h2><p>${esc(err.message)}</p><a class="btn block" href="#/caminhoes">📏 Mandar a milhagem</a></div>`;
+      return;
+    }
+    const anos = r.anos.includes(ano) ? r.anos : [...r.anos, ano].sort((a, b) => b - a);
+    const what = status === 'concluido' ? 'entregue' : 'serviço';
+    view.querySelector('.card:last-child').outerHTML = `${anos.length > 1 ? `<div class="anos">${anos.map((y) => `<a href="${query(status, driver, periodo, `&ano=${y}`)}" class="${y === ano ? 'on' : ''}">${y}</a>`).join('')}</div>` : ''}
+      <div class="card"><ul class="list periodos">${
+        r.periodos.length
+          ? r.periodos
+              .map((p) => {
+                const info = periodo === 'semana' ? weekInfo(p.start) : monthInfo(p.start);
+                const name = periodo === 'semana' ? `${ddmm(p.start)} a ${ddmm(p.end)}` : MES_NOME[p.n - 1];
+                const qtd = p.count ? `${p.count} ${what}${p.count > 1 ? 's' : ''}${p.current ? ' até hoje' : ''}` : `nenhum ${what}${p.current ? ' ainda' : ''}`;
+                return `<li class="${p.current ? 'week-now' : ''}"><a href="${query(status, driver, periodo, `&de=${p.start}`)}" aria-label="${info.title}">
+                  <div class="p-left"><span class="p-num">${String(p.n).padStart(periodo === 'mes' ? 2 : 1, '0')}</span><div><strong>${name}</strong>${p.current ? ` <span class="badge aberto">${periodo === 'semana' ? 'esta semana' : 'este mês'}</span>` : ''}<div class="sub">${qtd}</div></div></div>
+                  <div class="right nowrap">${p.count ? `<strong>${money(p.cents)}</strong>` : ''} <span class="sub">›</span></div></a></li>`;
+              })
+              .join('')
+          : `<li class="empty">${periodo === 'semana' ? 'Nenhuma semana' : 'Nenhum mês'} neste ano ainda.</li>`
+      }</ul></div>`;
+    return;
+  }
   let list;
   try {
-    list = await api(`/services?status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}${periodo === 'datas' ? `&de=${de}&ate=${ate}` : periodo ? `&periodo=${periodo}` : ''}`);
+    list = await api(`/services?status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}${pick ? `&de=${pick.start}&ate=${pick.end}` : periodo === 'datas' ? `&de=${de}&ate=${ate}` : periodo ? `&periodo=${periodo}` : ''}`);
   } catch (err) {
     // Lista suspensa por falta da milhagem da semana: mostra o que fazer.
     if (!/suspensa/.test(err.message)) throw err;
@@ -620,7 +689,11 @@ screens.servicos = async (params) => {
     const day = (s) => (s.driver_seq ? s.driver_ref_day : '') || '';
     list.sort((a, b) => day(b).localeCompare(day(a)) || (a.driver_seq || 1e9) - (b.driver_seq || 1e9) || b.id - a.id);
   }
-  const empty = status === 'pendente' ? (state.me.role === 'dono' ? 'Nenhum serviço na fila. 👍' : 'Nenhum serviço agendado para você.') : (status === 'concluido'
+  if (pick) {
+    view.querySelector('#p-count').textContent = list.length;
+    view.querySelector('#p-sum').textContent = money(list.reduce((t, s) => t + (s.price_cents || 0), 0));
+  }
+  const empty = pick ? `Nenhum serviço ${status === 'concluido' ? 'entregue ' : ''}${periodo === 'semana' ? 'nesta semana' : 'neste mês'}.` : status === 'pendente' ? (state.me.role === 'dono' ? 'Nenhum serviço na fila. 👍' : 'Nenhum serviço agendado para você.') : (status === 'concluido'
         ? { dia: 'Nenhum serviço entregue hoje.', semana: 'Nenhum serviço entregue nesta semana.', mes: 'Nenhum serviço entregue neste mês.' }
         : { dia: 'Nenhum serviço hoje.', semana: 'Nenhum serviço nesta semana.', mes: 'Nenhum serviço neste mês.' })[periodo] || (periodo === 'datas' ? 'Nenhum serviço nessas datas.' : 'Nenhum serviço aqui.');
   // ADM no computador: aviso dos pagamentos esperando o OK.
@@ -704,7 +777,7 @@ screens.servicos = async (params) => {
         )
         .join('')
     : `<li class="empty">${empty}</li>`;
-  if (periodo && list.length) {
+  if (periodo && !pick && list.length) {
     view.querySelector('#list').insertAdjacentHTML('beforeend', `<li class="total"><span>${list.length} serviço(s)</span><strong>${money(list.reduce((t, s) => t + (s.price_cents || 0), 0))}</strong></li>`);
   }
 };

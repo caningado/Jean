@@ -8,7 +8,7 @@ import { collectAlerts, servicesBlocked } from '../lib/daily.js';
 import { priceSuggestion } from './preco.js';
 import { routeMiles, routeLines } from '../lib/rotas.js';
 import { checkName, checkPhone, checkLocation, checkVehicle, checkPlate, checkMiles, checkServicePrice, FREE, isMapReference } from '../lib/validate.js';
-import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfWeekIso, startOfMonthIso, startOfYearIso, formatPhone, dayFormatter } from '../lib/util.js';
+import { normalizePhone, parseMoney, formatMoney, simplify, HttpError, startOfDayIso, startOfWeekIso, startOfMonthIso, startOfYearIso, formatPhone, dayFormatter, weeksOfYear, monthsOfYear, addDays } from '../lib/util.js';
 import { speak, toWav, textoParaFala, MAX_FALA } from '../lib/tts.js';
 import { zonedMidnight } from '../modules/planilha/index.js';
 
@@ -1155,6 +1155,45 @@ function routes(api, ctx) {
     res.json(data.contacts.importVcf(req.body));
   });
 
+  // Semanas (ou meses) numeradas do ano, com quantos serviços e o total de cada uma (pedido do Caningado 21/11).
+  // Entregues contam pelo dia da entrega; "Todos" pelo dia em que o serviço foi aberto.
+  api.get('/services/periodos', (req, res) => {
+    const blocked = servicesBlocked(ctx, req.user);
+    if (blocked) throw new HttpError(423, blocked.replace(/\*/g, ''));
+    const tz = ctx.config.timeZone;
+    const dayOf = dayFormatter(tz);
+    const today = dayOf();
+    const thisYear = Number(today.slice(0, 4));
+    const ano = Number(req.query.ano) || thisYear;
+    const status = req.query.status || null;
+    const driverId = req.user.role === 'dono' ? Number(req.query.driver) || null : req.user.id;
+    const periods = (req.query.tipo === 'mes' ? monthsOfYear(ano) : weeksOfYear(ano)).filter((p) => p.start <= today);
+    const at = (day) => {
+      const [y, m, d] = day.split('-').map(Number);
+      return zonedMidnight(y, m, d, tz);
+    };
+    const totals = periods.map((p) => ({ ...p, count: 0, cents: 0, current: p.start <= today && today <= p.end }));
+    if (periods.length) {
+      const from = at(periods[0].start);
+      const to = at(addDays(periods[periods.length - 1].end, 1));
+      const done = status === 'concluido';
+      const list = data.services.list({ status, driverId, since: done ? null : from, until: done ? null : to, doneSince: done ? from : null, doneUntil: done ? to : null, hideCancelled: !status, hideQuotes: !status, limit: 1000000 });
+      for (const s of list) {
+        const day = dayOf(done ? s.completed_at || s.created_at : s.created_at);
+        const p = totals.find((x) => x.start <= day && day <= x.end);
+        if (!p) continue;
+        p.count += 1;
+        p.cents += s.price_cents || 0;
+      }
+    }
+    // Anos com serviço, do primeiro até este.
+    const first = db.prepare('SELECT MIN(created_at) AS d FROM services').get().d;
+    const firstYear = Math.min(first ? Number(dayOf(first).slice(0, 4)) : thisYear, thisYear);
+    const anos = [];
+    for (let y = thisYear; y >= firstYear; y--) anos.push(y);
+    res.json({ ano, anos, hoje: today, periodos: totals.reverse() });
+  });
+
   // Serviços
   api.get('/services', (req, res) => {
     const blocked = servicesBlocked(ctx, req.user);
@@ -1166,10 +1205,11 @@ function routes(api, ctx) {
     const starts = { dia: startOfDayIso, semana: startOfWeekIso, mes: startOfMonthIso };
     // Entregues contam pelo dia da entrega; "Todos" pelo dia em que o serviço foi aberto.
     let start = starts[req.query.periodo]?.(tz) || null;
-    // ADM: busca por uma data ou um intervalo (de ... até, os dois dias entram).
+    // Busca por uma data ou um intervalo (de ... até, os dois dias entram): datas do ADM e a semana/mês escolhido.
+    // O motorista só vê os dele (driverId acima), então pode usar também.
     let end = null;
     const isDay = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
-    if (req.user.role === 'dono' && isDay(req.query.de)) {
+    if (isDay(req.query.de)) {
       const de = req.query.de;
       const ate = isDay(req.query.ate) ? req.query.ate : de;
       if (ate < de) throw new HttpError(400, 'A data final tem que ser depois da inicial.');
