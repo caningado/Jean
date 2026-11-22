@@ -667,7 +667,7 @@ screens.servicos = async (params) => {
                 const qtd = p.count ? `${p.count} ${what}${p.count > 1 ? 's' : ''}${p.current ? ' até hoje' : ''}` : `nenhum ${what}${p.current ? ' ainda' : ''}`;
                 return `<li class="${p.current ? 'week-now' : ''}"><a href="${query(status, driver, periodo, `&de=${p.start}`)}" aria-label="${info.title}">
                   <div class="p-left"><span class="p-num">${String(p.n).padStart(periodo === 'mes' ? 2 : 1, '0')}</span><div><strong>${name}</strong>${p.current ? ` <span class="badge aberto">${periodo === 'semana' ? 'esta semana' : 'este mês'}</span>` : ''}<div class="sub">${qtd}</div></div></div>
-                  <div class="right nowrap">${p.count ? `<strong>${money(p.cents)}</strong>` : ''} <span class="sub">›</span></div></a></li>`;
+                  <div class="right nowrap">${p.count ? `<strong>${money(p.cents)}</strong>` : ''} <span class="sub">›</span>${periodo === 'mes' && p.unpaid_cents && p.cents ? `<div class="nao-pago-pct">${Math.max(1, Math.round((p.unpaid_cents / p.cents) * 100))}% não pago</div>` : ''}</div></a></li>`;
               })
               .join('')
           : `<li class="empty">Nenhum serviço neste ano.</li>`

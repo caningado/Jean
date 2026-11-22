@@ -51,6 +51,11 @@ test('lista das semanas e dos meses com quantidade e total; abrir uma semana', a
   const mm = Object.fromEntries(m.periodos.map((p) => [p.n, p]));
   assert.equal(mm[2].count, 2);
   assert.equal(mm[3].cents, 7000);
+  // % não paga do mês: fevereiro tem $150, recebeu $100 do serviço a → $50 não pago.
+  ctx.db.prepare("INSERT INTO payments (service_id, amount_cents, method, status, created_at) VALUES (?, 10000, 'zelle', 'recebido', ?)").run(a, new Date().toISOString());
+  const m2 = Object.fromEntries((await json('GET', '/services/periodos?tipo=mes&ano=2025&status=concluido')).periodos.map((p) => [p.n, p]));
+  assert.equal(m2[2].unpaid_cents, 5000);
+  assert.equal(m2[3].unpaid_cents, 7000);
   // Abrir a semana 9: só os entregues dela.
   const ids = (await json('GET', '/services?status=concluido&de=2025-02-22&ate=2025-02-28')).map((s) => s.id).sort();
   assert.deepEqual(ids, [a, b].sort());

@@ -580,3 +580,4 @@ button.chat-mic svg { width: 22px; height: 22px; }
 .periodo-nav { display: flex; gap: 8px; margin-bottom: 12px; }
 .periodo-nav > * { flex: 1; }
 .periodo-nav a { text-align: center; background: var(--chip); border-radius: 10px; padding: 9px; color: var(--text); text-decoration: none; font-size: 14px; }
+.list.periodos .nao-pago-pct { color: var(--bad); font-size: 13px; font-weight: 600; margin-right: 14px; }
