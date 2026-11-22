@@ -1172,7 +1172,8 @@ function routes(api, ctx) {
       const [y, m, d] = day.split('-').map(Number);
       return zonedMidnight(y, m, d, tz);
     };
-    const totals = periods.map((p) => ({ ...p, count: 0, cents: 0, current: p.start <= today && today <= p.end }));
+    const pag = ctx.api.pagamentos;
+    const totals = periods.map((p) => ({ ...p, count: 0, cents: 0, unpaid_cents: 0, current: p.start <= today && today <= p.end }));
     if (periods.length) {
       const from = at(periods[0].start);
       const to = at(addDays(periods[periods.length - 1].end, 1));
@@ -1184,6 +1185,8 @@ function routes(api, ctx) {
         if (!p) continue;
         p.count += 1;
         p.cents += s.price_cents || 0;
+        // Meses: quanto ainda falta receber (o que está em vermelho na lista), para a % não paga.
+        if (req.query.tipo === 'mes' && pag && s.price_cents) p.unpaid_cents += Math.max(0, s.price_cents - pag.balance(s).received_cents);
       }
     }
     // Anos com serviço, do primeiro até este.
