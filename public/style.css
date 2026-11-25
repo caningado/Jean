@@ -398,6 +398,8 @@ h1, h2, h3, strong, b, label { font-weight: 600; }
 .table tbody tr.pago td, .list li.pago > a { background: var(--pago-bg); }
 .table tbody tr.nao-pago td, .list li.nao-pago > a { background: var(--nao-pago-bg); }
 .list li.pago > a, .list li.nao-pago > a { border-radius: 10px; padding-left: 8px; padding-right: 8px; }
+.list li.nao-pago > .row { background: var(--nao-pago-bg); border-radius: 10px; padding: 0 8px; margin: 4px 0; }
+.list li.nao-pago > .row > a { background: none; }
 .badge.aguardando { color: var(--muted); background: var(--bg); border: 1px solid var(--line); }
 
 /* Escolha com busca (ligar cliente e empresa): até 5 por vez */

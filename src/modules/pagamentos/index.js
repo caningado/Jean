@@ -392,6 +392,20 @@ function searchPending(list, text) {
   return firms.size ? list.filter((s) => found.includes(s) || firms.has(s.company_id)) : found;
 }
 
+// Ordem da lista de pendências (tela e PDF): data (mais antigo primeiro, o padrão),
+// recente (mais novo primeiro), valor (maior primeiro) ou nome (A a Z).
+export const PENDING_ORDERS = ['data', 'recente', 'valor', 'nome'];
+const pendingName = (s) => s.company_name || s.contact_name || s.vehicle || '';
+export function sortPending(list, order) {
+  const byDate = (a, b) => b.days - a.days || a.id - b.id;
+  const compare = {
+    recente: (a, b) => a.days - b.days || b.id - a.id,
+    valor: (a, b) => b.open_cents + b.to_receive_cents - (a.open_cents + a.to_receive_cents) || byDate(a, b),
+    nome: (a, b) => pendingName(a).localeCompare(pendingName(b), 'pt', { sensitivity: 'base' }) || byDate(a, b),
+  }[order] || byDate;
+  return [...list].sort(compare);
+}
+
 // Alerta de cobrança atrasada (aviso da manhã e topo do painel).
 function alerts({ ctx, user }) {
   const late = pendingList(ctx, user.role === 'dono' ? null : user.id).filter((s) => s.overdue);
@@ -707,13 +721,15 @@ function routes(api, ctx) {
     res.json(receivedEarlier(ctx, req.query.dia));
   });
 
-  // Lista de pendências em PDF (com a mesma busca da tela).
+  // Lista de pendências em PDF (com a mesma busca e a mesma ordem da tela).
   api.get('/payments/pending.pdf', async (req, res) => {
     const owner = req.user.role === 'dono';
     const search = String(req.query.q || '').trim();
     const day = dayFormatter(ctx.config.timeZone);
-    const list = searchPending(pendingList(ctx, owner ? null : req.user.id), search)
-      .sort((a, b) => b.days - a.days || a.id - b.id)
+    // Marcados na tela (ids=1,2,3): o PDF sai só com eles.
+    const picked = new Set(String(req.query.ids || '').split(',').map(Number).filter(Boolean));
+    const found = searchPending(pendingList(ctx, owner ? null : req.user.id), picked.size ? '' : search).filter((s) => !picked.size || picked.has(s.id));
+    const list = sortPending(found, String(req.query.ordem || ''))
       .map((s) => ({
         ...s,
         day: day(s.completed_at || s.created_at),
@@ -727,7 +743,8 @@ function routes(api, ctx) {
       logo: ctx.api.invoice ? ctx.api.invoice.logo() : null,
       list,
       today: day(),
-      search,
+      search: picked.size ? '' : search,
+      picked: picked.size > 0,
       // Sem o nº do serviço no PDF (pedido do Caningado 22/10): ele vai para fora.
       showIds: false,
     });
