@@ -415,12 +415,12 @@ function backTarget(fallback) {
 }
 // Guarda o que foi digitado na busca no endereço da tela (sem criar passo novo no histórico):
 // ao voltar de um serviço aberto pela busca, a lista volta filtrada do mesmo jeito.
-function keepSearch(value) {
+function keepSearch(value, key = 'q') {
   const [path, query] = location.hash.split('?');
   const params = new URLSearchParams(query || '');
   const q = String(value || '').trim();
-  if (q) params.set('q', q);
-  else params.delete('q');
+  if (q) params.set(key, q);
+  else params.delete(key);
   const rest = params.toString();
   history.replaceState(history.state, '', path + (rest ? '?' + rest : ''));
   trail[trail.length - 1] = location.hash;
@@ -2197,17 +2197,29 @@ screens.agenda = async () => {
   }</ul></div>`;
 };
 
-screens.pendentes = async (params) => {
+screens.pendentes = async (params = new URLSearchParams(location.hash.split('?')[1] || '')) => {
   setScreen(state.me.role === 'dono' ? 'Pendências' : 'Minhas pendências', { tab: 'resumo', back: '#/resumo' });
   const list = await api('/payments/pending');
+  // Ordem escolhida (fica no endereço, como a busca): data = mais antigo primeiro (padrão).
+  const ORDERS = { data: '📅 Data (mais antigo)', recente: '📅 Data (mais novo)', valor: '💵 Maior valor', nome: '🔤 Nome (A-Z)' };
+  const nameOf = (s) => s.company_name || s.contact_name || s.vehicle || '';
+  const byDate = (a, b) => b.days - a.days || a.id - b.id;
+  const sorters = {
+    data: byDate,
+    recente: (a, b) => a.days - b.days || b.id - a.id,
+    valor: (a, b) => b.open_cents + b.to_receive_cents - (a.open_cents + a.to_receive_cents) || byDate(a, b),
+    nome: (a, b) => nameOf(a).localeCompare(nameOf(b), 'pt', { sensitivity: 'base' }) || byDate(a, b),
+  };
+  let order = ORDERS[params.get('ordem')] ? params.get('ordem') : 'data';
+  list.sort(sorters[order]);
   const late = list.filter((s) => s.overdue).length;
   const age = (d) => (d === 0 ? 'hoje' : d === 1 ? 'há 1 dia' : `há ${d} dias`);
   const words = (s) => plain([state.me.role === 'dono' ? s.id : '', s.company_name, s.contact_name, s.contact_phone, s.vehicle, s.plate, s.vin, s.payer, s.driver_name].filter(Boolean).join(' '));
   view.innerHTML = `${late ? `<div class="card alerts"><strong>⚠️ ${late === 1 ? '1 atrasado' : `${late} atrasados`}</strong><div class="sub">Abra o serviço e toque em <strong>Cobrar cliente</strong> para mandar a mensagem com o Zelle. Pagou só uma parte? Abra o serviço e mude o valor.</div></div>` : ''}
-    ${list.length ? '<div class="card"><input type="search" id="busca" placeholder="🔎 Nome, empresa, celular, carro"><div class="sub" id="soma"></div><div class="actions"><button type="button" class="secondary" id="pdf">📄 PDF da lista</button></div></div>' : ''}
+    ${list.length ? `<div class="card"><input type="search" id="busca" placeholder="🔎 Nome, empresa, celular, carro"><label for="ordem">Ordenar por</label><select id="ordem">${Object.entries(ORDERS).map(([k, v]) => `<option value="${k}"${k === order ? ' selected' : ''}>${v}</option>`).join('')}</select><div class="sub" id="soma"></div><div class="actions"><button type="button" class="secondary" id="pdf">📄 PDF da lista</button></div></div>` : ''}
     <div class="card"><ul class="list">${
     list.length
-      ? list.map((s) => `<li data-w="${esc(words(s))}" data-co="${s.company_id || ''}" class="${s.overdue ? 'late' : ''}"><div class="row"><label class="pick">${s.open_cents ? `<input type="checkbox" value="${s.id}" data-open="${s.open_cents}">` : ''}</label><a href="#/servico/${s.id}" style="flex:1"><div><strong>${s.overdue ? '⚠️ ' : ''}${numTag(s)}${esc(s.company_name || s.contact_name || s.vehicle || 'Serviço')}</strong><div class="sub">${s.company_name && s.contact_name ? `${esc(s.contact_name)} · ` : ''}${s.vehicle && s.contact_name ? `${esc(s.vehicle)} · ` : ''}${when(s.completed_at || s.created_at)} · ${age(s.days)}</div></div>
+      ? list.map((s) => `<li data-id="${s.id}" data-w="${esc(words(s))}" data-co="${s.company_id || ''}" class="nao-pago${s.overdue ? ' late' : ''}"><div class="row"><label class="pick">${s.open_cents ? `<input type="checkbox" value="${s.id}" data-open="${s.open_cents}">` : ''}</label><a href="#/servico/${s.id}" style="flex:1"><div><strong>${s.overdue ? '⚠️ ' : ''}${numTag(s)}${esc(s.company_name || s.contact_name || s.vehicle || 'Serviço')}</strong><div class="sub">${s.company_name && s.contact_name ? `${esc(s.contact_name)} · ` : ''}${s.vehicle && s.contact_name ? `${esc(s.vehicle)} · ` : ''}${when(s.completed_at || s.created_at)} · ${age(s.days)}</div></div>
           <div class="right">${s.open_cents ? 'Cliente ' + money(s.open_cents) : ''}${s.to_receive_cents ? '<br>Seguradora ' + money(s.to_receive_cents) : ''}</div></a></div></li>`).join('')
       : '<li class="empty">Nada pendente 👍</li>'
   }</ul></div>
@@ -2226,8 +2238,10 @@ screens.pendentes = async (params) => {
     const owed = shown.reduce((sum, li) => sum + Number(li.querySelector('input')?.dataset.open || 0), 0);
     const soma = view.querySelector('#soma');
     if (soma) soma.textContent = `${shown.length} serviço(s) · clientes devem ${money(owed)}`;
-    if (!form) return;
     const marked = picked();
+    const pdfBtn = view.querySelector('#pdf');
+    if (pdfBtn) pdfBtn.textContent = marked.length ? `📄 PDF dos marcados (${marked.length})` : '📄 PDF da lista';
+    if (!form) return;
     form.querySelector('button:not([type])').disabled = !marked.length;
     form.querySelector('#loteInfo').textContent = marked.length
       ? `${marked.length} serviço(s) · ${money(marked.reduce((sum, b) => sum + Number(b.dataset.open), 0))} (o valor que falta em cada um)`
@@ -2248,12 +2262,28 @@ screens.pendentes = async (params) => {
     busca.value = params.get('q');
     busca.oninput();
   }
+  const ordem = view.querySelector('#ordem');
+  if (ordem)
+    ordem.onchange = () => {
+      order = ordem.value;
+      const ul = items[0].parentElement;
+      const byId = new Map(items.map((li) => [li.dataset.id, li]));
+      list.sort(sorters[order]).forEach((s) => ul.appendChild(byId.get(String(s.id))));
+      keepSearch(order === 'data' ? '' : order, 'ordem');
+    };
   boxes().forEach((b) => (b.onchange = refresh));
   const pdf = view.querySelector('#pdf');
   if (pdf)
     pdf.onclick = () => {
       const q = (busca?.value || '').trim();
-      openDoc({ url: `/api/payments/pending.pdf${q ? `?q=${encodeURIComponent(q)}` : ''}`, name: `Pendências${q ? ' ' + q : ''}.pdf`, mime: 'application/pdf' });
+      const marked = picked().map((b) => b.value);
+      const query = new URLSearchParams();
+      // Com serviços marcados, o PDF sai só com eles; sem nada marcado, sai a lista que está na tela.
+      if (marked.length) query.set('ids', marked.join(','));
+      else if (q) query.set('q', q);
+      if (order !== 'data') query.set('ordem', order);
+      const rest = query.toString();
+      openDoc({ url: `/api/payments/pending.pdf${rest ? `?${rest}` : ''}`, name: `Pendências${marked.length ? ' marcados' : q ? ' ' + q : ''}.pdf`, mime: 'application/pdf' });
     };
   if (form) {
     form.querySelector('#todos').onclick = () => {

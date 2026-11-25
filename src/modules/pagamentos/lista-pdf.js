@@ -8,7 +8,7 @@ const shortDate = (day) => {
 };
 
 // list: itens de pendingList com `day` (AAAA-MM-DD); showIds: só o ADM vê o nº do serviço.
-export function renderPendingList({ company, logo, list, today, search, showIds }) {
+export function renderPendingList({ company, logo, list, today, search, showIds, picked = false }) {
   const { doc, done } = startDoc('Pendências', company);
   const L = 50;
   const R = doc.page.width - 50;
@@ -30,7 +30,7 @@ export function renderPendingList({ company, logo, list, today, search, showIds 
     doc.font('Helvetica-Bold').fontSize(12).fillColor(DARK).text(one.contact_name || '', L, doc.y + 2);
     if (one.contact_phone) doc.font('Helvetica').fontSize(10).fillColor(GRAY).text(formatPhone(one.contact_phone), L, doc.y + 1);
   } else {
-    doc.font('Helvetica').fontSize(10).fillColor(GRAY).text(search ? `Busca: "${search}"` : 'Todos os serviços com valor a receber', L, doc.y + 2);
+    doc.font('Helvetica').fontSize(10).fillColor(GRAY).text(picked ? 'Serviços escolhidos' : search ? `Busca: "${search}"` : 'Todos os serviços com valor a receber', L, doc.y + 2);
   }
   const titleBottom = doc.y;
   let my = y + 2;
