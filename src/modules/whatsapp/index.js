@@ -196,15 +196,25 @@ export function extractMessages(payload) {
 
 export async function processMessage(ctx, client, msg) {
   // A Meta às vezes entrega a mesma mensagem duas vezes.
-  const seen = ctx.db.prepare('INSERT OR IGNORE INTO whatsapp_messages (id, phone, received_at) VALUES (?, ?, ?)').run(msg.id, msg.from, nowIso());
+  const table = client.canal === 'sms' ? 'sms_messages' : 'whatsapp_messages';
+  const seen = ctx.db.prepare(`INSERT OR IGNORE INTO ${table} (id, phone, received_at) VALUES (?, ?, ?)`).run(msg.id, msg.from, nowIso());
   if (!Number(seen.changes)) return;
 
+  // O mesmo caminho atende o WhatsApp e o SMS (módulo sms): client.canal diz por onde veio.
+  const canal = client.canal || 'whatsapp';
+  const nome = canal === 'sms' ? 'SMS' : 'WhatsApp';
   const user = ctx.bot.findUser(msg.from);
   if (!user) {
-    ctx.log(`WhatsApp: mensagem de ${formatPhone(msg.from)}, que não está em Menu › Equipe (o robô não responde).`);
+    ctx.log(`${nome}: mensagem de ${formatPhone(msg.from)}, que não está em Menu › Equipe (o robô não responde).`);
     return handleOutsider(ctx, client, msg);
   }
-  ctx.log(`WhatsApp: mensagem de ${user.name} (${formatPhone(msg.from)}), tipo ${msg.type}.`);
+  ctx.log(`${nome}: mensagem de ${user.name} (${formatPhone(msg.from)}), tipo ${msg.type}.`);
+  // Avisos do sistema (fila, cobrança, aviso da manhã) vão pelo canal que a pessoa usou por último.
+  try {
+    ctx.api.canais?.mark(user.id, canal);
+  } catch (err) {
+    ctx.log('Canal: não consegui guardar', err.message);
+  }
   // Localização 📍: as próximas fotos saem carimbadas com esse endereço (o WhatsApp tira o GPS das fotos).
   if (msg.location) {
     try {
@@ -286,7 +296,7 @@ async function answer(ctx, client, user, input) {
   }
   const replies = await ctx.bot.handle(input);
   for (const reply of replies) await client.sendText(input.phone, reply);
-  ctx.log(`WhatsApp: ${replies.length} resposta(s) enviada(s) para ${user.name}.`);
+  ctx.log(`${client.canal === 'sms' ? 'SMS' : 'WhatsApp'}: ${replies.length} resposta(s) enviada(s) para ${user.name}.`);
   // Quem mandou áudio recebe a resposta também em áudio (o texto continua indo, para quem prefere ler).
   if (input.audio) await replyByVoice(ctx, client, input.phone, replies);
 }
@@ -337,7 +347,7 @@ export async function replyByVoice(ctx, client, to, replies, voice = { speak, to
 // Alguém de fora da equipe (cliente, amigo) mandou mensagem: só guarda o contato.
 // O robô nunca responde: quem fala com cliente é o dono, pelo app WhatsApp Business.
 export async function handleOutsider(ctx, client, msg) {
-  ctx.data.contacts.findOrCreate({ phone: msg.from, name: msg.name, source: 'whatsapp' });
+  ctx.data.contacts.findOrCreate({ phone: msg.from, name: msg.name, source: client.canal || 'whatsapp' });
 }
 
 const JAY_FOTO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'public', 'jay.png');

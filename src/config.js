@@ -12,7 +12,7 @@ function loadDotEnv(file) {
   }
 }
 
-export const ALL_MODULES = ['vin', 'fotos', 'pagamentos', 'despesas', 'whatsapp', 'planilha', 'manutencao', 'invoice', 'empresas', 'comissao', 'backup', 'notificacoes', 'voz', 'ajuda', 'agenda', 'mcp'];
+export const ALL_MODULES = ['vin', 'fotos', 'pagamentos', 'despesas', 'whatsapp', 'planilha', 'manutencao', 'invoice', 'empresas', 'comissao', 'backup', 'notificacoes', 'voz', 'ajuda', 'agenda', 'sms', 'mcp'];
 
 export function loadConfig(overrides = {}) {
   loadDotEnv(path.resolve('.env'));
@@ -67,6 +67,14 @@ export function loadConfig(overrides = {}) {
       juntarMs: env.WHATSAPP_JUNTAR_MS != null && env.WHATSAPP_JUNTAR_MS !== '' ? Number(env.WHATSAPP_JUNTAR_MS) : 3000,
       // Resposta automática para quem não é da equipe: diaria (padrão), nunca ou sempre.
       // Padrão: o robô nunca responde clientes (só o dono responde, pelo WhatsApp Business).
+    },
+    // SMS pela Twilio: o Jay atende por mensagem de texto comum quem da equipe não usa WhatsApp.
+    sms: {
+      sid: (env.TWILIO_ACCOUNT_SID || '').trim(),
+      token: (env.TWILIO_AUTH_TOKEN || '').trim(),
+      // Número do Jay na Twilio (+1...). Ou o Messaging Service (MG...), que já tem o número dentro.
+      from: (env.TWILIO_NUMERO || '').trim(),
+      messagingServiceSid: (env.TWILIO_MESSAGING_SERVICE_SID || '').trim(),
     },
     // Cobrança atrasada: avisa quando passa desse número de dias sem receber.
     // Link de pagamento com cartão pelo Square. Sem token, a cobrança fica só com o Zelle.
@@ -127,6 +135,9 @@ function persistentSecret(dataDir) {
 // Para desligar: MCP=off.
 function withMcp(modules, env) {
   const off = ['off', '0', 'nao', 'não', 'false'].includes(String(env.MCP || '').trim().toLowerCase());
-  const list = modules.filter((m) => m !== 'mcp');
+  // O SMS vem ligado junto com o WhatsApp (sem as chaves da Twilio ele não faz nada). SMS=off desliga.
+  const smsOff = ['off', '0', 'nao', 'não', 'false'].includes(String(env.SMS || '').trim().toLowerCase());
+  const list = modules.filter((m) => m !== 'mcp' && m !== 'sms');
+  if (!smsOff && (modules.includes('sms') || modules.includes('whatsapp'))) list.push('sms');
   return off ? list : [...list, 'mcp'];
 }

@@ -92,6 +92,24 @@ Para o Google Cloud grátis (banco e fotos guardados de verdade), veja o passo a
 A Meta cobra por conversa iniciada pela empresa; as respostas do robô às mensagens da equipe
 ficam dentro da janela de 24 horas e normalmente não são cobradas como conversa nova.
 
+## Ligar o SMS (Twilio), para quem da equipe não usa WhatsApp
+
+O Jay também atende por SMS comum, com os mesmos comandos, texto livre, fotos (MMS), áudio e PDF.
+Só para quem está em **Menu › Equipe**: cliente que mandar SMS não recebe resposta.
+Os avisos (fila, cobrança, aviso da manhã) vão pelo canal que a pessoa usou por último.
+
+1. Crie a conta em [twilio.com](https://www.twilio.com) e compre um número americano com SMS e MMS (~US$ 1,15/mês).
+2. Em **Messaging › Regulatory Compliance**, faça o registro **A2P 10DLC** (marca da empresa + campanha
+   "mensagens para funcionários"). Sem isso as operadoras bloqueiam as mensagens. Leva de alguns dias a ~3 semanas.
+3. No Render, preencha `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` (página inicial do Console) e `TWILIO_NUMERO` (+1...).
+   Se usar um Messaging Service, pode pôr `TWILIO_MESSAGING_SERVICE_SID` no lugar do número.
+4. No número (Phone Numbers › Active numbers › Messaging), em **A message comes in**, ponha
+   `https://SEU-ENDERECO/webhook/sms` (método POST).
+5. Cada pessoa manda um SMS qualquer (ex.: *oi*) para o número do Jay uma vez.
+
+Custo: ~US$ 0,008 por pedaço de SMS mais taxa das operadoras (~US$ 0,003). Texto com acento ou emoji
+vai em pedaços de 70 letras, então uma resposta comum do Jay sai uns US$ 0,03 a 0,06. `SMS=off` desliga.
+
 ## Configurações (.env)
 
 Veja [.env.example](.env.example). As principais: `PRICE_BASE`, `PRICE_PER_MILE`, `ZELLE_NAME`,
