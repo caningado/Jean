@@ -20,6 +20,11 @@ test('Pendências: procurar quem deve, pagar vários de uma vez e pagamento parc
   const a = await json('POST', '/services', { driver_id: me.id, contact_name: 'Ana Souza', contact_phone: '4075552697', pickup: '12 Main St, Orlando FL', price: '500' });
   const b = await json('POST', '/services', { driver_id: me.id, contact_name: 'Bia Lima', pickup: '12 Main St, Orlando FL', price: '150' });
   const c = await json('POST', '/services', { driver_id: me.id, contact_name: 'Caio Reis', pickup: '12 Main St, Orlando FL', price: '90' });
+  // Só se cobra serviço já feito: antes de entregar, nada é pendência e a baixa em lote não pega.
+  assert.deepEqual(await json('GET', '/payments/pending'), []);
+  assert.equal((await json('POST', '/payments/lote', { service_ids: [b.id], method: 'zelle' })).count, 0);
+  const entregar = (...ids) => ctx.db.prepare(`UPDATE services SET status = 'concluido', completed_at = created_at WHERE id IN (${ids.join(',')})`).run();
+  entregar(a.id, b.id, c.id);
 
   // Parcial: devia 500, pagou 200.
   await json('POST', `/services/${a.id}/payments`, { amount: '200', method: 'zelle' });
@@ -48,6 +53,7 @@ test('Pendências: procurar quem deve, pagar vários de uma vez e pagamento parc
   const x = await json('POST', '/services', { driver_id: me.id, contact_name: 'Dino', pickup: '12 Main St, Orlando FL', price: '150' });
   const y = await json('POST', '/services', { driver_id: me.id, contact_name: 'Dino', pickup: '20 Oak St, Orlando FL', price: '200' });
   const z = await json('POST', '/services', { driver_id: me.id, contact_name: 'Dino', pickup: '30 Pine St, Orlando FL', price: '150' });
+  entregar(x.id, y.id, z.id);
   assert.equal((await call('POST', '/payments/lote', { service_ids: [x.id, y.id, z.id], method: 'zelle', amount: '600' })).status, 400);
   const p = await json('POST', '/payments/lote', { service_ids: [z.id, y.id, x.id], method: 'zelle', amount: '200' });
   assert.deepEqual(p, { count: 2, total_cents: 20000, partial: [y.id], still_open_cents: 30000 });
@@ -65,6 +71,7 @@ test('Pendências: procurar quem deve, pagar vários de uma vez e pagamento parc
   // Cliente de empresa: procurar quem pediu traz tudo o que a empresa deve.
   const m1 = await json('POST', '/services', { driver_id: me.id, contact_name: 'Mike', pickup: '40 Elm St, Orlando FL', price: '100' });
   const m2 = await json('POST', '/services', { driver_id: me.id, contact_name: 'Carlos', pickup: '50 Elm St, Orlando FL', price: '70' });
+  entregar(m1.id, m2.id);
   ctx.db.prepare("INSERT INTO companies (name, token, created_at) VALUES ('USAVE Motors', 'tk', '2026-01-01')").run();
   ctx.db.prepare("UPDATE contacts SET company_id = (SELECT id FROM companies) WHERE name IN ('Mike', 'Carlos')").run();
   const [emp] = await chat(ctx, OWNER_PHONE, 'pendentes carlos');

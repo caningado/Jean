@@ -52,6 +52,8 @@ function payInfo(ctx, s) {
   const b = ctx.api.pagamentos.balance(s);
   const price = s.price_cents || 0;
   const paid = price > 0 ? b.open_cents === 0 && b.to_receive_cents === 0 : null;
+  // Serviço ainda não entregue não é dívida: só se cobra o que já foi feito (pedido do Caningado 27/11).
+  if (paid === false && s.status !== 'concluido') return { ...b, paid: null, not_done: true };
   return { ...b, paid };
 }
 
@@ -60,6 +62,7 @@ function payText(p, s) {
   if (s.price_cents == null) return 'sem preço';
   if (s.price_cents === 0) return 'grátis';
   if (p.paid) return 'pago';
+  if (p.not_done) return `${formatMoney(s.price_cents)}, cobra depois de entregar${p.received_cents ? ` (já recebeu ${formatMoney(p.received_cents)} adiantado)` : ''}`;
   const parts = [];
   if (p.received_cents) parts.push(`recebido ${formatMoney(p.received_cents)}`);
   if (p.to_receive_cents) parts.push(`a receber da seguradora ${formatMoney(p.to_receive_cents)}`);
@@ -300,7 +303,7 @@ export function registerTools(server, ctx, user) {
     {
       title: 'Listar serviços',
       description:
-        'Lista os serviços de um dia (padrão: hoje). Cada serviço conta num dia só: o da entrega, ou o dia em que foi aberto se ainda não foi entregue (mesma regra do relatório do dia). Use data = "todas" para ver sem filtro de data (os mais recentes). Situação: pendente, em_andamento, entregue, cancelado, pago, nao_pago. Sem situação, mostra todos menos cancelados.',
+        'Lista os serviços de um dia (padrão: hoje). Cada serviço conta num dia só: o da entrega, ou o dia em que foi aberto se ainda não foi entregue. Use data = "todas" para ver sem filtro de data (os mais recentes). Situação: pendente, em_andamento, entregue, cancelado, pago, nao_pago (nao_pago = entregues que faltam receber; serviço não entregue não é dívida). Sem situação, mostra todos menos cancelados.',
       inputSchema: {
         data: z.string().optional().describe('"hoje", "ontem", "amanhã", AAAA-MM-DD ou "todas"'),
         situacao: z.enum(['pendente', 'em_andamento', 'entregue', 'cancelado', 'pago', 'nao_pago']).optional(),

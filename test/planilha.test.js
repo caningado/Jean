@@ -125,7 +125,8 @@ test('painel: baixar a planilha e link automático para o Google Planilhas', asy
   const csv = await res.text();
   assert.match(csv, /^Nº,Data,Situação,Motorista,Cliente/);
   assert.match(csv, /John Smith,"?\+1 \(508\) 555-0123"?,"12 Main St, Framingham"/);
-  assert.match(csv, /,,75\.00,2,60\.00,0\.00,15\.00,/); // milhas, valor, fotos, recebido, seguradora, falta
+  // milhas, valor, fotos, recebido, seguradora, falta (0: ainda não entregue, não é dívida)
+  assert.match(csv, /,,75\.00,2,60\.00,0\.00,0\.00,/);
   assert.match(await (await fetch(link.sheets[2].url.replace(/^https?:\/\/[^/]+/, base))).text(), /80\.00,Combustível/);
 
   // Link errado ou depois de trocar: não funciona.

@@ -1165,7 +1165,9 @@ function routes(api, ctx) {
     const today = dayOf();
     const thisYear = Number(today.slice(0, 4));
     const ano = Number(req.query.ano) || thisYear;
-    const status = req.query.status || null;
+    // Semanas e meses só têm serviço já feito: o não entregue fica só em Pendentes/Em andamento
+    // (pedido do Caningado 27/11). Por isso "Todos" aqui conta igual a Entregues.
+    const status = 'concluido';
     const driverId = req.user.role === 'dono' ? Number(req.query.driver) || null : req.user.id;
     const periods = (req.query.tipo === 'mes' ? monthsOfYear(ano) : weeksOfYear(ano)).filter((p) => p.start <= today);
     const at = (day) => {
@@ -1186,7 +1188,8 @@ function routes(api, ctx) {
         p.count += 1;
         p.cents += s.price_cents || 0;
         // Meses: quanto ainda falta receber (o que está em vermelho na lista), para a % não paga.
-        if (req.query.tipo === 'mes' && pag && s.price_cents) p.unpaid_cents += Math.max(0, s.price_cents - pag.balance(s).received_cents);
+        // Só entregue conta como não pago: serviço ainda não feito não se cobra.
+        if (req.query.tipo === 'mes' && pag && s.price_cents && s.status === 'concluido') p.unpaid_cents += Math.max(0, s.price_cents - pag.balance(s).received_cents);
       }
     }
     // Anos com serviço, do primeiro até este.
@@ -1201,7 +1204,7 @@ function routes(api, ctx) {
   api.get('/services', (req, res) => {
     const blocked = servicesBlocked(ctx, req.user);
     if (blocked) throw new HttpError(423, blocked.replace(/\*/g, ''));
-    const status = req.query.status || null;
+    let status = req.query.status || null;
     const driverId = req.user.role === 'dono' ? Number(req.query.driver) || null : req.user.id;
     // Entregues de hoje, da semana (desde sábado) ou do mês.
     const tz = ctx.config.timeZone;
@@ -1224,6 +1227,8 @@ function routes(api, ctx) {
       start = at(de);
       end = at(ate, 1);
     }
+    // Semana ou mês numerado (feitos=1): só os já entregues, também em "Todos" (pedido do Caningado 27/11).
+    if (!status && start && req.query.feitos === '1') status = 'concluido';
     const doneSince = status === 'concluido' ? start : null;
     const since = status === 'concluido' ? null : start;
     const doneUntil = status === 'concluido' ? end : null;
@@ -1235,9 +1240,12 @@ function routes(api, ctx) {
     const pag = ctx.api.pagamentos;
     res.json(
       list.map((s) => {
+        // Ainda não entregue: só fica verde se já pagou adiantado; vermelho (falta receber) só depois de entregue.
         if (s.price_cents === 0 && ['aberto', 'concluido'].includes(s.status)) return { ...s, paid: true };
         if (!pag || !s.price_cents || !['aberto', 'concluido'].includes(s.status)) return s;
-        return { ...s, paid: pag.balance(s).received_cents >= s.price_cents };
+        const paid = pag.balance(s).received_cents >= s.price_cents;
+        if (!paid && s.status !== 'concluido') return s;
+        return { ...s, paid };
       })
     );
   });
@@ -1353,13 +1361,11 @@ function routes(api, ctx) {
       .prepare(
         `SELECT s.*, c.name AS contact_name, c.phone AS contact_phone, u.name AS driver_name, u.firm AS driver_firm
          FROM services s LEFT JOIN contacts c ON c.id = s.contact_id LEFT JOIN users u ON u.id = s.driver_id
-         WHERE s.status <> 'cancelado' AND NOT (s.status = 'pendente' AND s.driver_id IS NULL)
-           AND COALESCE(s.completed_at, s.created_at) >= ? AND COALESCE(s.completed_at, s.created_at) < ?
+         WHERE s.status = 'concluido' AND COALESCE(s.completed_at, s.created_at) >= ? AND COALESCE(s.completed_at, s.created_at) < ?
          ORDER BY s.created_at, s.id`
       )
-      .all(start, end)
-      // Agendado que ainda não começou não entra: só conta no dia em que o motorista pegar o carro.
-      .filter((s) => !s.scheduled_at || s.status === 'concluido' || (s.status !== 'pendente' && s.scheduled_at < end));
+      // Só o que foi feito (entregue) naquele dia: não entregue não entra no relatório (pedido do Caningado 27/11).
+      .all(start, end);
     const pag = ctx.api.pagamentos;
     const methodsOf = db.prepare('SELECT DISTINCT method, payer FROM payments WHERE service_id = ?');
     const services = rows.map((s) => {

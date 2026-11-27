@@ -72,6 +72,7 @@ test('seguradora fica a receber e despesas entram no resumo', async () => {
   await chat(ctx, DRIVER_PHONE, 'novo', '5085550123', 'John Smith', 'I-95 exit 12', 'Joe Shop', 'pular', '200', 'sim');
   const [aaa] = await chat(ctx, DRIVER_PHONE, 'pago 200 aaa');
   assert.match(aaa, /a receber de AAA/);
+  await chat(ctx, DRIVER_PHONE, 'entregue');
   await chat(ctx, DRIVER_PHONE, 'gasto 80 diesel', 'gasto $12.50 pedágio');
 
   const [driverSummary] = await chat(ctx, DRIVER_PHONE, 'resumo');

@@ -50,6 +50,10 @@ test('empresa com vários solicitantes: extrato agrupado e só o que está em ab
   const s3 = service(ctx, ana, 20000, 5);
   service(ctx, other, 9900, 2);
   await chat(ctx, DRIVER_PHONE, `abrir ${s3.id}`, 'pago 200 zelle');
+  ctx.db.prepare("UPDATE services SET status = 'concluido' WHERE id = ?").run(s3.id);
+  // Serviço ainda não entregue não entra no extrato: só se cobra o que já foi feito.
+  const notDone = service(ctx, mike, 7000, 1);
+  ctx.db.prepare("UPDATE services SET status = 'aberto', completed_at = NULL WHERE id = ?").run(notDone.id);
 
   const data = statementData(ctx, created.data);
   assert.equal(data.count, 2, 'só os de Mike: Ana já pagou e John não é da empresa');
@@ -90,6 +94,9 @@ test('robô: empresa e extrato', async () => {
   ctx.db.prepare("UPDATE services SET status = 'aberto' WHERE id = ?").run(s.id);
   const [, linked] = await chat(ctx, DRIVER_PHONE, `abrir ${s.id}`, 'empresa usave');
   assert.match(linked, /Mike agora é solicitante da USAVE Motors/);
+  const [early] = await chat(ctx, OWNER_PHONE, 'extrato usave');
+  assert.doesNotMatch(early, /\$150\.00/, 'ainda não entregue: não deve nada');
+  ctx.db.prepare("UPDATE services SET status = 'concluido' WHERE id = ?").run(s.id);
   const [denied] = await chat(ctx, DRIVER_PHONE, 'extrato usave');
   assert.match(denied, /Só o ADM/);
   const [ext] = await chat(ctx, OWNER_PHONE, 'extrato usave');

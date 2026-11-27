@@ -23,6 +23,9 @@ test('Pendências: o motorista vê só as dele; o ADM vê todas', async (t) => {
   await call(adm, 'POST', '/services', { contact_name: 'Ana Lima', pickup: '1 Main St, Oviedo FL', driver_id: jorge, price: 150 });
   await call(adm, 'POST', '/services', { contact_name: 'Bia Souza', pickup: '2 Main St, Oviedo FL', driver_id: dono, price: 200 });
 
+  // Ainda não entregues: não são pendência de ninguém.
+  assert.deepEqual(await call(adm, 'GET', '/payments/pending'), []);
+  ctx.db.prepare("UPDATE services SET status = 'concluido', completed_at = created_at").run();
   const mine = await call(drv, 'GET', '/payments/pending');
   assert.deepEqual(mine.map((s) => s.contact_name), ['Ana Lima']);
   const all = await call(adm, 'GET', '/payments/pending');

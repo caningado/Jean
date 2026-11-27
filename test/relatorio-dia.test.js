@@ -23,6 +23,13 @@ test('Relatório do dia: serviços do dia, sem cancelados, com pago e a receber'
   const ontem = await json('POST', '/services', { driver_id: me.id, contact_name: 'Davi', pickup: '12 Main St, Orlando FL', price: '80' });
   await json('POST', `/services/${pago.id}/payments`, { amount: '150', method: 'zelle' });
   await json('PATCH', `/services/${cancelado.id}`, { status: 'cancelado', motivo: 'desistiu' });
+  // Só entra o que foi feito (entregue) no dia; o "naoFeito" está em andamento e fica de fora.
+  const naoFeito = await json('POST', '/services', { driver_id: me.id, contact_name: 'Fabio', pickup: '12 Main St, Orlando FL', price: '300' });
+  await json('PATCH', `/services/${naoFeito.id}`, { status: 'aberto' });
+  const entregar = ctx.db.prepare("UPDATE services SET status = 'concluido', completed_at = ? WHERE id = ?");
+  entregar.run(new Date().toISOString(), pago.id);
+  entregar.run(new Date().toISOString(), falta.id);
+  entregar.run(new Date(Date.now() - 3 * 86400000).toISOString(), ontem.id);
   ctx.db.prepare('UPDATE services SET created_at = ? WHERE id = ?').run(new Date(Date.now() - 3 * 86400000).toISOString(), ontem.id);
 
   // Agendado que ainda não começou não entra no relatório do dia.

@@ -676,7 +676,7 @@ screens.servicos = async (params) => {
   }
   let list;
   try {
-    list = await api(`/services?status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}${pick ? `&de=${pick.start}&ate=${pick.end}` : periodo === 'datas' ? `&de=${de}&ate=${ate}` : periodo ? `&periodo=${periodo}` : ''}`);
+    list = await api(`/services?status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}${pick ? `&de=${pick.start}&ate=${pick.end}&feitos=1` : periodo === 'datas' ? `&de=${de}&ate=${ate}` : periodo ? `&periodo=${periodo}` : ''}`);
   } catch (err) {
     // Lista suspensa por falta da milhagem da semana: mostra o que fazer.
     if (!/suspensa/.test(err.message)) throw err;
@@ -2445,7 +2445,7 @@ screens.relatorio = async (params) => {
       <div class="rel-head"><div><h2>${esc(rep.name)}</h2><div class="sub">Relatório de serviços do dia</div></div>
         <div class="right"><strong>${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}</strong><div class="sub">${weekday}</div></div></div>
       <div class="rel-stats">
-        <div><span class="sub">Serviços</span><strong>${t.count}</strong><span class="sub">${t.delivered} entregue(s)</span></div>
+        <div><span class="sub">Serviços</span><strong>${t.count}</strong><span class="sub">entregues</span></div>
         <div><span class="sub">Faturado</span><strong>${money(t.price_cents)}</strong></div>
         <div><span class="sub">Recebido</span><strong>${money(t.received_cents)}</strong></div>
         <div><span class="sub">A receber</span><strong>${money(t.open_cents)}</strong></div>
@@ -2467,7 +2467,7 @@ screens.relatorio = async (params) => {
           <div class="rel-scroll"><table class="table rel-table"><thead><tr><th>Motorista</th><th class="num">Serviços</th><th class="num">Faturado</th><th class="num">Recebido</th></tr></thead>
           <tbody>${rep.drivers.map((g) => `<tr><td>${esc(g.name)}</td><td class="num">${g.count}</td><td class="num">${money(g.price_cents)}</td><td class="num">${money(g.received_cents)}</td></tr>`).join('')}</tbody></table></div>`
         : '<p class="empty">Nenhum serviço neste dia.</p>'}
-      <p class="sub rel-foot">Impresso em ${new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}. Cancelados não entram.${rep.firm === 'jj' ? ' Serviço sem motorista entra nesta folha.' : ''}</p>
+      <p class="sub rel-foot">Impresso em ${new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}. Só entram os serviços entregues neste dia.${rep.firm === 'jj' ? ' Serviço sem motorista entra nesta folha.' : ''}</p>
     </div>`;
   };
   view.innerHTML = `

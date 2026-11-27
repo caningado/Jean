@@ -359,9 +359,11 @@ const daysSince = (iso, now = Date.now()) => Math.max(0, Math.floor((now - new D
 
 // Serviços com dinheiro para receber, do mais antigo para o mais novo.
 // overdue = passou de COBRANCA_DIAS sem receber.
+// Só cobra o que já foi feito (pedido do Caningado 27/11): serviço ainda não entregue
+// (pendente ou em andamento) não é pendência financeira em lugar nenhum.
 function pendingList(ctx, userId) {
   const services = ctx.data.services
-    .list({ driverId: userId, hideCancelled: true, hideQuotes: true, limit: 1000 })
+    .list({ status: 'concluido', driverId: userId, limit: 100000 })
     .filter((s) => s.price_cents);
   // Serviço de oficina/dealer: junta o nome da empresa do solicitante.
   const companies = new Map();
@@ -679,7 +681,8 @@ function routes(api, ctx) {
     if (!Array.isArray(ids) || !ids.length || ids.length > 200) throw new HttpError(400, 'Escolha os serviços.');
     const services = [...new Set(ids.map(Number))]
       .map((id) => ctx.data.services.get(id))
-      .filter((s) => canSee(req.user, s) && s.status !== 'cancelado')
+      // Baixa em lote é para pendências: só serviço já entregue.
+      .filter((s) => canSee(req.user, s) && s.status === 'concluido')
       .sort((a, b) => a.id - b.id)
       .map((s) => ({ service: s, open: balance(ctx, s).open_cents }))
       .filter((x) => x.open > 0);
@@ -872,7 +875,7 @@ function exportColumns(ctx) {
   return [
     { header: 'Recebido', width: 11, type: 'money', value: (s) => of(s).received_cents / 100 },
     { header: 'A receber (seguradora)', width: 14, type: 'money', value: (s) => of(s).to_receive_cents / 100 },
-    { header: 'Falta receber', width: 11, type: 'money', value: (s) => (s.status === 'cancelado' ? 0 : of(s).open_cents / 100) },
+    { header: 'Falta receber', width: 11, type: 'money', value: (s) => (s.status !== 'concluido' ? 0 : of(s).open_cents / 100) },
   ];
 }
 
