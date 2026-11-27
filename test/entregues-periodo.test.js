@@ -57,8 +57,13 @@ test('lista de serviços diz se está pago', async (t) => {
   await json('PATCH', `/services/${pago.id}`, { status: 'aberto' });
   await json('PATCH', `/services/${devendo.id}`, { status: 'aberto' });
   ctx.db.prepare("INSERT INTO payments (service_id, amount_cents, method, status, created_at) VALUES (?, 10000, 'zelle', 'recebido', ?)").run(pago.id, new Date().toISOString());
+  // Em andamento sem pagar: sem cor (ainda não é dívida). Pago adiantado: verde.
+  let by = Object.fromEntries((await json('GET', '/services?status=')).map((s) => [s.id, s.paid]));
+  assert.equal(by[pago.id], true);
+  assert.equal(by[devendo.id], undefined);
+  ctx.db.prepare("UPDATE services SET status = 'concluido' WHERE id IN (?, ?)").run(pago.id, devendo.id);
   const list = await json('GET', '/services?status=');
-  const by = Object.fromEntries(list.map((s) => [s.id, s.paid]));
+  by = Object.fromEntries(list.map((s) => [s.id, s.paid]));
   assert.equal(by[pago.id], true);
   assert.equal(by[devendo.id], false);
   assert.equal(by[semValor.id], undefined);

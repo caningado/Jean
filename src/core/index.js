@@ -1186,7 +1186,8 @@ function routes(api, ctx) {
         p.count += 1;
         p.cents += s.price_cents || 0;
         // Meses: quanto ainda falta receber (o que está em vermelho na lista), para a % não paga.
-        if (req.query.tipo === 'mes' && pag && s.price_cents) p.unpaid_cents += Math.max(0, s.price_cents - pag.balance(s).received_cents);
+        // Só entregue conta como não pago: serviço ainda não feito não se cobra.
+        if (req.query.tipo === 'mes' && pag && s.price_cents && s.status === 'concluido') p.unpaid_cents += Math.max(0, s.price_cents - pag.balance(s).received_cents);
       }
     }
     // Anos com serviço, do primeiro até este.
@@ -1235,9 +1236,12 @@ function routes(api, ctx) {
     const pag = ctx.api.pagamentos;
     res.json(
       list.map((s) => {
+        // Ainda não entregue: só fica verde se já pagou adiantado; vermelho (falta receber) só depois de entregue.
         if (s.price_cents === 0 && ['aberto', 'concluido'].includes(s.status)) return { ...s, paid: true };
         if (!pag || !s.price_cents || !['aberto', 'concluido'].includes(s.status)) return s;
-        return { ...s, paid: pag.balance(s).received_cents >= s.price_cents };
+        const paid = pag.balance(s).received_cents >= s.price_cents;
+        if (!paid && s.status !== 'concluido') return s;
+        return { ...s, paid };
       })
     );
   });
@@ -1383,6 +1387,9 @@ function routes(api, ctx) {
         byDriver.set(name, g);
       }
       const received = sum(list.map((s) => ({ v: paidPart(s) })), 'v');
+      // A receber: só o que já foi entregue (serviço não feito não se cobra).
+      const done = list.filter((s) => s.status === 'concluido');
+      const doneReceived = sum(done.map((s) => ({ v: paidPart(s) })), 'v');
       return {
         firm,
         name: firmName(ctx, firm),
@@ -1393,7 +1400,7 @@ function routes(api, ctx) {
           delivered: list.filter((s) => s.status === 'concluido').length,
           price_cents: sum(list, 'price_cents'),
           received_cents: received,
-          open_cents: sum(list, 'price_cents') - received,
+          open_cents: sum(done, 'price_cents') - doneReceived,
         },
       };
     });
