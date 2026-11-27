@@ -2295,8 +2295,8 @@ screens.pendentes = async (params = new URLSearchParams(location.hash.split('?')
       const ids = picked().map((b) => Number(b.value));
       if (!ids.length) return;
       const { method, amount } = formData(form);
-      const ask = amount ? `Registrar $${amount} por ${METHODS[method]} nesses ${ids.length} serviço(s)?` : `Marcar ${ids.length} serviço(s) como pagos por ${METHODS[method]}?`;
-      if (!confirm(ask)) return;
+      const question = amount ? `Registrar $${amount} por ${METHODS[method]} nesses ${ids.length} serviço(s)?` : `Marcar ${ids.length} serviço(s) como pagos por ${METHODS[method]}?`;
+      if (!(await dialog({ title: amount ? 'Registrar pagamento' : 'Marcar como pago', text: question, ok: 'Sim, confirmar', cancel: 'Não' }))) return;
       try {
         const r = await api('/payments/lote', { method: 'POST', body: { service_ids: ids, method, amount } });
         toast(`✅ ${money(r.total_cents)} registrado em ${r.count} serviço(s)${r.still_open_cents ? `. Ainda falta ${money(r.still_open_cents)}` : ''}`);
@@ -3943,7 +3943,7 @@ async function guidedPhotos(serviceId, kind, doneAngles = [], onlyAngle = null) 
   } catch {
     // Plano B: câmera do sistema, avisando qual lado fotografar.
     for (const angle of queue) {
-      if (!confirm(`Foto de ${PHOTO_KINDS[kind].toLowerCase()}: ${ANGLE_LABEL[angle]}.\nAbrir a câmera?`)) break;
+      if (!(await dialog({ title: `Foto de ${PHOTO_KINDS[kind].toLowerCase()}`, text: `${ANGLE_LABEL[angle]}.\nAbrir a câmera?`, ok: 'Abrir a câmera', cancel: 'Parar' }))) break;
       const file = await pickPhoto();
       if (!file) break;
       try {
