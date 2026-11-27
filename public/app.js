@@ -676,7 +676,7 @@ screens.servicos = async (params) => {
   }
   let list;
   try {
-    list = await api(`/services?status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}${pick ? `&de=${pick.start}&ate=${pick.end}` : periodo === 'datas' ? `&de=${de}&ate=${ate}` : periodo ? `&periodo=${periodo}` : ''}`);
+    list = await api(`/services?status=${status}${driver ? `&driver=${encodeURIComponent(driver)}` : ''}${pick ? `&de=${pick.start}&ate=${pick.end}&feitos=1` : periodo === 'datas' ? `&de=${de}&ate=${ate}` : periodo ? `&periodo=${periodo}` : ''}`);
   } catch (err) {
     // Lista suspensa por falta da milhagem da semana: mostra o que fazer.
     if (!/suspensa/.test(err.message)) throw err;
@@ -2435,8 +2435,6 @@ screens.relatorio = async (params) => {
     if (!s.price_cents) return `<span class="sub">${s.price_cents === 0 ? 'free' : 'sem valor'}</span>`;
     const how = s.methods.length ? ` <span class="sub">${esc(s.methods.join(', '))}</span>` : '';
     if (s.received_cents >= s.price_cents) return `Pago${how}`;
-    // Ainda não entregue: não é dívida, só se cobra depois de feito.
-    if (s.status !== 'concluido') return `<span class="sub">Cobra na entrega</span>${s.received_cents ? ` · recebeu ${money(s.received_cents)}` : ''}${how}`;
     if (s.received_cents) return `Falta ${money(s.price_cents - s.received_cents)}${how}`;
     return `A receber${how}`;
   };
@@ -2447,7 +2445,7 @@ screens.relatorio = async (params) => {
       <div class="rel-head"><div><h2>${esc(rep.name)}</h2><div class="sub">Relatório de serviços do dia</div></div>
         <div class="right"><strong>${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}</strong><div class="sub">${weekday}</div></div></div>
       <div class="rel-stats">
-        <div><span class="sub">Serviços</span><strong>${t.count}</strong><span class="sub">${t.delivered} entregue(s)</span></div>
+        <div><span class="sub">Serviços</span><strong>${t.count}</strong><span class="sub">entregues</span></div>
         <div><span class="sub">Faturado</span><strong>${money(t.price_cents)}</strong></div>
         <div><span class="sub">Recebido</span><strong>${money(t.received_cents)}</strong></div>
         <div><span class="sub">A receber</span><strong>${money(t.open_cents)}</strong></div>
@@ -2456,7 +2454,7 @@ screens.relatorio = async (params) => {
         ? `<div class="rel-scroll"><table class="table rel-table rel-main"><thead><tr><th>Nº</th><th>Motorista</th><th>Cliente</th><th>Telefone</th><th>Veículo</th><th>Retirada → Entrega</th><th>Situação</th><th>Pagamento</th><th class="num">Valor</th></tr></thead>
           <tbody>${rep.services
             .map(
-              (s) => `<tr class="${s.price_cents === 0 ? 'rel-pago' : !s.price_cents ? '' : s.received_cents >= s.price_cents ? 'rel-pago' : s.status !== 'concluido' ? '' : 'rel-nao-pago'}"><td class="nowrap">#${s.id}</td><td>${esc(s.driver_name || '–')}</td>
+              (s) => `<tr class="${s.price_cents === 0 ? 'rel-pago' : !s.price_cents ? '' : s.received_cents >= s.price_cents ? 'rel-pago' : 'rel-nao-pago'}"><td class="nowrap">#${s.id}</td><td>${esc(s.driver_name || '–')}</td>
                 <td>${esc(s.contact_name || '')}</td><td class="nowrap">${s.contact_phone ? phoneFmt(s.contact_phone) : '–'}</td>
                 <td>${esc(s.vehicle || '')}${s.plate ? `<div class="sub">${esc(s.plate)}</div>` : ''}</td>
                 <td>${short(s.pickup)}${s.dropoff ? `<div class="sub">→ ${short(s.dropoff)}</div>` : ''}</td>
@@ -2469,7 +2467,7 @@ screens.relatorio = async (params) => {
           <div class="rel-scroll"><table class="table rel-table"><thead><tr><th>Motorista</th><th class="num">Serviços</th><th class="num">Faturado</th><th class="num">Recebido</th></tr></thead>
           <tbody>${rep.drivers.map((g) => `<tr><td>${esc(g.name)}</td><td class="num">${g.count}</td><td class="num">${money(g.price_cents)}</td><td class="num">${money(g.received_cents)}</td></tr>`).join('')}</tbody></table></div>`
         : '<p class="empty">Nenhum serviço neste dia.</p>'}
-      <p class="sub rel-foot">Impresso em ${new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}. Cancelados não entram.${rep.firm === 'jj' ? ' Serviço sem motorista entra nesta folha.' : ''}</p>
+      <p class="sub rel-foot">Impresso em ${new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}. Só entram os serviços entregues neste dia.${rep.firm === 'jj' ? ' Serviço sem motorista entra nesta folha.' : ''}</p>
     </div>`;
   };
   view.innerHTML = `

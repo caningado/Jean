@@ -60,4 +60,13 @@ test('lista das semanas e dos meses com quantidade e total; abrir uma semana', a
   const ids = (await json('GET', '/services?status=concluido&de=2025-02-22&ate=2025-02-28')).map((s) => s.id).sort();
   assert.deepEqual(ids, [a, b].sort());
   assert.ok(!ids.includes(c));
+  // Serviço ainda não entregue não entra nas semanas/meses, nem em "Todos" (fica só em Pendentes/Em andamento).
+  const aberto = await json('POST', '/services', { contact_name: 'Não feito', pickup: '12 Main St, Orlando FL', price: 300 });
+  ctx.db.prepare("UPDATE services SET status = 'aberto', created_at = ? WHERE id = ?").run(at('2025-02-24', 10), aberto.id);
+  const todos = Object.fromEntries((await json('GET', '/services/periodos?tipo=semana&ano=2025&status=')).periodos.map((p) => [p.n, p]));
+  assert.equal(todos[9].count, 2);
+  assert.equal(todos[9].cents, 15000);
+  const semana = (await json('GET', '/services?status=&de=2025-02-22&ate=2025-02-28&feitos=1')).map((s) => s.id);
+  assert.ok(!semana.includes(aberto.id));
+  assert.ok(semana.includes(a));
 });

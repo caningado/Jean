@@ -23,6 +23,13 @@ test('Relatório do dia: serviços do dia, sem cancelados, com pago e a receber'
   const ontem = await json('POST', '/services', { driver_id: me.id, contact_name: 'Davi', pickup: '12 Main St, Orlando FL', price: '80' });
   await json('POST', `/services/${pago.id}/payments`, { amount: '150', method: 'zelle' });
   await json('PATCH', `/services/${cancelado.id}`, { status: 'cancelado', motivo: 'desistiu' });
+  // Só entra o que foi feito (entregue) no dia; o "naoFeito" está em andamento e fica de fora.
+  const naoFeito = await json('POST', '/services', { driver_id: me.id, contact_name: 'Fabio', pickup: '12 Main St, Orlando FL', price: '300' });
+  await json('PATCH', `/services/${naoFeito.id}`, { status: 'aberto' });
+  const entregar = ctx.db.prepare("UPDATE services SET status = 'concluido', completed_at = ? WHERE id = ?");
+  entregar.run(new Date().toISOString(), pago.id);
+  entregar.run(new Date().toISOString(), falta.id);
+  entregar.run(new Date(Date.now() - 3 * 86400000).toISOString(), ontem.id);
   ctx.db.prepare('UPDATE services SET created_at = ? WHERE id = ?').run(new Date(Date.now() - 3 * 86400000).toISOString(), ontem.id);
 
   // Agendado que ainda não começou não entra no relatório do dia.
@@ -37,10 +44,7 @@ test('Relatório do dia: serviços do dia, sem cancelados, com pago e a receber'
   assert.deepEqual(jj.services[0].methods, ['Zelle']);
   assert.equal(jj.totals.price_cents, 35000);
   assert.equal(jj.totals.received_cents, 15000);
-  // A receber: só o que já foi entregue (serviço não feito não se cobra).
-  assert.equal(jj.totals.open_cents, 0);
-  ctx.db.prepare("UPDATE services SET status = 'concluido', completed_at = ? WHERE id = ?").run(new Date().toISOString(), falta.id);
-  assert.equal((await json('GET', '/relatorio/dia')).reports.find((x) => x.firm === 'jj').totals.open_cents, 20000);
+  assert.equal(jj.totals.open_cents, 20000);
 
   // Outro dia: o serviço de 3 dias atrás aparece lá.
   const dia = new Intl.DateTimeFormat('en-CA', { timeZone: ctx.config.timeZone }).format(new Date(Date.now() - 3 * 86400000));

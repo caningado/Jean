@@ -303,7 +303,7 @@ export function registerTools(server, ctx, user) {
     {
       title: 'Listar serviços',
       description:
-        'Lista os serviços de um dia (padrão: hoje). Cada serviço conta num dia só: o da entrega, ou o dia em que foi aberto se ainda não foi entregue (mesma regra do relatório do dia). Use data = "todas" para ver sem filtro de data (os mais recentes). Situação: pendente, em_andamento, entregue, cancelado, pago, nao_pago (nao_pago = entregues que faltam receber; serviço não entregue não é dívida). Sem situação, mostra todos menos cancelados.',
+        'Lista os serviços de um dia (padrão: hoje). Cada serviço conta num dia só: o da entrega, ou o dia em que foi aberto se ainda não foi entregue. Use data = "todas" para ver sem filtro de data (os mais recentes). Situação: pendente, em_andamento, entregue, cancelado, pago, nao_pago (nao_pago = entregues que faltam receber; serviço não entregue não é dívida). Sem situação, mostra todos menos cancelados.',
       inputSchema: {
         data: z.string().optional().describe('"hoje", "ontem", "amanhã", AAAA-MM-DD ou "todas"'),
         situacao: z.enum(['pendente', 'em_andamento', 'entregue', 'cancelado', 'pago', 'nao_pago']).optional(),
